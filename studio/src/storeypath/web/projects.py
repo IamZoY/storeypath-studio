@@ -111,6 +111,21 @@ def words(code: str, name: str, request: Request, may: May, studio: TheStudio):
     return answer(request, studio.words(code, name))
 
 
+@calls.get(P + "/jobs")
+def project_jobs(code: str, request: Request, may: May):
+    """Its jobs the person may see: to run, running, or ended in the last 30 minutes (a page
+    opened again shows them, and follows those still going)."""
+    listed = may.jobs(code)
+    return answer(request, listed)
+
+
+@calls.get(P + "/incoming")
+def incoming(code: str, request: Request, may: May):
+    """The drawings the person sent that wait for them to choose what to keep."""
+    waiting = may.waiting(code)
+    return answer(request, waiting)
+
+
 @calls.post(P + "/incoming/{token}")
 def keep_private(code: str, token: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.project(code, "edit")

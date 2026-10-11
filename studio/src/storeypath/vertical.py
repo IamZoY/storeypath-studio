@@ -106,7 +106,8 @@ def add(studio, code: str, floor_id: str, body: dict, by=None, editor=None):
         job.say(f"{space}: a {what}")
         return {"space": space, **result}
 
-    return studio.jobs.submit(f"Drawing a {what}", run, project=code, user=_uid(by), scope=("floor", floor_id))
+    return studio.jobs.submit(f"Drawing a {what}", run, project=code, user=_uid(by), scope=("floor", floor_id),
+                              kind="read", floors=[floor_id])
 
 
 # Another person editing a room where it would be drawn (errors.Locked) leaves that floor out
@@ -170,7 +171,8 @@ def copy(studio, code: str, object_id: str, body: dict, by=None, editor=None):
                 [f"{f}: not found when read again" for f in missed] + [x["error"] for x in refused]))
         return {"spaces": spaces, "missed": missed, "refused": refused, **result}
 
-    return studio.jobs.submit("Adding it on floors", run, project=code, user=_uid(by), scope=("project", None))
+    return studio.jobs.submit("Adding it on floors", run, project=code, user=_uid(by), scope=("project", None),
+                              kind="read", floors=drawn)
 
 
 def refused_error(refused: list[dict]):

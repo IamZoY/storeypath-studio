@@ -87,22 +87,30 @@ function toast(message, error = false, ms = undefined) {
   toastTimer = setTimeout(() => (t.hidden = true), ms ?? (error ? 9000 : 3000));
 }
 
-/** Run a server job, showing its progress (as the project's stream tells it); resolves
- * with its result. */
+// the jobs this page follows now (runJob): a page opened again follows the others (resume)
+const following = new Set();
+
+/** Run a server job (``started``: the job, or what answers with it), showing its progress
+ * (as the project's stream tells it); resolves with its result. */
 async function runJob(started) {
   const panel = $("job");
   panel.hidden = false;
   panel.className = "job";
   let job = await started;
-  $("job-title").textContent = job.title;
-  const say = (log) => $("job-log").replaceChildren(...log.slice(-12).map((l) => el("li", {}, l)));
-  if (live.stream) job = await live.stream.follow(job, say);
-  while (job.state === "waiting" || job.state === "running") { // (no stream: asked for)
+  following.add(job.id);
+  try {
+    $("job-title").textContent = job.title;
+    const say = (log) => $("job-log").replaceChildren(...log.slice(-12).map((l) => el("li", {}, l)));
+    if (live.stream) job = await live.stream.follow(job, say);
+    while (job.state === "waiting" || job.state === "running") { // (no stream: asked for)
+      say(job.log);
+      await new Promise((r) => setTimeout(r, 600));
+      job = await api(`jobs/${job.id}`);
+    }
     say(job.log);
-    await new Promise((r) => setTimeout(r, 600));
-    job = await api(`jobs/${job.id}`);
+  } finally {
+    following.delete(job.id);
   }
-  say(job.log);
   panel.classList.add(job.state);
   setTimeout(() => (panel.hidden = true), job.state === "failed" ? 15000 : 4000);
   if (job.state === "failed") throw new Error(job.error || "failed");
@@ -270,6 +278,93 @@ async function projectPage(code) {
     p.can?.delete !== false ? deleteCard(code, p) : null,
   );
   showWhoIsOn();
+  resume(code, p, plansArea);
+}
+
+// ---- work in progress, when the page is opened again ---------------------------------
+// Studio's jobs run on the server whatever the page does: a page opened again (a refresh,
+// another tab, back from elsewhere) asks what is going on in the project and picks it up.
+
+let resumed = 0; // which page opened resume() last (a page shown again: the earlier one stops)
+
+/** What was going on in the project when its page was opened: the floors being read
+ * (marked, and not read a second time), the drawings sent that wait for the person to
+ * choose what to keep, the plans they found a moment ago (shown again, to add as
+ * floors), and the jobs still to run or running, shown and followed to their end. */
+async function resume(code, p, plansArea) {
+  const mine = ++resumed;
+  let jobs = [], incoming = [];
+  try {
+    ({ jobs } = await api(`projects/${code}/jobs`));
+    if (onProject(p, "edit")) ({ incoming } = await api(`projects/${code}/incoming`));
+  } catch {
+    return; // (an older Studio, or gone: nothing to pick up)
+  }
+  if (mine !== resumed || live.code !== code) return;
+  const going = jobs.filter((j) => j.state === "waiting" || j.state === "running");
+  markReading(going);
+  showWaiting(code, incoming);
+  // the person's latest plans found (no floors added from that drawing since), shown again
+  const ours = (j) => !j.by || !me || j.by.id === me.id;
+  const plans = jobs.find((j) => j.kind === "plans" && j.state === "done" && ours(j));
+  const addedSince = plans && jobs.some((j) => j.kind === "floors" && j.about === plans.about && j.submitted > plans.submitted);
+  if (plans && !addedSince && findingPlans === null && !plansArea.childElementCount) {
+    showPlans(code, plans.about, plansArea, plans.result, plans.ended);
+  }
+  const left = going.filter((j) => !following.has(j.id)).reverse(); // the oldest first, as they run
+  if (!left.length) return;
+  for (const job of left) {
+    try {
+      await runJob(job);
+    } catch (e) {
+      toast(`${job.title}: ${e.message}`, true);
+    }
+    if (mine !== resumed || live.code !== code) return; // another page is shown now
+  }
+  await projectPage(code); // what they changed
+}
+
+/** The floors the jobs still going read: marked "Reading…", their Read button held. */
+function markReading(going) {
+  const reading = new Set(going.flatMap((j) => j.floors || []));
+  for (const row of document.querySelectorAll("tr[data-floor]")) {
+    const on = reading.has(row.dataset.floor);
+    row.classList.toggle("reading", on);
+    const cell = row.querySelector("td.actions");
+    cell?.querySelector(".badge.reading")?.remove();
+    for (const b of cell?.querySelectorAll("button") || []) b.disabled = on;
+    if (on) cell?.prepend(el("span", { class: "badge reading", title: "Its drawing is being read: a job of Studio's" }, "Reading…"));
+  }
+}
+
+/** The drawings the person sent that wait for them to choose what to keep. */
+function showWaiting(code, incoming) {
+  const box = $("waiting");
+  if (!box) return;
+  box.replaceChildren(...(incoming.length ? [el("h3", {}, "Waiting for you"),
+    el("ul", { class: "drawings" }, incoming.map((w) => el("li", {},
+      el("span", { class: "grow" }, el("code", {}, w.name),
+        el("span", { class: "muted small" }, ` · ${w.found.length} private thing${w.found.length === 1 ? "" : "s"} found: choose what to keep`)),
+      el("button", { type: "button", class: "primary", onclick: () => decide(code, w) }, "Choose what to keep…"),
+      el("button", { type: "button", onclick: () => decide(code, w, null) }, "Don't add it"))))] : []));
+}
+
+/** A drawing that waits: what to keep chosen (the same dialog as when it was sent), or not
+ * added (``keep`` null); the page shown again. */
+async function decide(code, w, keep = undefined) {
+  if (keep === undefined) keep = await choosePrivate(w.name, w);
+  try {
+    if (keep === null) {
+      await api(`projects/${code}/incoming/${w.pending}/cancel`, {});
+      toast(`${w.name}: not added`);
+    } else {
+      const result = await runJob(api(`projects/${code}/incoming/${w.pending}`, { keep }));
+      toast(`${w.name} → ${result.drawing}: ${result.privacy.summary}. Its Words list shows everything left in it.`, false, 12000);
+    }
+  } catch (e) {
+    toast(`${w.name}: ${e.message}`, true);
+  }
+  await projectPage(code);
 }
 
 /** Deleting a project: everything in it goes, once its name is typed. */
@@ -294,6 +389,22 @@ function deleteCard(code, p) {
 
 // ---- drawings and plans ----------------------------------------------------------
 
+// Files being sent: until each is (Studio has it, and works on it whatever the page does),
+// leaving the page or reloading it is warned of, as it would lose the file.
+let sendingNow = 0;
+window.addEventListener("beforeunload", (e) => {
+  if (!sendingNow) return;
+  e.preventDefault();
+  e.returnValue = "A drawing is still being sent: leave, and it is not added.";
+});
+
+/** ``sent`` (a file being sent), counted until it is in. */
+function sending(sent) {
+  sendingNow++;
+  sent.then(() => sendingNow--, () => sendingNow--);
+  return sent;
+}
+
 function drawingsCard(code, p, plansArea) {
   const input = el("input", { type: "file", accept: ".dwg,.dxf", hidden: true, multiple: true });
   const drop = el("label", { class: "drop" }, input,
@@ -310,8 +421,8 @@ function drawingsCard(code, p, plansArea) {
     for (const file of files) {
       try {
         toast(`Uploading ${file.name}…`);
-        const sent = api(`projects/${code}/drawings/${encodeURIComponent(file.name)}${cleaned ? "" : "?private=0"}`,
-          undefined, { raw: file });
+        const sent = sending(api(`projects/${code}/drawings/${encodeURIComponent(file.name)}${cleaned ? "" : "?private=0"}`,
+          undefined, { raw: file }));
         if (cleaned) {
           let result = await runJob(sent);
           if (result.pending) { // a person says what of it to keep
@@ -345,6 +456,7 @@ function drawingsCard(code, p, plansArea) {
     el("h2", {}, "Drawings"),
     drop,
     privacy,
+    el("div", { id: "waiting" }), // (resume: the drawings sent that wait for the person to choose what to keep)
     p.drawings.length ? el("ul", { class: "drawings" }, p.drawings.map((d) =>
       el("li", {}, el("code", { class: "grow" }, d),
         el("a", { class: "button", href: `/api/projects/${encodeURIComponent(code)}/drawings/${encodeURIComponent(d)}/words`,
@@ -439,10 +551,9 @@ async function findPlans(code, drawing, area, units) {
   // Earlier results go: no floors are added from plans being found again.
   area.replaceChildren(el("section", { class: "card" }, el("h2", {}, `Plans in ${drawing}`),
     el("p", { class: "muted small" }, units ? `Finding the plans again, in ${UNITS[units]}…` : "Finding the plans…")));
-  let result, project;
+  let result;
   try {
     result = await runJob(api(`projects/${code}/drawings/${encodeURIComponent(drawing)}/plans`, units ? { units } : {}));
-    project = await api(`projects/${code}`); // its locations, buildings and floors, to add to
   } catch (e) {
     toast(e.message, true);
     area.replaceChildren();
@@ -450,6 +561,19 @@ async function findPlans(code, drawing, area, units) {
   } finally {
     findingPlans = null;
     showFindingPlans();
+  }
+  await showPlans(code, drawing, area, result);
+}
+
+/** The plans found in a drawing (``result``: what Find plans gave; ``found``: when, for
+ * plans found a while ago and shown again), offered as floors. */
+async function showPlans(code, drawing, area, result, found = null) {
+  let project;
+  try {
+    project = await api(`projects/${code}`); // its locations, buildings and floors, to add to
+  } catch (e) {
+    toast(e.message, true);
+    return;
   }
   const floorsKnown = result.plans.filter((x) => x.kind === "floor_plan" && x.floor !== null).map((x) => x.floor);
   const top = floorsKnown.length ? Math.max(...floorsKnown) : 0;
@@ -504,8 +628,10 @@ async function findPlans(code, drawing, area, units) {
       toast(e.message, true);
     }
   });
-  area.replaceChildren(el("section", { class: "card" },
+  const when = found ? new Date(found).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+  area.replaceChildren(el("section", { class: "card", "data-plans": drawing },
     el("h2", {}, `Plans in ${drawing}`),
+    when ? el("p", { class: "muted small" }, `Found at ${when}, before this page was opened again: add them as floors, or find them again.`) : null,
     el("p", { class: result.units_sure ? "muted small" : "unsure small" }, result.units_reason,
       result.units_sure ? "" : " If the plans below look the wrong size, choose the units."),
     el("p", { class: "muted small" }, result.levels.summary
@@ -686,7 +812,7 @@ function buildingsCard(code, p) {
         ? el("a", { class: "button", href: worldUrl(code, { building: b.id }), target: "_blank" }, "3D") : null),
     el("table", { class: "floors" },
       el("thead", {}, el("tr", {}, el("th", {}, "Floor"), el("th", {}, "From"), el("th", {}, "How it was read"), el("th", {}, ""))),
-      el("tbody", {}, b.floors.map((f) => el("tr", {},
+      el("tbody", {}, b.floors.map((f) => el("tr", { "data-floor": f.id },
         el("td", {}, el("strong", {}, f.name), el("div", { class: "muted small" }, `${f.ordinal} · ${f.id.split("-").at(-1)}`),
           el("div", { class: "on-floor", "data-on-floor": f.id })),
         el("td", {}, f.drawing || "–", el("div", { class: "muted small" }, f.view || "")),

@@ -33,6 +33,10 @@ each call needs is checked first in route() (the table is in studio/README.md):
     POST /api/projects/<code>/incoming/<id> {keep: [found ids]}  → job: kept without the
                                                rest of it, as drawing-N.dxf
     POST /api/projects/<code>/incoming/<id>/cancel   not added; the file as sent is gone
+    GET  /api/projects/<code>/incoming         drawings one sent that wait for one to choose what
+                                               of them to keep (a page opened again asks again)
+    GET  /api/projects/<code>/jobs             its jobs one may see: to run, running, or ended in
+                                               the last 30 minutes (with what they gave)
     GET  /api/projects/<code>/drawings/<name>/words  every word and string left in it (text), to look
                                                through for anything private left behind
     POST /api/projects/<code>/drawings/<name>/plans {units?}  → job: its units and the plans in it
@@ -80,7 +84,7 @@ import uuid
 import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from importlib.metadata import version
 from pathlib import Path
 from queue import Queue
@@ -117,6 +121,15 @@ DRAWING_NAME = re.compile(r"drawing-(\d+)\.dxf")
 
 # ---- jobs ------------------------------------------------------------------------
 
+JOBS_SHOWN_S = 30 * 60  # a project's jobs listed (a page opened again): to run, running, or ended this long ago
+JOBS_KEPT_S = 6 * 3600  # a job that ended this long ago is forgotten
+LOG_SHOWN = 20  # the last lines of a job's log, as a project's jobs are listed
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 @dataclass
 class Job:
     id: str
@@ -129,6 +142,15 @@ class Job:
     project: str | None = None  # the project it works on, and the part of it (scope): who may follow it
     scope: tuple[str, str | None] = ("project", None)
     user: str | None = None  # who started it
+    # what it does, for a page opened again while it runs (or just after): private (a
+    # drawing sent, cleaned), keep (cleaned as chosen), plans (found in a drawing), floors
+    # (added from a drawing, then read), read (floors read again), export…; ``about``:
+    # the drawing it is about (as sent, for private); ``floors``: those it reads
+    kind: str = ""
+    about: str | None = None
+    floors: list[str] = field(default_factory=list)
+    submitted: str = field(default_factory=_now_iso)
+    ended: str | None = None
 
     def say(self, line: str) -> None:
         self.log.append(line)
@@ -137,10 +159,20 @@ class Job:
         return {"id": self.id, "title": self.title, "state": self.state, "log": self.log,
                 "result": self.result, "error": self.error}
 
+    def listed(self, by: dict | None = None) -> dict:
+        """As a project's jobs are listed: what it is and how it is, its last lines, and
+        what it gave once it ended (``by``: who started it, as pages show people)."""
+        over = self.state in ("done", "failed")
+        return {"id": self.id, "title": self.title, "kind": self.kind, "about": self.about, "state": self.state,
+                "scope": list(self.scope), "floors": list(self.floors), "by": by, "submitted": self.submitted,
+                "started": self.started, "ended": self.ended, "log": self.log[-LOG_SHOWN:], "lines": len(self.log),
+                "result": self.result if over else None, "error": self.error}
+
 
 class Jobs:
     """Long steps, run one at a time in the background (drawings are large and the
-    language model has one slot)."""
+    language model has one slot). Each is kept, to be followed or listed again, until
+    it ended JOBS_KEPT_S ago."""
 
     def __init__(self, data: Path | None = None):
         self.data = data
@@ -149,8 +181,11 @@ class Jobs:
         threading.Thread(target=self._work, daemon=True).start()
 
     def submit(self, title: str, fn, project: str | None = None, scope: tuple = ("project", None),
-               user: str | None = None) -> Job:
-        job = Job(uuid.uuid4().hex[:12], title, project=project, scope=scope, user=user)
+               user: str | None = None, kind: str = "", about: str | None = None,
+               floors: list[str] | None = None) -> Job:
+        self._forget()
+        job = Job(uuid.uuid4().hex[:12], title, project=project, scope=scope, user=user, kind=kind, about=about,
+                  floors=list(floors or []))
         self._jobs[job.id] = job
         self._queue.put((job, fn))
         return job
@@ -160,14 +195,29 @@ class Jobs:
             raise NotFound(f"no job {job_id}")
         return self._jobs[job_id]
 
+    def of(self, project: str) -> list[Job]:
+        """A project's jobs, as a page opened again shows them: to run, running, or ended
+        within JOBS_SHOWN_S; the latest first."""
+        since = (datetime.now(timezone.utc) - timedelta(seconds=JOBS_SHOWN_S)).isoformat()
+        jobs = [j for j in list(self._jobs.values()) if j.project == project and (j.ended is None or j.ended >= since)]
+        return sorted(jobs, key=lambda j: j.submitted, reverse=True)
+
+    def _forget(self) -> None:
+        old = (datetime.now(timezone.utc) - timedelta(seconds=JOBS_KEPT_S)).isoformat()
+        for job_id, job in list(self._jobs.items()):
+            if job.ended is not None and job.ended < old:
+                self._jobs.pop(job_id, None)
+
     def _work(self):
         while True:
             job, fn = self._queue.get()
             try:
-                job.state, job.started = "running", datetime.now(timezone.utc).isoformat()
+                job.state, job.started = "running", _now_iso()
                 job.result = fn(job)
+                job.ended = _now_iso()  # (before its state: a job done has ended)
                 job.state = "done"
             except Exception as e:  # reported on the page
+                job.ended = _now_iso()
                 job.state, job.error = "failed", _message(e)
                 job.say(job.error)
                 traceback.print_exc()
@@ -481,11 +531,23 @@ class Studio:
             # waits, as it is what keeping nothing gives
             with self._lock:
                 self._pending[token] = {"code": code, "incoming": incoming, "name": name,
-                                        "doc": doc, "report": report, "choices": choices, "reader": reader}
+                                        "doc": doc, "report": report, "choices": choices, "reader": reader,
+                                        "user": uid, "since": _now_iso()}
             job.say(f"found {len(choices.found)} things to take out: choose what to keep")
             return {"pending": token, "name": name, "found": choices.listed(), "reader": report.model}
 
-        return self.jobs.submit(f"Looking for private information in {name}", run, project=code, user=uid)
+        return self.jobs.submit(f"Looking for private information in {name}", run, project=code, user=uid,
+                                kind="private", about=name)
+
+    def waiting(self, code: str, user: str | None = None, everyone: bool = False) -> list[dict]:
+        """The drawings sent to a project that wait for a person to choose what of their
+        private information to keep (what the page asks again): those ``user`` sent, or
+        everyone's; the oldest first. Each as the job that found it gave it."""
+        with self._lock:
+            mine = [(token, p) for token, p in self._pending.items()
+                    if p["code"] == code and (everyone or p.get("user") == user)]
+        return [{"pending": token, "name": p["name"], "found": p["choices"].listed(), "reader": p["report"].model,
+                 "since": p.get("since")} for token, p in sorted(mine, key=lambda x: x[1].get("since") or "")]
 
     def keep_private(self, code: str, token: str, body: dict, by=None) -> Job:
         """A drawing sent, kept without the private information found in it, all but
@@ -518,7 +580,8 @@ class Studio:
                     raise
             return self._keep_private(code, p["incoming"], doc, report, job, by)
 
-        return self.jobs.submit(f"Adding {p['name']} without its private information", run, project=code, user=uid)
+        return self.jobs.submit(f"Adding {p['name']} without its private information", run, project=code, user=uid,
+                                kind="keep", about=p["name"])
 
     def cancel_private(self, code: str, token: str) -> dict:
         with self._lock:
@@ -664,7 +727,7 @@ class Studio:
             return {"drawing": name, "units": used, "units_sure": sure, "units_reason": reason,
                     "units_chosen": bool(units), "units_said": header_units(doc), "levels": levels, "plans": out}
 
-        return self.jobs.submit(f"Reading the plans in {name}", run, project=code, user=_uid(by))
+        return self.jobs.submit(f"Reading the plans in {name}", run, project=code, user=_uid(by), kind="plans", about=name)
 
     def add_floors(self, code: str, body: dict, by=None) -> Job:
         drawing = self._drawing(code, body.get("drawing", ""))
@@ -803,7 +866,8 @@ class Studio:
                 self._stand_apart(code, set(made_buildings.values()), job, by=by)
             return {"floors": [f for fs in added.values() for f in fs]}
 
-        return self.jobs.submit(f"Adding floors from {drawing}", run, project=code, user=_uid(by))
+        return self.jobs.submit(f"Adding floors from {drawing}", run, project=code, user=_uid(by), kind="floors",
+                                about=drawing)
 
     def _stand_apart(self, code: str, new: set[str], job: Job, by=None) -> None:
         """A new building whose drawing would put it on top of another of its site (or
@@ -859,11 +923,13 @@ class Studio:
             return result
 
         return self.jobs.submit("Converting", run, project=code, user=_uid(by),
-                                scope=("floor", floor) if floor is not None else ("project", None))
+                                scope=("floor", floor) if floor is not None else ("project", None),
+                                kind="read", floors=[floor] if floor is not None else None)
 
     def _convert(self, code: str, floor_ids: list[str], job: Job, force: bool = False, by=None) -> dict:
         from .convert import convert_floor
 
+        job.floors = list(dict.fromkeys([*job.floors, *floor_ids]))  # (a page opened again shows them being read)
         self.reload_helpers()  # the GPU helpers as an admin last set them
         if self.model.available():
             job.say(f"reading texts with {self.model.name}")
@@ -1039,7 +1105,8 @@ class Studio:
                 job.say("not on the map yet (shapes are true, the position is not): " + ", ".join(loose))
             return {"file": name, "counts": manifest.counts}
 
-        return self.jobs.submit("Exporting", run, project=code, scope=("building", building), user=_uid(by))
+        return self.jobs.submit("Exporting", run, project=code, scope=("building", building), user=_uid(by),
+                                kind="export", about=building)
 
     def project_file(self, code: str) -> "Download":
         """The project as one file to send (*.storeypath-project): its workspace,
@@ -2027,6 +2094,31 @@ class Gate:
         if sight is None or not sight.scope(*job.scope):
             raise NotFound(f"no job {job_id}")
         return job
+
+    def jobs(self, code: str) -> dict:
+        """A project's jobs (Jobs.of) of the parts of it the person may see, as job() has
+        it, each with who started it."""
+        user = self._who()
+        sight = self.see(code)
+        everyone = self.accounts is None or user.role == "admin"
+        people: dict[str | None, dict | None] = {}
+
+        def who(uid):
+            if uid not in people:
+                found = self.accounts.user(uid) if self.accounts is not None and uid else None
+                people[uid] = found.view() if found is not None else None
+            return people[uid]
+
+        return {"jobs": [j.listed(who(j.user)) for j in self.studio.jobs.of(code) if everyone or sight.scope(*j.scope)]}
+
+    def waiting(self, code: str) -> dict:
+        """The drawings the person sent to a project (an admin: anyone's) that wait for them
+        to choose what to keep of what was found private in them: who may add drawings.
+        Only theirs: what is listed is the private texts found."""
+        user = self._who()
+        self.project(code, "edit")
+        everyone = self.accounts is None or user.role == "admin"
+        return {"incoming": self.studio.waiting(code, self.uid, everyone=everyone)}
 
     def opening(self):
         """Who may open a file: a new project, an admin or an engineer, who owns it (made

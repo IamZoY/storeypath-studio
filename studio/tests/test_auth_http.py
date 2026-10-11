@@ -184,6 +184,8 @@ ROWS = [
     Row("POST", C + "/owner", {"user": "nobody-known"}, ok=(400, "no such user"), passes={"admin"}),
     Row("GET", "/api/users", ok=200, passes={"admin", "owner"}),
     Row("GET", C + "/drawings/{drawing}/words", ok=200, passes={"admin", "owner"}, hidden=OUTSIDE),
+    Row("GET", C + "/jobs", ok=200, passes=PROJECT, hidden=OUTSIDE),
+    Row("GET", C + "/incoming", ok=200, passes={"admin", "owner"}, hidden=OUTSIDE),
     Row("POST", C + "/incoming/{token}", {}, ok=(404, "no drawing waiting"), passes={"admin", "owner"}, hidden=OUTSIDE),
     Row("POST", C + "/incoming/{token}/cancel", {}, ok=(404, "no drawing waiting"), passes={"admin", "owner"},
         hidden=OUTSIDE),

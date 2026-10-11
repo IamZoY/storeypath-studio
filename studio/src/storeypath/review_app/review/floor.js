@@ -67,6 +67,36 @@ export async function openFloor(id, spaceId = null, { keepView = false } = {}) {
   if (spaceId && state.byId.has(spaceId)) select(spaceId, { fly: true });
   showUnderlay();
   if (view3d.shown) refresh3d();
+  if (changed) followReading(id);
+}
+
+/** A reading of the floor that was going on as it was opened (the page opened again while
+ * it runs, or another person's): the floor shown as being read, as when it is read from
+ * here, until it ends; then shown as read. */
+async function followReading(id) {
+  let jobs;
+  try {
+    ({ jobs } = await request(`${BASE}/jobs`));
+  } catch {
+    return;
+  }
+  const job = jobs.find((j) => (j.state === "waiting" || j.state === "running") && (j.floors || []).includes(id));
+  if (!job || state.converting || state.floor?.id !== id) return;
+  state.converting = true;
+  emit("converting");
+  try {
+    await followJob(job, "The floor's drawing is being read…");
+    await refreshProject();
+    view3d.dirty.add(id); // built again in 3D (that floor alone)
+    state.converting = false;
+    if (state.floor?.id === id) await openFloor(id, state.selected, { keepView: true });
+  } catch (e) {
+    toast(`The reading did not finish: ${e.message}`, true);
+  } finally {
+    state.converting = false;
+    emit("converting");
+    say("");
+  }
 }
 
 /** The floor's drawing read again (a revised one too): IDs and corrections kept. */

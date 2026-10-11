@@ -7,8 +7,9 @@ the labels over the print, the light theme, another page's change shown live, 3D
 walking. And Studio's 3D page (world.html, tests/browser/world.mjs) on the demo campus
 (`storeypath demo`): each of its controls, a room's details, walking and its doors,
 presenting, the light theme, what its address says, and the way Review opens it. And the Item
-types page (tests/browser/itemtypes.mjs), and two people on one floor, one a room
-(tests/browser/together.mjs). Needs
+types page (tests/browser/itemtypes.mjs), two people on one floor, one a room
+(tests/browser/together.mjs), and pages opened again while Studio works
+(tests/browser/progress.mjs). Needs
 Node.js, Chrome (or Chromium; CHROME names another) and the viewer built."""
 
 import os
@@ -103,6 +104,61 @@ def test_many_people_on_a_floor_in_a_browser(tmp_path, monkeypatch):
                               team.tokens["sara"], team.tokens["khalid"]], capture_output=True, text=True, timeout=600)
         assert run.returncode == 0, run.stdout + run.stderr
     finally:
+        team.close()
+
+
+@pytest.mark.skipif(_missing() is not None, reason=_missing() or "")
+def test_work_in_progress_picked_up_by_a_page_opened_again(tmp_path, monkeypatch):
+    """Pages opened while Studio works (tests/browser/progress.mjs): finding plans held
+    twice here (each let go when the page says so), a reading of the ground floor after
+    each, and a drawing waiting for khalid to choose what to keep."""
+    import threading
+
+    import ezdxf
+
+    from people import Team
+    from sessions import call
+    from storeypath import accounts as acc
+    from storeypath import server as server_module
+
+    monkeypatch.setattr(acc, "SCRYPT_N", 2**10)
+    monkeypatch.delenv("STOREYPATH_ALLOWED_HOSTS", raising=False)
+    gates = [threading.Event(), threading.Event()]
+    held = iter(gates)
+    real = server_module.read_units
+
+    def waiting(*args, **kwargs):
+        assert next(held).wait(600), "never let go"
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(server_module, "read_units", waiting)
+    team = Team(tmp_path / "data")
+    try:
+        sheet = tmp_path / "villa.dxf"
+        doc = ezdxf.new()
+        doc.modelspace().add_line((0, 0), (10, 0))
+        doc.header["$LASTSAVEDBY"] = "someone"
+        doc.saveas(sheet)
+        _, job, _ = call(team.port, "PUT", f"/api/projects/{team.code}/drawings/Owner%20villa.dxf", raw=sheet.read_bytes(),
+                         token=team.tokens["khalid"])
+        assert team.finished("khalid", job)["result"]["pending"]
+        for _ in gates:
+            assert team("khalid", "POST", "drawings/hq-level-0.dxf/plans", {})[0] == 200
+            assert team("khalid", "POST", f"floors/{team.hq0}/convert", {})[0] == 200
+        run = subprocess.Popen(["node", str(HERE / "browser" / "progress.mjs"), f"http://127.0.0.1:{team.port}", team.code,
+                                team.tokens["khalid"], team.hq0], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        said = []
+        try:
+            for line in run.stdout:
+                said.append(line)
+                if line.startswith("release "):
+                    gates[int(line.split()[1]) - 1].set()
+            assert run.wait(timeout=600) == 0, "".join(said)
+        finally:
+            run.kill()
+    finally:
+        for gate in gates:
+            gate.set()
         team.close()
 
 

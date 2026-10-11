@@ -242,6 +242,8 @@ log).
 | `GET …/objects/<id>/stack` | view on its floor: the floors a lift or stairs serves, those they may see |
 | `POST …/objects/<id>/copy {floors}` | edit on its floor and on each floor it is added on (the rooms it is drawn on: a floor where someone else edits one is left out, and named) |
 | `GET jobs/<id>` | an admin, or view (now) on what it works on: its project, building or floor (who started it too, while they still may) |
+| `GET …/jobs` | any access: the project's jobs they may see (as `GET jobs/<id>`): to run, running, or ended in the last 30 minutes, the latest first, each with its kind, what it is about, the floors it reads, who started it, its last lines and (ended) what it gave. A page opened again (a refresh, another tab) shows them and follows those still going: a floor being read is marked so, plans found a moment ago are offered again |
+| `GET …/incoming` | edit on the project: the drawings they sent (an admin: anyone's) that wait for them to choose what to keep of what was found private in them, as the job that found it gave it; kept until chosen or cancelled (not across a restart of Studio) |
 | `GET backup` | admin, or `backup` |
 | `GET admin/helpers`, `POST admin/helpers {helpers}`, `POST admin/helpers/test {url, key?}` | admin: the GPU helpers ([Looking at the plans](#looking-at-the-plans-vision)) |
 

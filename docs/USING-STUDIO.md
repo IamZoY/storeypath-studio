@@ -46,6 +46,13 @@ project and everything in it, once you type its name.
   them, and puts a new building that would stand on top of another beside it on
   the site plan. A plan on a floor that a building has already can **replace its
   drawing**: its rooms keep their IDs.
+- **Work goes on if you leave.** Finding plans, cleaning a drawing and reading floors
+  run in Studio, not in the page: refresh it, open another tab or come back later,
+  and the project page picks up what is going on. It shows the job running, marks a
+  floor being read (*Reading…*; not read twice), offers again the plans you found in
+  the last half hour, and lists the drawings waiting for you to choose what to keep;
+  Review shows its floor being read. Only a file still being sent is lost when the
+  page goes, and the browser warns you first.
 - The project page shows, per floor, the drawing and plan it came from and *How it
   was read* (what each layer was taken to hold). *Read* reads a floor again whose
   reading failed. *Delete…* takes a floor out of its building (a wrong plan added,
