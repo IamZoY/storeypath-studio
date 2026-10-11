@@ -215,6 +215,10 @@ function watchProject(code) {
     live.floors.set(p.floor, p);
     showWhoIsOn();
   });
+  live.stream.reopened = () => { // who is on which floor: told again as it opens
+    live.floors.clear();
+    showWhoIsOn();
+  };
 }
 
 /** By each floor of the page: who is on it (small marks), and who is editing its rooms. */

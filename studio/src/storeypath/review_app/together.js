@@ -78,6 +78,10 @@ export function presence() {
     viewing: live.viewing.slice(), me: live.me };
 }
 
+/** The floor's stream as it is now (the browser tests): 0 opening, 1 open, 2 closed (let go
+ * while the page is hidden). */
+export const streamState = () => live.stream?.source.readyState ?? null;
+
 /** Who else is editing a room of the floor shown ({who, since}), or null: it is theirs to
  * change until they are done. */
 export function heldByOther(room) {

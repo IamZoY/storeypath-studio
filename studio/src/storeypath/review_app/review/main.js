@@ -9,7 +9,7 @@
 // add a tool, a command or an inspector section: README.md beside this folder.
 
 import { accountMenu, whoami } from "../account.js";
-import { setupTogether } from "../together.js";
+import { setupTogether, streamState } from "../together.js";
 import { editable, viewOnly } from "./access.js";
 import { keyMap, keysNow, setupActions, situation } from "./actions.js";
 import { followJob, request } from "./api.js";
@@ -91,7 +91,7 @@ setupStatusbar();
 setupHeld();
 
 // for the console, and the browser tests
-window.storeypathReview = { state, view3d, sel, run, commands: allCommands, tools: allTools, keys: allBindings, keyConflicts, keyMap, keysNow,
+window.storeypathReview = { state, view3d, sel, run, stream: streamState, commands: allCommands, tools: allTools, keys: allBindings, keyConflicts, keyMap, keysNow,
   effectiveMap, situation, select, selectAsset, setTool };
 
 (async () => {

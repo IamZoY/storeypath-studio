@@ -4,6 +4,7 @@
 // is outlined in his colour, the status bar says who is editing how many rooms, the room
 // chosen says it is his in a banner; placing an item in it is refused at once, saying
 // whose it is, and placing one in the room beside it is not; once he is done, it is free.
+// Her tab hidden lets its stream go, and opens it again (with what changed) when seen.
 // tests/test_review_browser.py starts the Studio (with accounts) and gives the sessions.
 
 import { dirname, join } from "node:path";
@@ -103,6 +104,25 @@ try {
   const [done] = await asKhalid("POST", `floors/${await R(() => window.storeypathReview.state.floor.id)}/release`, {});
   truly(done === 200, "Khalid let his rooms go");
   await until((id) => !document.querySelector(`#held path[data-held="${id}"]`), "his room no longer outlined", 15000, his.id);
+
+  // Sara's tab behind another: its stream let go (a browser keeps 6 connections a site for
+  // all its tabs; open streams would take them all), and opened again when she comes back,
+  // with what Khalid changed meanwhile
+  const seen = (hidden) => R((hidden) => {
+    for (const [k, v] of [["hidden", hidden], ["visibilityState", hidden ? "hidden" : "visible"]]) {
+      Object.defineProperty(document, k, { configurable: true, get: () => v });
+    }
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, hidden);
+  truly((await R(() => window.storeypathReview.stream())) === 1, "her stream is open");
+  await seen(true);
+  await until(() => window.storeypathReview.stream() === 2, "hidden: her stream let go", 20000);
+  const [renamed] = await asKhalid("POST", `objects/${his.id}`, { correction: { name: "Renamed meanwhile" } });
+  truly(renamed === 200, "Khalid renamed his room meanwhile");
+  await seen(false);
+  await until(() => window.storeypathReview.stream() === 1, "seen again: her stream open", 10000);
+  await until((id) => window.storeypathReview.state.byId.get(id)?.name === "Renamed meanwhile",
+    "what changed while it was let go is shown", 10000, his.id);
   truly(!page.errors.length, `the console said ${JSON.stringify(page.errors)}`);
   console.log("ok: many people on a floor, one a room");
 } catch (e) {
