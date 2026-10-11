@@ -424,3 +424,52 @@ def test_room_codes_on_a_room_tag_layer_are_read_as_the_rooms_labels(tmp_path):
     ex = extract_floor(drawing, a.profile)
     assert len(ex.spaces) == len(cells)
     assert all(s.label and s.label.startswith("RM-GF-") and s.number == s.label and not s.name for s in ex.spaces)
+
+
+def _corridor_floor(path, partitions="A-WALL-PART"):
+    """A wing 30 × 12 m: walls 0.2 m thick round it (A-WALL), a corridor 2 m wide down its
+    middle, and offices either side of it behind partitions 80 mm thick (drywall, on a
+    layer of their own), each office numbered."""
+    doc = ezdxf.new("R2018")
+    doc.units = ezdxf.units.MM
+    msp = doc.modelspace()
+    for name in ("A-WALL", partitions, "A-AREA-IDEN"):
+        doc.layers.add(name)
+    msp.add_lwpolyline([(0, 0), (30000, 0), (30000, 12000), (0, 12000)], close=True, dxfattribs={"layer": "A-WALL"})
+    msp.add_lwpolyline([(200, 200), (29800, 200), (29800, 11800), (200, 11800)], close=True, dxfattribs={"layer": "A-WALL"})
+
+    def pair(x0, y0, x1, y1):  # a partition: two lines 80 mm apart
+        if y0 == y1:
+            for dy in (-40, 40):
+                msp.add_line((x0, y0 + dy), (x1, y1 + dy), dxfattribs={"layer": partitions})
+        else:
+            for dx in (-40, 40):
+                msp.add_line((x0 + dx, y0), (x1 + dx, y1), dxfattribs={"layer": partitions})
+    pair(200, 5000, 29800, 5000)
+    pair(200, 7000, 29800, 7000)
+    n = 101
+    for x0, x1 in ((200, 6000), (6000, 12000), (12000, 18000), (18000, 24000), (24000, 29800)):
+        for y0, y1 in ((200, 5000), (7000, 11800)):
+            if x1 < 29800:
+                pair(x1, y0, x1, y1)
+            msp.add_text(str(n), dxfattribs={"layer": "A-AREA-IDEN", "height": 250}).set_placement(
+                ((x0 + x1) / 2, (y0 + y1) / 2))
+            n += 1
+    doc.saveas(path)
+
+
+@pytest.mark.parametrize("layer", ["A-WALL-PART", "INTERIOR WALLS", "WALL-GLZ"])
+def test_partitions_thinner_than_the_main_walls_are_walls_and_part_their_rooms(tmp_path, layer):
+    # Offices behind partitions (drywall, timber, glass) on a layer named for walls: the
+    # partitions are thinner than the main walls and, on a large plan, a small part of
+    # its frame, but in line with it. Read as glazing, no office was a room of its own:
+    # each ran into the corridor, which ran out of the building.
+    _corridor_floor(tmp_path / "wing.dxf", layer)
+    doc = read_drawing(tmp_path / "wing.dxf")
+    a = analyse(doc, 0.001, None, rules_only)
+    roles = {r.layer: r.roles for r in a.roles}
+    assert roles[layer] == ["walls"] and roles["A-WALL"] == ["walls"], roles
+    assert "partitions" in next(r.why for r in a.roles if r.layer == layer)
+    ex = extract_floor(doc, a.profile)
+    numbered = sorted(s.number for s in ex.spaces if s.number)
+    assert numbered == [str(n) for n in range(101, 111)], numbered

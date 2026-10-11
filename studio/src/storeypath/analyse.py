@@ -48,6 +48,7 @@ ANGLE_BIN_DEG = 2.0
 STRUCTURE_JOIN_M = 0.6  # paired lines this close (across a doorway) belong to one structure
 WALL_MIN_THICKNESS_M = 0.09  # thinner pairs are glazing, handrails or frames
 WALL_MIN_STRUCTURE_M = 8.0  # a layer of walls holds at least this much connected wall
+PARTITION_MIN_M = 0.04  # a partition (drywall, timber, glass) on a layer named for walls: at least this thick
 WALL_SHARE_OF_MAIN = 0.2  # …and at least this share of the plan's main wall structure
 # A plan may hold several buildings or wings standing apart: every structure this
 # big is part of the frame, not only the largest. Cars and furniture stay far smaller.
@@ -527,6 +528,11 @@ def _decide(st: LayerStats, is_room_name, frame: float, thickness: float | None,
     own_gap = st.thickness or 0.0
     in_frame = st.framed >= max(WALL_MIN_STRUCTURE_M / 2, 0.05 * frame) and st.framed >= 0.3 * st.paired
     thick_enough = thickness is None or own_gap >= 0.7 * thickness
+    # partitions: a layer named for walls (drywall, timber, glass) holding pairs of lines
+    # thinner than the main walls, and on a large plan a small part of its frame: the walls
+    # between offices and their corridor, not glazing (its name says so; its lines are walls')
+    partition = (hint == "wall" and not (in_frame and thick_enough) and own_gap >= PARTITION_MIN_M
+                 and st.paired >= WALL_MIN_STRUCTURE_M / 2 and st.paired >= 0.5 * st.length)
     if st.dashed > 0.5 * st.length:
         why.append("drawn dashed (hidden or centre lines)")
     elif st.ladder > st.paired:
@@ -535,6 +541,9 @@ def _decide(st: LayerStats, is_room_name, frame: float, thickness: float | None,
           and (hint not in OPENINGS_NAMED or st.framed >= MOSTLY_WALLS * frame)):
         roles.append("walls")
         why.append(f"{st.framed / 2:.0f} m of the wall frame, {own_gap:.2f} m thick")
+    elif "outlines" not in roles and partition:
+        roles.append("walls")
+        why.append(f"{st.paired / 2:.0f} m of partitions, {own_gap:.2f} m thick")
     elif st.small_closed >= 4 and st.small_closed * 2 >= st.entities - len(st.texts) and hint in (None, "column", "wall"):
         roles.append("walls")
         why.append(f"{st.small_closed} columns")

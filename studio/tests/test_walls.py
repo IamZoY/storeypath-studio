@@ -400,3 +400,22 @@ def test_slivers_broken_off_a_room_are_not_rooms(monkeypatch):
     lines = [LineString([(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)]), LineString([(0, 5), (10, 5)])]
     found = spaces_from_walls(lines, [], [], [], [], WallsConfig(), 0.5)
     assert sorted(round(p.area) for p in found.polygons) == [50, 50]
+
+
+def test_the_outline_spans_a_facade_of_columns_even_with_a_stray_line_in_the_walls():
+    # An overlay of the walls' areas can leave a line where two edges collapse onto each
+    # other; the walls then are a collection with no boundary, and no gap in the outside
+    # (between columns, where windows are) was spanned: the rooms behind such a facade
+    # fell outside the building and were not rooms at all.
+    from shapely.geometry import GeometryCollection, LineString
+
+    from storeypath.geometry import closing, polygonal
+    from storeypath.walls import _envelope
+
+    walls = [box(0, 0, 0.2, 10), box(0, 0, 6, 0.2), box(0, 9.8, 6, 10)]  # three sides
+    walls += [box(6, y, 6.4, y + 0.4) for y in (0.0, 2.0, 4.0, 6.0, 8.0, 9.6)]  # columns, 1.6 m apart
+    stray = GeometryCollection([*walls, LineString([(3, 0.1), (3.0001, 0.1)])])
+    room = Point(3, 5)
+    assert _envelope(polygonal(GeometryCollection(walls)), 4.0).covers(room)
+    assert _envelope(stray, 4.0).covers(room)
+    assert polygonal(stray).geom_type == "MultiPolygon" and closing(stray, 0.3).geom_type in ("Polygon", "MultiPolygon")

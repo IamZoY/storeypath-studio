@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from shapely.geometry import Polygon
+from shapely.geometry import MultiPolygon, Polygon
 
 
 def as_polygons(geom) -> list[Polygon]:
@@ -26,7 +26,17 @@ def closing(geom, r: float):
     """Fill gaps and slots narrower than 2·r while keeping square corners square.
     Square-cornered offsets can lose a thin piece that meets others at an angle: what
     was there is always kept."""
-    return geom.buffer(r, join_style="mitre").buffer(-r, join_style="mitre").union(geom)
+    return polygonal(geom.buffer(r, join_style="mitre").buffer(-r, join_style="mitre").union(geom))
+
+
+def polygonal(geom):
+    """An area's polygons alone (a Polygon or MultiPolygon): an overlay of areas can
+    leave a line where two edges collapse onto each other, and a collection holding
+    one has no boundary to measure."""
+    if geom.geom_type in ("Polygon", "MultiPolygon"):
+        return geom
+    parts = as_polygons(geom)
+    return parts[0] if len(parts) == 1 else MultiPolygon(parts) if parts else Polygon()
 
 
 def span_of_width(span, width: float) -> list[list[float]]:

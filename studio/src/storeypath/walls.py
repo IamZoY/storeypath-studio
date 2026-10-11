@@ -28,7 +28,7 @@ from shapely.geometry import LineString, MultiPolygon, Point, Polygon, box
 from shapely.geometry.polygon import orient
 from shapely.ops import unary_union
 
-from .geometry import as_polygons, closing
+from .geometry import as_polygons, closing, polygonal
 from .profile import WallsConfig
 
 SNAP_M = 0.03  # wall lines this close (×2) are joined; also the drawn line width
@@ -451,6 +451,7 @@ def _envelope(mass, max_opening: float):
     """The building's outline: the walls, with every gap in the outside up to
     ``max_opening`` spanned, and everything inside filled. Built from triangles
     between nearby wall points, so it works for walls of any shape and thickness."""
+    mass = polygonal(mass)  # (a line left in it by an overlay: no boundary, no triangles, no gaps spanned)
     pts = shapely.get_coordinates(shapely.segmentize(mass.boundary, max_opening / 4))
     # Points a fraction of a millimetre apart break the triangulation ("could not
     # locate vertex"): one per millimetre, snapped; failing still, without the triangles.
