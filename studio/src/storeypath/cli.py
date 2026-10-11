@@ -1049,9 +1049,11 @@ def export(
             _fail(f"no single building {building} in this project")
         building = found[0]
     data = workspace.resolve().parent.parent  # <data>/<code>/<code>.spproj: the Studio's item types, when it has them
-    cat = catalogues.load(data) if (data / catalogues.FILE_NAME).is_file() else catalogues.default_catalogue()
+    held = (data / catalogues.FILE_NAME).is_file()
+    cat = catalogues.load(data) if held else catalogues.default_catalogue()
     try:
-        manifest = write_valid_package(ws, workspace, output, building, cat, typer.echo, item_types=item_types)
+        manifest = write_valid_package(ws, workspace, output, building, cat, typer.echo, item_types=item_types,
+                                       models=catalogues.models_in(data) if held else None)
     except (ExportError, ValueError) as e:
         _fail(str(e))
     counts = ", ".join(f"{n} {k}" for k, n in manifest.counts.items())

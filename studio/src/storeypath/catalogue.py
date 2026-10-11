@@ -21,11 +21,12 @@ import re
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 CATALOGUE_FORMAT = "storeypath-catalogue"
 CATALOGUE_VERSION = 1
 FILE_NAME = "catalogue.json"
+MODELS = "models/"  # types' 3D models (format 0.9.2): in a package, and beside a data folder's catalogue.json
 _CODE_RE = re.compile(r"^[A-Z0-9]+(-[A-Z0-9]+)*$")
 SOFA_COLOR = "#8a837a"  # a warm grey
 # what older Studios gave their default types where this one gives otherwise: never a
@@ -75,6 +76,9 @@ class ItemType(BaseModel):
     elevation: float | None = None  # its bottom above the floor; None: on the floor, 1.2 m on a wall, under the ceiling
     color: str = "#8a8a8a"
     shape: Shape | None = None  # how it is drawn (SHAPES; format 0.9.1); None: by its code
+    # its 3D model in a package (format 0.9.2; models.py): models/<code>.glb, drawn in place of
+    # its shape in 3D; None: none. It follows from the models Studio has, never from what is sent
+    model: str | None = None
     # how many people work at one (a desk: 1; a bench of four: 4; a sofa: 0): counted
     # into the capacity of the room it stands in, unless the room's is set in review
     workplaces: int = Field(0, ge=0, le=100)
@@ -103,6 +107,17 @@ class ItemType(BaseModel):
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", v):
             raise ValueError(f"colour {v!r}: #rrggbb")
         return v.lower()
+
+    @model_validator(mode="after")
+    def _model(self):
+        if self.model is not None and self.model != model_path(self.code):
+            raise ValueError(f"{self.code}'s model is {model_path(self.code)}, not {self.model!r}")
+        return self
+
+
+def model_path(code: str) -> str:
+    """Where a type's 3D model is in a package (and beside a data folder's catalogue.json)."""
+    return f"{MODELS}{code}.glb"
 
 
 class Catalogue(BaseModel):
@@ -210,7 +225,18 @@ def load(folder: str | Path) -> Catalogue:
     if new or filled:
         cat.types.extend(new)
         save(folder, cat)
+    for t in cat.types:  # a model is a type's when its file is beside the catalogue
+        t.model = model_path(t.code) if (Path(folder) / model_path(t.code)).is_file() else None
     return cat
+
+
+def models_in(folder: str | Path):
+    """The models beside a data folder's catalogue.json (models/<code>.glb), by type code:
+    what an export carries."""
+    def model(code: str) -> bytes | None:
+        path = Path(folder) / model_path(code)
+        return path.read_bytes() if path.is_file() else None
+    return model
 
 
 def read(text: str) -> tuple[Catalogue, bool]:
@@ -337,5 +363,6 @@ def save(folder: str | Path, cat: Catalogue) -> None:
     cat.check()
     path = Path(folder) / FILE_NAME
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(cat.model_dump(), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps(cat.model_dump(exclude={"types": {"__all__": {"model"}}}), ensure_ascii=False, indent=1)
+                   + "\n", encoding="utf-8")
     tmp.replace(path)

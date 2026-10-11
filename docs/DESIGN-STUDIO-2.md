@@ -54,6 +54,7 @@ it), and a PostGIS geometry is made from it beside it (generated, GiST-indexed).
 | `drawings` | project, name, the bytes, size, sha256, the words left in it, who sent it and when; `incoming` for one waiting for a person |
 | `exports` | each export record (JSONB) in order, with the package's bytes as sent; a package kept from before records, on its own |
 | `catalogue`, `settings` | the organization's item types; what else is the whole Studio's |
+| `item_models` | item types' 3D models (format 0.9.2): each as it came and as packages carry it |
 | `users`, `project_access`, `grants`, `sessions`, `audit` | accounts, as studio.db had them (a project's owner stays in `project_access`: who a code is shared with is kept before a project is opened and after it is gone) |
 | `history` | every change: seq, project, version, at, who, part, kind, floor(s), targets, before, after, undoes/redoes |
 | `floor_locks` | floor (PK), who, session, since, last seen: who is editing each floor (§3) |

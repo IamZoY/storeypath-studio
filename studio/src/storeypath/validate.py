@@ -13,6 +13,7 @@ from typing import TypeVar
 from pydantic import BaseModel, ValidationError
 
 from .catalogue import Catalogue
+from .models import model_problem
 from .ids import LEVELS, MAX_ID_LENGTH, is_item_id, is_legacy_item_id, parse_id
 from .package import (ASSET_IDS_FROM, COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM, Changes,
                       FeatureCollection, ItemFeature, Manifest, Navigation, version_problem, version_tuple)
@@ -180,6 +181,11 @@ def validate_package(path: str | Path) -> list[str]:
             codes = None
             if "catalogue" in manifest.files and (cat := load(manifest.files["catalogue"], Catalogue)) is not None:
                 codes = {t.code for t in cat.types}
+                for t in cat.types:  # each type's 3D model (0.9.2): there, and as the format says
+                    if t.model is not None:
+                        why = model_problem(z.read(t.model)) if t.model in names else "not in the package"
+                        if why:
+                            errors.append(f"{t.model}: {t.code}'s model: {why}")
             fc = load(manifest.files["items"], FeatureCollection[ItemFeature])
             if fc is not None:
                 items = fc.features

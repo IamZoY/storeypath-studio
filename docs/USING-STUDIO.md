@@ -209,6 +209,16 @@ the floors in review.
   project file, and lists the types it brings, each *New*, *Changed* (and what) or
   *Same*: the new ones are chosen, a changed one only when you choose it. *Save as a
   file* gives the catalogue, or the types ticked, as a `.json` for another Studio.
+- **A 3D model** for a type: in its editor, *Add a model (.glb)…* takes a supplier's
+  model of the real thing as binary glTF (Blender and most 3D tools export it). Studio
+  reads it in metres (one drawn in centimetres or millimetres, by its size), simplifies
+  it to a few thousand triangles, and gives the type its size, so the plan and 3D agree;
+  it shows the model from its front and from above. Its front should face +Z, as glTF
+  has it: *Turn 90°* turns it until it does. Its items are then drawn in 3D as the model,
+  made the type's size (change the size and it is stretched to it); the plan still draws
+  the type's shape. *Replace…* sends another, *Remove* draws the shape again. A
+  compressed model (Draco, meshopt) or one whose textures are files of their own is
+  refused: export it again as one plain `.glb`.
 - **Place** one with the *Place* tool (<kbd>I</kbd>): choose its type in the tool's
   options and click where it goes (or right-click, *Place an item here…*). Drag it to
   move it; <kbd>R</kbd> turns it 90°, <kbd>,</kbd> and <kbd>.</kbd> by 15°, the arrows

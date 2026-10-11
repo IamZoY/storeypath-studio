@@ -24,7 +24,7 @@ from .bake import WORLD_DIR, bake_world
 from .geometry import as_polygons
 from .georef import Georeferencer
 from .ids import child_id, is_item_id, make_id
-from .catalogue import GRADES, Catalogue, default_catalogue
+from .catalogue import GRADES, MODELS, Catalogue, default_catalogue
 from .package import (
     FILES,
     OBJECTS_CSV_COLUMNS,
@@ -565,7 +565,7 @@ ITEM_TYPES = ("used", "all")  # what a package's catalogue.json holds: the types
 
 def export_package(ws: Workspace, out_path, *, building: str | None = None, record: bool = True,
                    bake: bool = True, say=None, catalogue: Catalogue | None = None,
-                   item_types: str = "used") -> Manifest:
+                   item_types: str = "used", models=None) -> Manifest:
     """Write the package of one building (its ID; may be left out when the project
     has one) to ``out_path`` (a path, or a binary file object): the building, its
     floors and what is on them, and its location; its manifest's ``scope`` names it.
@@ -586,7 +586,8 @@ def export_package(ws: Workspace, out_path, *, building: str | None = None, reco
 
     Its catalogue.json holds the item types its items use, each once (``item_types``
     "used"), or the whole ``catalogue`` ("all": to hand another system every type, for
-    it to choose which to take)."""
+    it to choose which to take); with them the 3D model of each that has one
+    (``models``: a type's code → its file, or None; format 0.9.2)."""
     if item_types not in ITEM_TYPES:
         raise ExportError(f"item types: {' or '.join(ITEM_TYPES)}, not {str(item_types)[:20]!r}")
     known = building_ids(ws)
@@ -598,11 +599,11 @@ def export_package(ws: Workspace, out_path, *, building: str | None = None, reco
     if building not in known:
         raise ExportError(f"no building {building} in this project")
     return _package(ws, out_path, [building], record=record, bake=bake, say=say, catalogue=catalogue,
-                    item_types=item_types)
+                    item_types=item_types, models=models)
 
 
 def preview_package(ws: Workspace, out_path, *, buildings: list[str] | None = None,
-                    catalogue: Catalogue | None = None) -> Manifest:
+                    catalogue: Catalogue | None = None, models=None) -> Manifest:
     """The project as it is now, for Studio's own viewers: some buildings (all of them
     without ``buildings``), not entered as an export and not pre-built, with the whole
     catalogue (a type no item has yet may be placed in them). It is never sent anywhere:
@@ -613,11 +614,12 @@ def preview_package(ws: Workspace, out_path, *, buildings: list[str] | None = No
         raise ExportError(f"no building {', '.join(unknown)} in this project")
     if not buildings:
         raise ExportError("no building to show")
-    return _package(ws, out_path, buildings, record=False, bake=False, catalogue=catalogue, item_types="all")
+    return _package(ws, out_path, buildings, record=False, bake=False, catalogue=catalogue, item_types="all",
+                    models=models)
 
 
 def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bake: bool, say=None,
-             catalogue: Catalogue | None = None, item_types: str = "used") -> Manifest:
+             catalogue: Catalogue | None = None, item_types: str = "used", models=None) -> Manifest:
     cat = catalogue or default_catalogue()
     buildings = sorted(set(buildings))
     locations = {b.rsplit("-", 1)[0] for b in buildings}
@@ -699,6 +701,13 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     # what the package's other files say (capacity, kiosks) is worked out from the whole
     used = {f["properties"]["type"] for f in features["items"]}
     written = cat if item_types == "all" else cat.model_copy(update={"types": [t for t in cat.types if t.code in used]})
+    # and their 3D models (format 0.9.2), each once: a type whose model is not to be had
+    # here says it has none, and is drawn by its shape
+    model_files = {t.model: data for t in written.types if t.model and models is not None and (data := models(t.code))}
+    written = written.model_copy(update={"types": [t.model_copy(update={"model": t.model if t.model in model_files
+                                                                          else None}) for t in written.types]})
+    if model_files:
+        manifest.files["models"] = MODELS
 
     # the walking network of its building (format 0.8)
     navigation = navigation_file(ws, buildings, cat, placed)
@@ -708,7 +717,7 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     if bake:  # the package as it is so far, for the baker to read
         with tempfile.TemporaryDirectory(prefix="storeypath-export-") as tmp:
             plain = Path(tmp) / "package.storeypath"
-            _write(plain, ws, manifest, features, changes, {}, written, navigation)
+            _write(plain, ws, manifest, features, changes, model_files, written, navigation)
             world, why = bake_world(plain)
         if world:
             manifest.files["world"] = WORLD_DIR
@@ -717,7 +726,7 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     if isinstance(out_path, (str, Path)):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-    _write(out_path, ws, manifest, features, changes, world, written, navigation)
+    _write(out_path, ws, manifest, features, changes, {**world, **model_files}, written, navigation)
 
     if record:
         held_now = dict(held_before)

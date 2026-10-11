@@ -110,12 +110,12 @@ function download(types, name) {
  * types); ``toast`` says how things went. */
 export async function itemTypesPage(page, me, toast) {
   const may = Boolean(me?.local || me?.role === "admin" || (me?.capabilities || []).includes("catalogue"));
-  const view = { types: [], query: "", category: "all", retired: false, open: null, chosen: new Set() };
+  const view = { types: [], models: {}, query: "", category: "all", retired: false, open: null, chosen: new Set() };
   // the type being edited: a copy (``code`` its code here; null: a new one)
   let edit = null;
 
   const load = async () => {
-    view.types = (await api("catalogue")).types;
+    [view.types, view.models] = await Promise.all([api("catalogue").then((c) => c.types), api("catalogue/models")]);
   };
 
   /** One type saved: this Studio's catalogue as it is now, with ``t`` in it (in place of the
@@ -182,6 +182,7 @@ export async function itemTypesPage(page, me, toast) {
       t.workplaces ? el("span", { class: "badge", title: "How many people work at one: counted into a room's capacity" },
         `${t.workplaces} ${t.workplaces === 1 ? "workplace" : "workplaces"}`) : null,
       t.grade ? el("span", { class: "badge" }, GRADES.find(([g]) => g === t.grade)?.[1] ?? t.grade) : null,
+      t.model ? el("span", { class: "badge", title: "Shown in 3D as its own model" }, "3D") : null,
       t.retired ? el("span", { class: "badge warn" }, "Retired") : null));
   };
 
@@ -314,6 +315,8 @@ export async function itemTypesPage(page, me, toast) {
       } });
 
     const problems = el("ul", { class: "it-problems", "aria-live": "polite" });
+    const modelPart = el("div", { class: "it-model" });
+    drawModel(modelPart, t, isNew, off);
     const save = el("button", { type: "submit", class: "primary", hidden: off }, isNew ? "Add type" : "Save");
     const form = el("form", { class: "it-form", onsubmit: async (e) => {
       e.preventDefault();
@@ -344,6 +347,7 @@ export async function itemTypesPage(page, me, toast) {
       el("label", { class: "field" }, "Arabic name", input("name_ar", { dir: "rtl", lang: "ar" }))),
     el("div", { class: "field" }, el("span", {}, "Category"), segmented("category", CATEGORIES.map(([c, n]) => [c, n === "Appliances" ? "Appliance" : n]))),
     el("div", { class: "field" }, el("span", {}, "How it is drawn"), shapes),
+    el("div", { class: "field" }, el("span", {}, "3D model"), modelPart),
     el("div", { class: "it-three" },
       el("label", { class: "field" }, "Width (m)", num("width", { "data-testid": "it-width" })),
       el("label", { class: "field" }, "Depth (m)", num("depth")),
@@ -393,6 +397,88 @@ export async function itemTypesPage(page, me, toast) {
     off ? el("p", { class: "muted small" }, "Only admins, and those an admin lets, change item types.") : null);
     editor.replaceChildren(form);
     changed();
+  }
+
+  // ---- its 3D model (format 0.9.2) -----------------------------------------------------------
+
+  /** The editor's 3D model part, for the type ``t`` being edited: its pictures (front, top)
+   * and what it is, Turn, Replace and Remove; or Add one. A model sent is made into the
+   * small file packages carry (Studio's models.py), and the type takes its size: what the
+   * form holds besides is kept as it is, unsaved. */
+  function drawModel(box, t, isNew, off) {
+    const info = view.models[t.code];
+    const busy = (what) => {
+      box.replaceChildren(el("p", { class: "muted small", role: "status" }, what));
+    };
+    const done = async (made, said) => {
+      await load();
+      const now = view.types.find((x) => x.code === t.code);
+      Object.assign(t, { width: now.width, depth: now.depth, height: now.height, model: now.model });
+      toast(said(made));
+      renderList();
+      renderEditor();
+    };
+    const send = async (file) => {
+      if (!file) return;
+      busy(`Reading ${file.name}…`);
+      try {
+        const made = await api(`catalogue/types/${encodeURIComponent(t.code)}/model?name=${encodeURIComponent(file.name)}`,
+          undefined, { raw: await file.arrayBuffer() });
+        await done(made, (m) => `Model added: ${m.triangles.toLocaleString()} triangles`
+          + (m.source_triangles > m.triangles ? ` (simplified from ${m.source_triangles.toLocaleString()})` : "")
+          + `; ${t.code} is now ${m.size.map(metres).join(" × ")} m`);
+      } catch (err) {
+        toast(`Not added: ${err.message}`, true);
+        drawModel(box, t, isNew, off);
+      }
+    };
+    const pick = el("input", { type: "file", accept: ".glb,model/gltf-binary", hidden: true, onchange: () => send(pick.files[0]) });
+    if (!t.model || !info) {
+      box.replaceChildren(
+        el("p", { class: "muted small" }, isNew ? "Add the type first, then its model." : "None: in 3D it is drawn as its shape."),
+        off || isNew ? null : el("div", { class: "row" }, pick, el("button", { type: "button", class: "btn-sm", onclick: () => pick.click() },
+          "Add a model (.glb)…")),
+        off || isNew ? null : el("p", { class: "muted small" }, "A binary glTF file of the thing itself, its front facing +Z (as glTF has "
+          + "it): simplified, and the type given its size. The plan still draws its shape."));
+      return;
+    }
+    const v = encodeURIComponent(info.sha256.slice(0, 12));
+    const src = (view) => `/api/catalogue/models/${encodeURIComponent(t.code)}.svg?view=${view}&v=${v}`;
+    const units = { cm: "drawn in centimetres", mm: "drawn in millimetres" }[info.units];
+    box.replaceChildren(
+      el("div", { class: "it-model-views" },
+        el("figure", {}, el("img", { src: src("front"), alt: `${t.name_en || t.code}'s model from its front`, loading: "lazy" }),
+          el("figcaption", { class: "muted small" }, "Front")),
+        el("figure", {}, el("img", { src: src("top"), alt: `${t.name_en || t.code}'s model from above, its front down`, loading: "lazy" }),
+          el("figcaption", { class: "muted small" }, "From above, front down"))),
+      el("p", { class: "small" }, el("strong", {}, info.name), " · ",
+        `${info.triangles.toLocaleString()} triangles`,
+        info.source_triangles > info.triangles ? ` (simplified from ${info.source_triangles.toLocaleString()})` : "",
+        units ? ` · ${units}` : "", info.turn ? ` · turned ${info.turn}°` : ""),
+      el("p", { class: "muted small" }, `Its own size ${info.size.map(metres).join(" × ")} m. In 3D it is made the type's size; `
+        + "the plan still draws its shape."),
+      off ? null : el("div", { class: "row" }, pick,
+        el("button", { type: "button", class: "btn-sm", title: "Its front faces the next side (a quarter, counter-clockwise from above)",
+          onclick: async () => {
+            busy("Turning it…");
+            try {
+              await done(await api(`catalogue/types/${encodeURIComponent(t.code)}/model/turn`, { turn: (info.turn + 90) % 360 }),
+                (m) => `Turned: its front faces the other way; ${t.code} is now ${m.size.map(metres).join(" × ")} m`);
+            } catch (err) {
+              toast(err.message, true);
+              drawModel(box, t, isNew, off);
+            }
+          } }, "Turn 90°"),
+        el("button", { type: "button", class: "btn-sm btn-ghost", onclick: () => pick.click() }, "Replace…"),
+        el("button", { type: "button", class: "btn-sm btn-ghost", title: "Drawn as its shape again (its size kept)", onclick: async () => {
+          busy("Removing it…");
+          try {
+            await done(await api(`catalogue/types/${encodeURIComponent(t.code)}/model/delete`, {}), () => `${t.code}'s model removed`);
+          } catch (err) {
+            toast(err.message, true);
+            drawModel(box, t, isNew, off);
+          }
+        } }, "Remove")));
   }
 
   // ---- taking types from a file -------------------------------------------------------------

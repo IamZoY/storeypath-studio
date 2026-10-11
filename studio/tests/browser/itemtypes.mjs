@@ -210,6 +210,65 @@ test("a file that is not one of item types is refused, saying why", async () => 
   page.errors.length = 0; // (the refusal's 400, as the console tells it)
 });
 
+/** A binary glTF of a box ``w`` x ``h`` x ``d`` (glTF's x, y, z) in centimetres: red, its front (+Z) blue. */
+function boxGlb(w, h, d) {
+  const p = [];
+  for (const x of [-w / 2, w / 2]) for (const y of [0, h]) for (const z of [-d / 2, d / 2]) p.push(x, y, z);
+  const body = [0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 0, 4, 6, 0, 6, 2];
+  const front = [1, 3, 7, 1, 7, 5];
+  const pos = Buffer.from(new Float32Array(p).buffer);
+  const parts = [pos, Buffer.from(new Uint32Array(body).buffer), Buffer.from(new Uint32Array(front).buffer)];
+  const bin = Buffer.concat(parts);
+  const views = [], at = [0, pos.length, pos.length + parts[1].length];
+  parts.forEach((b, i) => views.push({ buffer: 0, byteOffset: at[i], byteLength: b.length }));
+  const json = Buffer.from(JSON.stringify({
+    asset: { version: "2.0" }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1, material: 0 }, { attributes: { POSITION: 0 }, indices: 2, material: 1 }] }],
+    materials: [[0.8, 0.05, 0.05], [0.05, 0.05, 0.8]].map((c) => ({ pbrMetallicRoughness: { baseColorFactor: [...c, 1], metallicFactor: 0 } })),
+    buffers: [{ byteLength: bin.length }], bufferViews: views,
+    accessors: [{ bufferView: 0, componentType: 5126, count: 8, type: "VEC3", min: [-w / 2, 0, -d / 2], max: [w / 2, h, d / 2] },
+      { bufferView: 1, componentType: 5125, count: body.length, type: "SCALAR" },
+      { bufferView: 2, componentType: 5125, count: front.length, type: "SCALAR" }],
+  }));
+  const text = Buffer.concat([json, Buffer.alloc((4 - (json.length % 4)) % 4, 0x20)]);
+  const head = Buffer.alloc(12), th = Buffer.alloc(8), bh = Buffer.alloc(8);
+  head.write("glTF", 0);
+  head.writeUInt32LE(2, 4);
+  head.writeUInt32LE(12 + 8 + text.length + 8 + bin.length, 8);
+  th.writeUInt32LE(text.length, 0);
+  th.writeUInt32LE(0x4e4f534a, 4);
+  bh.writeUInt32LE(bin.length, 0);
+  bh.writeUInt32LE(0x004e4942, 4);
+  return Buffer.concat([head, th, text, bh, bin]);
+}
+
+test("a type's 3D model: added from a .glb, pictured, the type given its size; turned; removed", async () => {
+  const file = join(folder, "armchair.glb");
+  writeFileSync(file, boxGlb(80, 90, 70)); // (centimetres: read so by its size)
+  await click('.it-row[data-code="SOFA"]');
+  await until(() => [...document.querySelectorAll(".it-model button")].some((b) => /Add a model/.test(b.textContent)), "Add a model");
+  truly(await R(() => /drawn as its shape/.test(document.querySelector(".it-model").textContent)), "none yet");
+  const { root } = await page.send("DOM.getDocument", { depth: -1 });
+  const { nodeId } = await page.send("DOM.querySelector", { nodeId: root.nodeId, selector: ".it-model input[type=file]" });
+  await page.send("DOM.setFileInputFiles", { nodeId, files: [file] });
+  await until(() => [...document.querySelectorAll(".it-model-views img")].filter((i) => i.complete && i.naturalWidth > 0).length === 2,
+    "its pictures, from the front and above", 30000);
+  const said = await R(() => document.querySelector(".it-model").textContent);
+  truly(/armchair\.glb/.test(said) && /12 triangles/.test(said) && /centimetres/.test(said), `what it is: ${said}`);
+  const sofa = await typeOf("SOFA");
+  truly(sofa.model === "models/SOFA.glb" && sofa.width === 0.8 && sofa.depth === 0.7 && sofa.height === 0.9, `the type: ${JSON.stringify(sofa)}`);
+  truly(await R(() => document.querySelector('[data-testid="it-width"]').value) === "0.8", "the form shows its size");
+  truly(await R(() => Boolean(document.querySelector('.it-row[data-code="SOFA"] .badge')?.parentElement.textContent.includes("3D"))), "3D in the list");
+  await R(() => [...document.querySelectorAll(".it-model button")].find((b) => b.textContent === "Turn 90°").click());
+  const turned = await soon(() => typeOf("SOFA"), (t) => t.width === 0.7);
+  truly(turned.width === 0.7 && turned.depth === 0.8, `turned: ${JSON.stringify(turned)}`);
+  await until(() => /turned 90°/.test(document.querySelector(".it-model")?.textContent || ""), "said turned");
+  await R(() => [...document.querySelectorAll(".it-model button")].find((b) => b.textContent === "Remove").click());
+  await until(() => /drawn as its shape/.test(document.querySelector(".it-model")?.textContent || ""), "removed");
+  truly((await typeOf("SOFA")).model === null, "no model");
+  noErrors("a type's 3D model");
+});
+
 test("a project's packages: their item types, those its items use or every one", async () => {
   await R((c) => (location.hash = `#/p/${c}`), code); // (the same page: its address's hash alone changes)
   const options = await until(() => {

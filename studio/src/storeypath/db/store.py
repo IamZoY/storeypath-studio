@@ -1243,7 +1243,8 @@ class ProjectStore:
     def catalogue(self):
         """The item types of every project (catalogue.py): the default ones the first
         time, and the default types a newer Studio brings that it lacks (and what it
-        says of its own types where they say nothing) added. A copy of one's own."""
+        says of its own types where they say nothing) added; each type's ``model`` as
+        Studio has one (item_models). A copy of one's own."""
         from .. import catalogue as catalogues
 
         with self.db.connection() as conn:
@@ -1255,9 +1256,8 @@ class ProjectStore:
         with self.db.connection() as conn:
             types = [t for (t,) in conn.execute("SELECT type FROM catalogue ORDER BY position")]
         if version is None and not types:
-            cat = catalogues.default_catalogue()
-            self.save_catalogue(cat)
-            return cat
+            self.save_catalogue(catalogues.default_catalogue())
+            return self.catalogue()
         cat, filled = catalogues.read(json.dumps({"types": types}))
         cat.check()
         known = {t.code for t in cat.types}
@@ -1265,20 +1265,78 @@ class ProjectStore:
         if new or filled:
             cat.types.extend(new)
             self.save_catalogue(cat)
-            return cat
+            return self.catalogue()
+        with self.db.connection() as conn:
+            modelled = {c for (c,) in conn.execute("SELECT code FROM item_models")}
+        for t in cat.types:
+            t.model = catalogues.model_path(t.code) if t.code in modelled else None
         self._catalogue = (version, cat.model_copy(deep=True))
         return cat
 
     def save_catalogue(self, cat) -> None:
+        """The catalogue replaced (its types' ``model`` is not kept: it follows from the
+        models Studio has)."""
         cat.check()
         with self.db.transaction() as conn:
-            row = conn.execute("INSERT INTO settings (key, value) VALUES ('catalogue', '1') ON CONFLICT (key) DO "
-                               "UPDATE SET value = to_jsonb(settings.value::text::bigint + 1) RETURNING value").fetchone()
+            self._catalogue_changed(conn)
             conn.execute("DELETE FROM catalogue")
             with conn.cursor() as cur:
                 cur.executemany("INSERT INTO catalogue (code, position, type) VALUES (%s, %s, %s)",
-                                [(t.code, i, _j(t.model_dump(mode="json"))) for i, t in enumerate(cat.types)])
-        self._catalogue = (row[0], cat.model_copy(deep=True))
+                                [(t.code, i, _j(t.model_dump(mode="json", exclude={"model"})))
+                                 for i, t in enumerate(cat.types)])
+
+    def _catalogue_changed(self, conn) -> None:
+        """The catalogue's version moved on (in ``conn``'s transaction): every Studio on the
+        database reads it again."""
+        conn.execute("INSERT INTO settings (key, value) VALUES ('catalogue', '1') ON CONFLICT (key) DO "
+                     "UPDATE SET value = to_jsonb(settings.value::text::bigint + 1)")
+        self._catalogue = None
+
+    # ---- item types' 3D models (models.py) ---------------------------------------------
+
+    def model_file(self, code: str) -> bytes | None:
+        """The model a package carries for the type ``code``, or None."""
+        with self.db.connection() as conn:
+            row = conn.execute("SELECT glb FROM item_models WHERE code = %s", (code,)).fetchone()
+        return bytes(row[0]) if row else None
+
+    def model_source(self, code: str) -> dict | None:
+        """The file a type's model was made from, as it came: {name, source, turn}."""
+        with self.db.connection() as conn:
+            row = conn.execute("SELECT name, source, turn FROM item_models WHERE code = %s", (code,)).fetchone()
+        return {"name": row[0], "source": bytes(row[1]), "turn": row[2]} if row else None
+
+    def models(self) -> dict[str, dict]:
+        """What each type's model is, by its code (no bytes): name, triangles, size…"""
+        with self.db.connection() as conn:
+            rows = conn.execute("SELECT code, name, source_sha256, source_triangles, units, turn, sha256, triangles, "
+                                "size, added_by, added_at, length(source), length(glb) FROM item_models").fetchall()
+        return {r[0]: {"name": r[1], "source_sha256": r[2], "source_triangles": r[3], "units": r[4], "turn": r[5],
+                       "sha256": r[6], "triangles": r[7], "size": r[8], "added_by": r[9], "added_at": r[10].isoformat(),
+                       "source_bytes": r[11], "bytes": r[12]} for r in rows}
+
+    def save_model(self, code: str, name: str, source: bytes, model, turn: int, by=None) -> None:
+        """A type's model (models.Model) kept, with the file it was made from; one it had
+        replaced."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO item_models (code, name, source, source_sha256, source_triangles, units, turn, glb, sha256, "
+                "triangles, size, added_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (code) "
+                "DO UPDATE SET name = EXCLUDED.name, source = EXCLUDED.source, source_sha256 = EXCLUDED.source_sha256, "
+                "source_triangles = EXCLUDED.source_triangles, units = EXCLUDED.units, turn = EXCLUDED.turn, "
+                "glb = EXCLUDED.glb, sha256 = EXCLUDED.sha256, triangles = EXCLUDED.triangles, size = EXCLUDED.size, "
+                "added_by = EXCLUDED.added_by, added_at = now()",
+                (code, name, source, hashlib.sha256(source).hexdigest(), model.source_triangles, model.units, turn,
+                 model.glb, hashlib.sha256(model.glb).hexdigest(), model.triangles, _j(list(model.size)), _j(who_of(by))))
+            self._catalogue_changed(conn)
+
+    def drop_model(self, code: str) -> bool:
+        """A type's model taken away (it is drawn by its shape again): whether it had one."""
+        with self.db.transaction() as conn:
+            gone = conn.execute("DELETE FROM item_models WHERE code = %s", (code,)).rowcount
+            if gone:
+                self._catalogue_changed(conn)
+        return bool(gone)
 
 
 # ---- what differs ----------------------------------------------------------------

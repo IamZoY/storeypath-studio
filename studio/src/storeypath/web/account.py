@@ -61,6 +61,53 @@ def save_catalogue(request: Request, may: May, studio: TheStudio, body: Body):
     return answer(request, saved)
 
 
+@calls.get("/api/catalogue/models")
+def models(request: Request, may: May, studio: TheStudio):
+    """What each item type's 3D model is, by its code (models.py)."""
+    may.logged_in()
+    return answer(request, studio.models())
+
+
+@calls.get("/api/catalogue/models/{code}.glb")
+def model_file(code: str, request: Request, may: May, studio: TheStudio):
+    may.logged_in()
+    return answer(request, studio.model_file(code))
+
+
+@calls.get("/api/catalogue/models/{code}.svg")
+def model_picture(code: str, request: Request, may: May, studio: TheStudio, query: Query):
+    may.logged_in()
+    return answer(request, studio.model_picture(code, (query.get("view") or ["front"])[0]))
+
+
+@calls.put("/api/catalogue/types/{code}/model")
+def add_model(code: str, request: Request, may: May, studio: TheStudio, sent: Sent, query: Query):
+    """A .glb sent as a type's 3D model (?name= the file's name, ?turn= degrees)."""
+    may.capability("catalogue")
+    turn = (query.get("turn") or ["0"])[0]
+    if not turn.lstrip("-").isdigit():
+        raise ValueError("turn: 0, 90, 180 or 270 (degrees)")
+    made = studio.add_model(code, sent.read(), (query.get("name") or [""])[0], int(turn), by=may.user)
+    may.audit("item type model added", None, code=code, name=made["name"], triangles=made["triangles"])
+    return answer(request, made)
+
+
+@calls.post("/api/catalogue/types/{code}/model/turn")
+def turn_model(code: str, request: Request, may: May, studio: TheStudio, body: Body):
+    may.capability("catalogue")
+    made = studio.turn_model(code, body.get("turn"), by=may.user)
+    may.audit("item type model turned", None, code=code, turn=made["turn"])
+    return answer(request, made)
+
+
+@calls.post("/api/catalogue/types/{code}/model/delete")
+def drop_model(code: str, request: Request, may: May, studio: TheStudio):
+    may.capability("catalogue")
+    gone = studio.drop_model(code)
+    may.audit("item type model removed", None, code=code)
+    return answer(request, gone)
+
+
 @calls.put("/api/catalogue/types-in")
 def types_in(request: Request, may: May, studio: TheStudio, sent: Sent):
     """The item types a file brings (a catalogue .json, a package, a project file), read

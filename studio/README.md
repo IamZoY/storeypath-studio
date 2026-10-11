@@ -210,6 +210,8 @@ log).
 | `GET me`, `POST me/password` | logged in (with a temporary password: nothing else) |
 | `GET status`, `catalogue`, `projects` | logged in; projects: those they have any access to, each cut to what they see, with `can`. Where the server keeps things (the data folder and the database in `status`) is told to admins alone |
 | `POST catalogue`, `PUT catalogue/types-in` | admin, or `catalogue` |
+| `GET catalogue/models` (what each type's 3D model is), `catalogue/models/<code>.glb`, `catalogue/models/<code>.svg?view=front\|top\|side` | logged in |
+| `PUT catalogue/types/<code>/model?name=&turn=` (a `.glb`), `POST …/model/turn` `{turn}`, `POST …/model/delete` | admin, or `catalogue` |
 | `POST projects` | admin or engineer, who owns it |
 | `PUT open` | a new project: admin or engineer, who owns it (when nothing is kept of who a project of its code was shared with; else an admin opens it, and that stays). A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin. The file is read once, and every part of it that names its project must name the same one: the project checked is the one written. A new project never takes the place of a folder that is not its own. Someone who may not see the project here is answered as for a new project, never told its name |
 | `GET projects/<code>`, `…/review` | any access; cut to what they see |
@@ -743,7 +745,16 @@ equipment, appliance), a size, a `mount` (floor, wall, ceiling), a colour, a `sh
 `copier`, `bed`, `kiosk`, `access_point` or `box`; none: as its code's first part
 says), `workplaces` (a desk: 1) and, for desks, a `grade`, and its `fields`: each owned by
 `storeypath` (entered in Studio) or by the `system` that manages the asset (entered
-there, never in a package). The **Item types** page (`#/item-types`, in the person's
+there, never in a package). A type may have a 3D **model** (format 0.9.2,
+[models.py](src/storeypath/models.py)): a `.glb` sent for it is read whole (its nodes'
+placings, its materials' colours, a texture's average colour), in metres (centimetres
+or millimetres when its size says so), turned a quarter at a time until its front faces
++Z, simplified to at most 5,000 triangles by clustering its vertices, and kept as the small
+file packages carry (`models/<code>.glb`: one mesh in the type's frame, each vertex its
+colour and finish) beside the file as it came (table `item_models`); the type takes its
+size. The type's `model` follows from the models Studio has, never from what a page
+sends. A package carries the model of each type it holds once; the 3D viewers draw its
+items as it, made the type's size, and the plan draws the type's shape. The **Item types** page (`#/item-types`, in the person's
 menu and on the Projects page) lists them for everyone; admins, and those with the
 `catalogue` capability, add types, change them, retire and restore them, take types
 from a file (a catalogue `.json`, a package or a project file: `PUT

@@ -117,7 +117,7 @@ def site(tmp_path_factory):
         ids = {"code": code, "hq": hq, "annex": annex, "hq0": hq0, "hq1": hq1, "an0": an0, "item": item.id,
                "space": space, "lift": lift, "loc": f"{code}-NOPE", "spare": users["spare"].id,
                "resettable": users["resettable"].id, "hq_pkg": packages[0].name, "annex_pkg": packages[1].name,
-               "drawing": "hq-level-0.dxf", "token": "abc", "notes": "notes.txt", "missing": "missing.dxf"}
+               "drawing": "hq-level-0.dxf", "token": "abc", "type": "SOFA", "notes": "notes.txt", "missing": "missing.dxf"}
         s = Site(srv.server_port, studio, accounts, ids, tokens, users, None, srv.app)
         status, job, _ = s.send("POST", f"/api/projects/{code}/export", {"building": annex}, tokens["admin"])
         assert status == 200, job
@@ -167,6 +167,14 @@ ROWS = [
     Row("POST", "/api/catalogue", {"types": "nope"}, ok=400, passes={"admin"}),
     # the types a file brings, read for who may change them (a file that brings none: refused, saying so)
     Row("PUT", "/api/catalogue/types-in", raw=b"not a catalogue", ok=(400, "not JSON"), passes={"admin"}),
+    # item types' 3D models: seen by anyone logged in, changed by who may change the item types
+    Row("GET", "/api/catalogue/models", ok=200, passes=ALL),
+    Row("GET", "/api/catalogue/models/{type}.glb", ok=(404, "has no model"), passes=ALL),
+    Row("GET", "/api/catalogue/models/{type}.svg?view=top", ok=(404, "has no model"), passes=ALL),
+    Row("PUT", "/api/catalogue/types/{type}/model?name=sofa.glb", raw=b"not a model", ok=(400, "not a binary glTF"),
+        passes={"admin"}),
+    Row("POST", "/api/catalogue/types/{type}/model/turn", {"turn": 45}, ok=(400, "turn"), passes={"admin"}),
+    Row("POST", "/api/catalogue/types/{type}/model/delete", {}, ok=(404, "has no model"), passes={"admin"}),
     Row("GET", "/api/projects", ok=200, passes=ALL),
     Row("POST", "/api/projects", {"name": ""}, ok=(400, "needs a name"), passes={"admin", "owner", "engineer"}),
     # (who may change something somewhere may open a package into it: the file is read)

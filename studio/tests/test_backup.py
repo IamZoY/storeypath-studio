@@ -60,7 +60,7 @@ def test_a_backup_holds_everything_but_sessions_and_what_is_half_done(data):
     assert "COPY storeypath.sessions" not in dump and hashlib.sha256(token.encode()).hexdigest() not in dump
     assert "not yet cleaned" not in dump and ".incoming-abc.dxf" not in dump  # its private information is in it
     assert "\\\\x" in dump  # (bytes, as COPY writes them)
-    assert counts["rows"] > 50 and counts["tables"] == 18
+    assert counts["rows"] > 50 and counts["tables"] == 19
     assert Accounts(folder).session(token) is not None  # the sessions of the Studio backed up are as they were
 
 

@@ -324,8 +324,77 @@ class Studio:
             new = catalogue.Catalogue.model_validate({**body, "format": catalogue.CATALOGUE_FORMAT})
             if gone := sorted({t.code for t in old.types} - {t.code for t in new.types}):
                 raise ValueError(f"types are retired, not removed: {', '.join(gone)}")
+            had = {t.code: t.model for t in old.types}
+            for t in new.types:  # (a type's model is what Studio has, whatever is sent)
+                t.model = had.get(t.code)
             self.store.save_catalogue(new)
             return new.model_dump()
+
+    # ---- item types' 3D models (models.py) ---------------------------------------------
+
+    def models(self) -> dict:
+        """What each type's model is, by its code: its name, triangles, size, turn…"""
+        return self.store.models()
+
+    def add_model(self, code: str, data: bytes, name: str = "", turn: int = 0, by=None) -> dict:
+        """A type's 3D model, made from a .glb's bytes (models.make_model; ModelError, a
+        ValueError, saying why one cannot be), kept with the file as it came, and the type
+        given the model's size (its width, depth and height), so the plan and 3D agree.
+        One it had is replaced. What it is now (models())."""
+        from . import models
+
+        self._type(code)
+        name = Path(str(name or "")).name[:200] or f"{code}.glb"
+        made = models.make_model(data, code, name, turn, generator=f"StoreyPath Studio {version('storeypath')}")
+        with self._lock:
+            self.store.save_model(code, name, data, made, turn, by=by)
+            cat = self.store.catalogue()
+            t = cat.get(code)
+            t.width, t.depth, t.height = made.size
+            self.store.save_catalogue(cat)
+        return self.store.models()[code]
+
+    def turn_model(self, code: str, turn, by=None) -> dict:
+        """A type's model made again from its file, turned ``turn`` degrees (models.TURNS)
+        from how it came: its width and depth then the type's."""
+        from . import models
+
+        if turn not in models.TURNS:
+            raise ValueError(f"turn: {', '.join(map(str, models.TURNS))} (degrees, counter-clockwise seen from above)")
+        self._type(code)
+        source = self.store.model_source(code)
+        if source is None:
+            raise NotFound(f"{code} has no model")
+        return self.add_model(code, source["source"], source["name"], turn, by=by)
+
+    def drop_model(self, code: str) -> dict:
+        """A type's model taken away: drawn by its shape again (its size kept)."""
+        self._type(code)
+        if not self.store.drop_model(code):
+            raise NotFound(f"{code} has no model")
+        return {"code": code, "model": None}
+
+    def model_file(self, code: str) -> File:
+        """A type's model as packages carry it (model/gltf-binary)."""
+        data = self.store.model_file(code)
+        if data is None:
+            raise NotFound(f"{code} has no model")
+        return File(data, "model/gltf-binary")
+
+    def model_picture(self, code: str, view: str = "front") -> File:
+        """A type's model drawn flat, as SVG (models.picture): from its front, above or side."""
+        from . import models
+
+        data = self.store.model_file(code)
+        if data is None:
+            raise NotFound(f"{code} has no model")
+        return File(models.picture(data, view).encode(), "image/svg+xml")
+
+    def _type(self, code: str):
+        t = self.store.catalogue().get(code) if isinstance(code, str) else None
+        if t is None:
+            raise NotFound(f"no item type {code}")
+        return t
 
     def types_in(self, data: bytes) -> dict:
         """The item types a file brings (a catalogue, a package or a project file), for a
@@ -1097,7 +1166,7 @@ class Studio:
                 job.say(f"writing {name}")
                 self.work.mkdir(parents=True, exist_ok=True)
                 manifest, data = make_valid_package(ws, name, building, self.catalogue(), job.say, folder=self.work,
-                                                    item_types=item_types)
+                                                    item_types=item_types, models=self.store.model_file)
                 self.store.save(ws, by=by, part="building", kind="export", targets=[building],
                                 more={"file": name, "sequence": manifest.export.sequence}, export_bytes={name: data})
             job.say("valid: " + ", ".join(f"{n} {k}" for k, n in manifest.counts.items()))
@@ -1196,7 +1265,8 @@ class Studio:
             raise NotFound("nothing converted yet: add floors first")
         buf = io.BytesIO()
         try:
-            preview_package(ws, buf, buildings=[building] if building else None, catalogue=self.catalogue())
+            preview_package(ws, buf, buildings=[building] if building else None, catalogue=self.catalogue(),
+                            models=self.store.model_file)
         except ExportError as e:
             raise NotFound(str(e)) from None
         return buf.getvalue()
@@ -1500,11 +1570,11 @@ def package_buildings(ws: Workspace, name: str) -> list[str] | None:
 
 
 def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue, say, folder=None,
-                       item_types: str = "used"):
+                       item_types: str = "used", models=None):
     """A building's package made (in a folder of its own, removed after) and checked; when
     it is valid, entered as an export in ``ws`` (not saved) and given back with its
     bytes: (manifest, bytes). One that is not valid is not entered (its number is not
-    used up): ValueError, saying what is wrong. ``item_types``: export_package's."""
+    used up): ValueError, saying what is wrong. ``item_types``, ``models``: export_package's."""
     import shutil
     import tempfile
 
@@ -1515,7 +1585,8 @@ def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue
     try:
         part = where / name  # the name it is entered under
         before = list(ws.exports)
-        manifest = export_package(ws, part, building=building, say=say, catalogue=catalogue, item_types=item_types)
+        manifest = export_package(ws, part, building=building, say=say, catalogue=catalogue, item_types=item_types,
+                                  models=models)
         errors = validate_package(part)
         for e in errors:
             say("invalid: " + e)
@@ -1528,12 +1599,13 @@ def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue
 
 
 def write_valid_package(ws: Workspace, ws_path: Path, out: Path, building: str | None, catalogue, say,
-                        item_types: str = "used"):
+                        item_types: str = "used", models=None):
     """A building's package written to ``out`` and entered as an export in the workspace
     (saved to ``ws_path``) only when it is valid (make_valid_package). Raises
     ValueError, saying what is wrong, when it is not. (The command line's: files.)"""
     out.parent.mkdir(parents=True, exist_ok=True)
-    manifest, data = make_valid_package(ws, out.name, building, catalogue, say, folder=out.parent, item_types=item_types)
+    manifest, data = make_valid_package(ws, out.name, building, catalogue, say, folder=out.parent, item_types=item_types,
+                                        models=models)
     part = out.with_name(f"{WRITING}{out.name}")
     part.write_bytes(data)
     part.replace(out)

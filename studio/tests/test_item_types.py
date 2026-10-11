@@ -76,7 +76,7 @@ def test_a_package_carries_the_types_its_items_use_each_once_or_the_whole_catalo
     cat = catalogue.default_catalogue()
     used = export_package(ws, tmp_path / "used.storeypath", building=b_id, bake=False, catalogue=cat, record=False)
     assert sorted(_types_of(tmp_path / "used.storeypath")) == ["DESK-MANAGER", "MEETING-TABLE-8"]
-    assert used.format_version == "0.9.1" and validate_package(tmp_path / "used.storeypath") == []
+    assert used.format_version == "0.9.2" and validate_package(tmp_path / "used.storeypath") == []
     export_package(ws, tmp_path / "all.storeypath", building=b_id, bake=False, catalogue=cat, record=False, item_types="all")
     assert _types_of(tmp_path / "all.storeypath") == [t.code for t in cat.types]
     assert validate_package(tmp_path / "all.storeypath") == []
@@ -244,3 +244,64 @@ def test_a_package_exported_through_studio_carries_the_types_asked_for(studio):
     status, said, _ = call(port, "POST", f"/api/projects/{code}/export", {"building": hq, "item_types": "most"},
                            token=tokens["boss"])
     assert status == 400 and "item_types" in said["error"]
+
+
+# ---- a type's 3D model (format 0.9.2) ----------------------------------------------------------
+
+def _exported(port, code, building, token) -> bytes:
+    status, job, _ = call(port, "POST", f"/api/projects/{code}/export", {"building": building}, token=token)
+    assert status == 200
+    for _ in range(600):  # (the export is a job: followed until it is over)
+        j = call(port, "GET", f"/api/jobs/{job['id']}", token=token)[1]
+        if j["state"] not in ("waiting", "running"):
+            break
+        threading.Event().wait(0.1)
+    assert j["state"] == "done", j
+    return call(port, "GET", f"/api/projects/{code}/exports/{j['result']['file']}", token=token)[1]
+
+
+def test_a_type_given_a_3d_model_takes_its_size_and_a_package_carries_it_once(studio, tmp_path):
+    from test_models import sofa_in_cm
+
+    port, _, accounts, tokens, code = studio
+    kim = tokens["kim"]
+    put = "/api/catalogue/types/SOFA/model?name=sofa.glb"
+    assert call(port, "PUT", put, raw=sofa_in_cm(), token=tokens["bob"])[0] == 403
+    status, made, _ = call(port, "PUT", put, raw=sofa_in_cm(), token=kim)
+    assert status == 200 and (made["name"], made["units"], made["size"], made["triangles"]) == ("sofa.glb", "cm", [2.0, 0.9, 0.75], 12)
+    sofa = lambda: next(t for t in call(port, "GET", "/api/catalogue", token=kim)[1]["types"] if t["code"] == "SOFA")  # noqa: E731
+    assert sofa()["model"] == "models/SOFA.glb" and (sofa()["width"], sofa()["depth"], sofa()["height"]) == (2.0, 0.9, 0.75)
+    status, glb, _ = call(port, "GET", "/api/catalogue/models/SOFA.glb", token=tokens["bob"])
+    assert status == 200 and glb[:4] == b"glTF"
+    status, svg, _ = call(port, "GET", "/api/catalogue/models/SOFA.svg?view=top", token=tokens["bob"])
+    assert status == 200 and svg.startswith(b"<svg")
+
+    # a package carries it once, beside its catalogue.json, and is valid
+    blob = _exported(port, code, f"{code}-DEMO-HQ", tokens["boss"])
+    (tmp_path / "hq.storeypath").write_bytes(blob)
+    assert validate_package(tmp_path / "hq.storeypath") == []
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        manifest = json.loads(z.read("manifest.json"))
+        types = {t["code"]: t for t in json.loads(z.read(manifest["files"]["catalogue"]))["types"]}
+        assert manifest["format_version"] == "0.9.2" and manifest["files"]["models"] == "models/"
+        assert types["SOFA"]["model"] == "models/SOFA.glb" and types["DESK-JUNIOR"]["model"] is None
+        assert z.read("models/SOFA.glb") == glb and [n for n in z.namelist() if n.startswith("models/")] == ["models/SOFA.glb"]
+
+    # what a page sends never says which types have a model
+    cat = call(port, "GET", "/api/catalogue", token=kim)[1]
+    for t in cat["types"]:
+        t["model"] = None
+    assert call(port, "POST", "/api/catalogue", {"types": cat["types"]}, token=kim)[0] == 200
+    assert sofa()["model"] == "models/SOFA.glb"
+
+    # turned a quarter: its width and depth swap; a file that is no model is refused, the model kept
+    status, turned, _ = call(port, "POST", "/api/catalogue/types/SOFA/model/turn", {"turn": 90}, token=kim)
+    assert status == 200 and turned["size"] == [0.9, 2.0, 0.75] and (sofa()["width"], sofa()["depth"]) == (0.9, 2.0)
+    status, said, _ = call(port, "PUT", put, raw=b"solid sofa", token=kim)
+    assert status == 400 and "not a binary glTF" in said["error"] and sofa()["model"]
+
+    # taken away: drawn by its shape again
+    assert call(port, "POST", "/api/catalogue/types/SOFA/model/delete", {}, token=kim)[0] == 200
+    assert sofa()["model"] is None and call(port, "GET", "/api/catalogue/models/SOFA.glb", token=kim)[0] == 404
+    assert [e["action"] for e in accounts.audit_tail() if e["action"].startswith("item type model")] == \
+        ["item type model removed", "item type model turned", "item type model added"]
