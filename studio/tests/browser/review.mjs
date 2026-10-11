@@ -375,14 +375,16 @@ test("a wall drawn with W across a room: the floor read again with it; chosen, i
   noErrors("drawing a wall");
 });
 
-test("stairs drawn with L (two corners and Enter) are added typed; the inspector lists the floors they serve", async () => {
+test("stairs drawn with L (a click on two opposite corners) are added typed; the inspector lists the floors they serve", async () => {
   const room = (await rooms()).find((s) => s.name === "RECEPTION");
   const [x0, y0, x1, y1] = await boxOf(room.id);
   const before = (await rooms()).filter((s) => s.type === "stairs").length;
   await press("l");
+  truly(await R(() => document.querySelector("#tool-options [aria-label='Its shape'] [aria-checked='true']")?.textContent === "Rectangle"),
+    "a rectangle, unless an outline is chosen");
   await page.click(...await screenOf([x0 + 0.6, y0 + 0.6]));
-  await page.click(...await screenOf([x0 + 3.2, y0 + 3.6]));
-  await press("Enter");
+  await page.click(...await screenOf([x0 + 3.2, y0 + 3.6])); // the opposite corner: sent, as a rectangle
+  await until(() => window.storeypathReview.state.tool !== "stairs", "sent with the second click (no Enter)", 5000);
   await until(async (n) => !window.storeypathReview.state.busy
     && window.storeypathReview.state.floor.spaces.filter((s) => s.type === "stairs" && !(s.zones || []).length).length === n + 1,
   "the stairs added, typed", 60000, before);

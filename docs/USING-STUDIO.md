@@ -127,7 +127,7 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   | *Space* (<kbd>R</kbd>) | click its corners (they snap to walls); the first again, a double-click or <kbd>Enter</kbd> closes it, <kbd>Backspace</kbd> takes a corner back. For an area the drawing encloses nowhere, such as a colonnade |
   | *Divide* (<kbd>D</kbd>) | a line right across a space with no wall: it becomes two zones |
   | *Door, window, opening* (<kbd>O</kbd>) | a click on a wall: a door 0.9 m, a window 1.2 m, an opening (a way through, no door) 1.0 m wide, or the width given in its options |
-  | *Stairs and lifts* (<kbd>L</kbd>) | stairs, a lift or an escalator: two corners and <kbd>Enter</kbd> for a rectangle, or its outline; added typed, then linked to the floors it serves |
+  | *Stairs and lifts* (<kbd>L</kbd>) | stairs, a lift or an escalator: a click on two opposite corners for a rectangle (sent with the second), or, as an *Outline*, a click on each corner; added typed, then linked to the floors it serves |
   | *Measure* (<kbd>M</kbd>) | a distance, or an area and its perimeter |
 
   A door, window or opening chosen shows its **width, sill and height**; *Size as

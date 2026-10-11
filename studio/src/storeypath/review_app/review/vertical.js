@@ -5,16 +5,18 @@
 //   setup(api)      once, with what of the page it uses (its state, its requests…): the
 //                   Stairs and lifts tool (L), its kind (stairs, lift, escalator) in its
 //                   options;
-//   drawn(corners)  the tool's shape closed: a lift or stairs, drawn typed (two corners
-//                   make a rectangle);
+//   drawn(corners)  the tool's shape closed: a lift or stairs, drawn typed (as a
+//                   Rectangle, two corners make it);
 //   editor(space)   the inspector's "Floors it serves" of a lift or stairs (null for
 //                   another space).
 //
-// Draw one with two opposite corners and Enter (or a double-click) for a rectangle, or
-// click its corners and close it on the first. Studio draws it as a space on the floor
-// (cut out of the room it is drawn in), reads the floor again and gives it its type.
+// Draw one as a Rectangle (the default): a click on one corner, a click on the opposite
+// one, and it is sent. As an Outline: a click on each corner, closed on the first (or
+// with a double-click or Enter). Studio draws it as a space on the floor (cut out of the
+// room it is drawn in), reads the floor again and gives it its type.
 
 const TOOLS = [["stairs", "Stairs"], ["elevator", "Lift"], ["escalator", "Escalator"]];
+const SHAPES = [["rectangle", "Rectangle", "Two opposite corners"], ["outline", "Outline", "A click on each corner"]];
 const WORDS = { elevator: "lift", stairs: "stairs", escalator: "escalator", ramp: "ramp" };
 const VERTICAL = new Set(Object.keys(WORDS));
 const HOW = { code: "same code", overlap: "drawn over it", person: "linked by hand", alone: "on its own" };
@@ -22,6 +24,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 let api = null; // the page's own, as setup() was given it
 let kind = "stairs"; // the type being drawn ("stairs", "elevator", "escalator")
+let outline = false; // drawn corner by corner (else a rectangle: two opposite corners)
 let box = null; // the inspector's part: the floors a lift or stairs serves
 let asked = 0; // the last request for them: an older answer is not shown
 
@@ -42,33 +45,36 @@ export function setup(given) {
     id: "stairs", label: "Stairs and lifts", icon: "door-stairwell", key: "l", group: "draw", edits: true, drawing: true,
     words: "lift elevator escalator stair vertical",
     wrongView: () => "Stairs and lifts are drawn on the plan",
-    hint: () => (api.state.corners.length >= 3 ? "Click the next corner · click the first, double-click or Enter to close it"
-      : api.state.corners.length === 2 ? `Enter or double-click: a rectangular ${word(kind)} · or click more corners`
-        : api.state.corners.length === 1 ? "Click the opposite corner (or its next corner) · Backspace takes it back"
-          : `Click two opposite corners of the ${word(kind)}, or its outline's corners`),
-    options: () => [api.el("div", { class: "segmented", role: "radiogroup", "aria-label": "What to draw" },
-      ...TOOLS.map(([k, label]) => {
-        const b = api.el("button", { type: "button", role: "radio", "aria-checked": String(kind === k) }, label);
-        b.addEventListener("click", () => {
-          kind = k;
-          api.emit("tool-options");
-          api.emit("tool-progress");
-        });
-        return b;
-      })), api.el("span", { class: "to-note" }, "Added typed; then add it on the other floors it serves")],
+    hint: () => {
+      const n = api.state.corners.length;
+      if (!outline) return n ? "Click the opposite corner · Esc: start again" : `Click one corner of the ${word(kind)}, then the opposite corner`;
+      return n >= 3 ? "Click the next corner · click the first, double-click or Enter to close it · Backspace takes it back"
+        : n ? "Click the next corner · Backspace takes it back" : `Click each corner of the ${word(kind)}'s outline`;
+    },
+    options: () => [
+      segmented("What to draw", TOOLS.map(([k, label]) => [label, kind === k, null, () => { kind = k; }])),
+      segmented("Its shape", SHAPES.map(([k, label, tip]) => [label, outline === (k === "outline"), tip, () => {
+        outline = k === "outline";
+        api.state.corners = [];
+        api.state.wallStart = null;
+        api.clearPreview();
+        preview(null);
+      }])),
+      api.el("span", { class: "to-note" }, "Added typed; then add it on the other floors it serves")],
     plan: {
       hover: (p) => {
-        api.preview(p);
-        preview(api.snapWall(p));
+        if (outline) api.preview(p);
+        preview(api.snapWall(p, null));
       },
       click: (p) => {
-        api.toolClick(p);
-        preview(api.snapWall(p));
+        if (outline) api.toolClick(p);
+        else corner(api.snapWall(p, null));
+        preview(api.snapWall(p, null));
       },
-      dblclick: () => { if (api.state.corners.length >= 2) drawn(api.state.corners); },
+      dblclick: () => { if (outline && api.state.corners.length >= 3) drawn(api.state.corners); },
     },
     keys: {
-      enter: [() => drawn(api.state.corners), "close the shape (two corners: a rectangle)"],
+      enter: [() => { if (outline) drawn(api.state.corners); }, "close the outline"],
       backspace: [() => {
         api.backCorner();
         preview(null);
@@ -90,15 +96,42 @@ export function setup(given) {
   });
 }
 
-/** Where it would go: the rectangle the corners so far make (with the pointer's). */
+/** The tool's options bar part: one of ``choices`` ([label, chosen, tip, choose]). */
+function segmented(label, choices) {
+  return api.el("div", { class: "segmented", role: "radiogroup", "aria-label": label },
+    ...choices.map(([text, chosen, tip, choose]) => {
+      const b = api.el("button", { type: "button", role: "radio", "aria-checked": String(chosen), ...(tip ? { "data-tip": tip } : {}) }, text);
+      b.addEventListener("click", () => {
+        choose();
+        api.emit("tool-options");
+        api.emit("tool-progress");
+      });
+      return b;
+    }));
+}
+
+/** A Rectangle's click: its first corner, or the opposite one (it is then sent). */
+function corner(at) {
+  if (api.state.busy) return;
+  const [first] = api.state.corners;
+  if (!first) {
+    api.state.corners = [at];
+    api.state.wallStart = null; // (no squaring to it: the opposite corner is across)
+    api.emit("tool-progress");
+    return;
+  }
+  if (Math.hypot(at[0] - first[0], at[1] - first[1]) < 0.05) return; // a double-click's second click
+  drawn([first, at]);
+}
+
+/** Where a Rectangle would go: from its first corner to the pointer. */
 function preview(p) {
   const layers = document.querySelectorAll(".vertical-preview");
   const corners = api.state.corners;
   const shapes = [];
-  if (p && active() && corners.length && corners.length <= 2) {
+  if (p && active() && !outline && corners.length === 1) {
     const [a] = corners;
-    const b = corners.length === 2 ? corners[1] : p;
-    shapes.push([[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]]);
+    shapes.push([[a[0], a[1]], [p[0], a[1]], [p[0], p[1]], [a[0], p[1]]]);
   }
   for (const layer of layers) {
     layer.replaceChildren(...shapes.map((ring) => {
@@ -110,16 +143,16 @@ function preview(p) {
   }
 }
 
-/** The tool's shape closed (``ring``: its corners): a lift or stairs, sent typed; two
- * corners make a rectangle. */
+/** The tool's shape closed (``ring``: its corners): a lift or stairs, sent typed; a
+ * Rectangle's two corners make it. */
 export function drawn(ring) {
   if (!active()) return false;
   let shape = ring.map(([x, y]) => [x, y]);
-  if (shape.length < 2) {
-    api.toast("Click two opposite corners, or its outline's corners", true);
+  if (outline ? shape.length < 3 : shape.length !== 2) {
+    api.toast(outline ? "An outline has at least three corners" : "Click two opposite corners", true);
     return true;
   }
-  if (shape.length === 2) {
+  if (!outline) {
     const [[x0, y0], [x1, y1]] = shape;
     if (Math.abs(x1 - x0) < 0.5 || Math.abs(y1 - y0) < 0.5) {
       api.toast("A lift or stairs is at least half a metre each way", true);

@@ -197,7 +197,7 @@ ahead).
 |---|---|---|
 | `Enter` | the space tool in use | Space: close the shape |
 | `⌫` | the space tool in use | Space: take back the last corner |
-| `Enter` | the stairs tool in use | Stairs and lifts: close the shape (two corners: a rectangle) |
+| `Enter` | the stairs tool in use, as an Outline | Stairs and lifts: close the outline |
 | `⌫` | the stairs tool in use | Stairs and lifts: take back the last corner |
 | `Enter` | the measure tool in use | Measure: finish the measure |
 | `⌫` | the measure tool in use | Measure: take back the last point |

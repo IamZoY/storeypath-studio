@@ -814,7 +814,7 @@ item, a node, a space, zone or item ID) and `accessible=1`, the way between them
 when there is none).
 
 **Lifts and stairs a drawing leaves out**: Review's *Stairs*, *Lift* and *Escalator*
-buttons draw one (two opposite corners and Enter for a rectangle, or its corners); it
+buttons draw one (a click on two opposite corners for a rectangle, or, as an Outline, on each corner); it
 is added already typed, cut out of the room it is drawn in with a way through, and the
 floor is read again. A lift's or stairs' editor lists the floors of its building it
 serves and what is linked there (the same code, drawn over it, or linked by hand);
