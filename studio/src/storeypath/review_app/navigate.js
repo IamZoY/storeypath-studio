@@ -306,11 +306,11 @@ async function start() {
   $("building").value = first.id;
   setView(params.get("view") || saved("storeypath.navigate.view") || "plan", { quiet: true });
   planModule(); // (loaded while the building is read)
-  await openBuilding(first.id, { from: params.get("from"), to: params.get("to") });
+  await openBuilding(first.id, { from: params.get("from"), to: params.get("to"), floor: params.get("floor") });
 }
 
 /** A building's network, its places to choose from, and its package for the views. */
-async function openBuilding(id, { from: start = null, to: end = null } = {}) {
+async function openBuilding(id, { from: start = null, to: end = null, floor = null } = {}) {
   state.building = id;
   state.route = null;
   state.pkg = null;
@@ -333,7 +333,8 @@ async function openBuilding(id, { from: start = null, to: end = null } = {}) {
   state.choices = choicesOf(net);
   if (!from.set(start)) from.set(state.choices.find((c) => c.group === "kiosk")?.id ?? state.choices.find((c) => c.group === "entrance")?.id);
   if (!to.set(end)) to.choose(null, { quiet: true });
-  state.floor = from.chosen?.floor ?? groundFloor();
+  // the floor asked for (Review's, opened from there), else the one the way starts on
+  state.floor = (state.floorOrder.includes(floor) ? floor : null) ?? from.chosen?.floor ?? groundFloor();
   drawFloorTabs();
   message(state.choices.length ? "" : "This building has no rooms to find the way between yet.");
   loadPackage(id); // the views, while the way is asked for
@@ -640,6 +641,7 @@ function follow(view) {
 /** The floors as tabs: those the way goes over marked, numbered in the order it goes
  * over them. */
 function drawFloorTabs() {
+  drawingCrumb();
   const onRoute = new Map();
   (state.route?.legs ?? []).forEach((leg, i) => { if (!onRoute.has(leg.floor_id)) onRoute.set(leg.floor_id, onRoute.size + 1); });
   const floors = state.network?.floors ?? []; // lowest first
@@ -648,6 +650,16 @@ function drawFloorTabs() {
     "aria-pressed": String(f.id === state.floor), "data-floor": f.id,
     title: onRoute.has(f.id) ? `${f.name}: part ${onRoute.get(f.id)} of the way` : f.name, onclick: () => showFloor(f.id),
   }, onRoute.has(f.id) ? el("span", { class: "leg" }, String(onRoute.get(f.id))) : null, f.name)));
+}
+
+/** The way back to the drawing of the floor shown: Review, on that floor. */
+function drawingCrumb() {
+  const floor = state.floor, building = state.buildings?.find((b) => b.id === state.building);
+  const shown = Boolean(CODE && floor);
+  for (const id of ["drawing", "drawing-sep"]) $(id).hidden = !shown;
+  if (!shown) return;
+  $("drawing").href = `/review.html?p=${encodeURIComponent(CODE)}#${new URLSearchParams({ floor })}`;
+  $("drawing-name").textContent = [building?.name, state.floorNames?.get(floor)].filter(Boolean).join(" · ") || "Drawing";
 }
 
 /** A floor's tab: that floor; its part of the way framed when it has one. */

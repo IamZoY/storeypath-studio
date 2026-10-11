@@ -121,9 +121,10 @@ async function exportBuilding(request, followJob, say) {
 
 const open = (url) => window.open(url, "_blank", "noopener");
 
-/** The way between two places of the floor's building (navigate.html). */
+/** The way between two places of the floor's building (navigate.html), starting on the
+ * floor open here: its way back to the drawing comes back to it. */
 export const navigateUrl = () => "/navigate.html?" + new URLSearchParams({ p: CODE || "",
-  ...(state.floor ? { building: buildingOf(state.floor.id) } : {}) });
+  ...(state.floor ? { building: buildingOf(state.floor.id), floor: state.floor.id } : {}) });
 
 export function setupTopbar({ openFloor, request, followJob, say }) {
   openFloorById = openFloor;

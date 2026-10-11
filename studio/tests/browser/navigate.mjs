@@ -3,7 +3,7 @@
 // DevTools protocol), on the demo project that `storeypath review` serves
 // (tests/test_navigate_browser.py starts it). The way from the Headquarters' entrance to
 // an office two floors up, by the stairs: in words, on the plan, played, swapped,
-// step-free, in the light theme, in 3D. The run stops at the first failure and Chrome
+// step-free, in the light theme, the way back to a floor's drawing, in 3D. The run stops at the first failure and Chrome
 // quits with it. Waits are by what the page shows, never by the clock alone: drawn in
 // software, frames are slow.
 
@@ -186,6 +186,30 @@ test("the light theme: the page and the plan light, the way's marks the same", a
   await page.click(...await middleOf("#theme-toggle"));
   await until(() => document.querySelector(".sp-plan").classList.contains("sp-theme-dark"), "dark again");
   noErrors("the light theme");
+});
+
+test("the way back to the drawing: the floor shown, in Review; opened from Review, on its floor", async () => {
+  const crumb = () => R(() => ({ shown: !document.getElementById("drawing").hidden, name: document.getElementById("drawing-name").textContent,
+    href: document.getElementById("drawing").getAttribute("href"), floor: document.querySelector("#floors button.active")?.dataset.floor }));
+  let got = await crumb();
+  truly(got.shown && got.floor.endsWith("-F00") && got.name.endsWith(" · Ground floor")
+    && got.href === `/review.html?p=${code}#floor=${encodeURIComponent(got.floor)}`, `on the way's first floor: ${JSON.stringify(got)}`);
+  await page.click(...await middleOf("#floors button:last-child"));
+  await until(() => document.querySelector("#floors button:last-child").classList.contains("active"), "the top floor shown");
+  got = await crumb();
+  truly(got.href.endsWith(`#floor=${encodeURIComponent(got.floor)}`) && got.floor.endsWith("-F02") && got.name.endsWith(" · Floor 2"),
+    `it follows the floor shown: ${JSON.stringify(got)}`);
+  // Review's Find the way opens the page on its floor (in its tab); the crumb goes back there
+  const first = `${code}-DEMO-HQ-F01`;
+  await page.open(`${base}/navigate.html?p=${code}&building=${code}-DEMO-HQ&floor=${first}`, 1440, 900);
+  await until((f) => document.querySelector("#floors button.active")?.dataset.floor === f && !document.getElementById("drawing").hidden,
+    "opened on Review's floor", 20000, first);
+  await page.click(...await middleOf("#drawing"));
+  await until((f) => location.pathname === "/review.html" && new URLSearchParams(location.hash.slice(1)).get("floor") === f,
+    "in Review, on that floor", 20000, first);
+  await page.open(URL_, 1440, 900);
+  await until(() => document.querySelectorAll("#steps .step").length && document.querySelector(".sp-route[data-sp-route]"), "the way shown again");
+  noErrors("the way back to the drawing");
 });
 
 test("3D: the way through the building, a step clicked framed there, Fly along to the destination", async () => {

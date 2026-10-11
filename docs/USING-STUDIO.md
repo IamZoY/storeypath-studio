@@ -359,6 +359,8 @@ gives.
   lift from the ground floor to the third: those two, the floors it rides past left
   out; its floor stack says which, *Way* brings them back after a floor is chosen), and
   **Fly along** takes the camera along it, up the stairs or the lift to the destination.
+  The floor's name in the bar at the top (*Headquarters · Ground floor*) goes back to
+  its drawing in Review; opened from Review, the page starts on the floor open there.
 
   ![Find the way: the office typed, the way drawn in, played up the stairs to Floor 2 and along the corridor to the office](images/route.webp)
 - **Stairs and lifts the drawing missed** are drawn in Review with its *Stairs* and
@@ -376,7 +378,7 @@ gives.
 Every building opens as a 3D world, straight from Studio, with nothing downloaded:
 the walls at the thickness they were drawn, with skirting, parapets around roofs
 and terraces, doorways you walk through, doors with architraves and handles that
-open and shut, windows with sills, boards and glass, furniture with its chairs,
+open and shut, windows with sills, boards and glass, stairs with their steps, furniture with its chairs,
 floors and walls finished as each room is (its own finishes, or its type's: carpet
 tiles in offices, marble in lobbies, porcelain in corridors, restrooms and kitchens,
 terrazzo on stairs, oak in homes), under a sun that casts soft shadows, with ambient
