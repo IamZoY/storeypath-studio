@@ -5,6 +5,8 @@ audit log come in; again, nothing comes in twice; the folder is left as it was."
 
 import hashlib
 import shutil
+import subprocess
+import sys
 
 import pytest
 from typer.testing import CliRunner
@@ -118,6 +120,27 @@ def test_the_command_line_imports_a_folder(old, databases):
     assert r.exit_code == 0 and "in the database already" in r.output
     r = CliRunner().invoke(app, ["db", "url"])
     assert r.exit_code == 0 and "spa_" in r.output and "password=***" in r.output and "password=storeypath" not in r.output
+
+
+# a command's process: its last word, as it ends (registered first, it is said last),
+# is whether the pool was closed by then
+ENDS = """
+import atexit, sys
+opened = []
+atexit.register(lambda: print("closed" if opened[0].pool.closed else "left open"))
+from storeypath import db
+opened.append(db.connect(sys.argv[1]))
+"""
+
+
+def test_a_command_ends_with_its_database_closed(databases, tmp_path):
+    # left open, on Python 3.13 (the image's) each of the pool's threads was waited for in
+    # vain as Python ended, 5 s apiece, said on stderr: `storeypath demo --studio` took 23 s
+    r = subprocess.run([sys.executable, "-c", ENDS, databases.url(tmp_path)],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "closed", r.stdout + r.stderr
+    assert "couldn't stop thread" not in r.stderr, r.stderr
 
 
 def test_review_works_on_a_database_of_its_own_and_writes_the_file_back(converted, monkeypatch, databases):

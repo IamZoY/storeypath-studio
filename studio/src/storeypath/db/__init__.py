@@ -19,6 +19,7 @@ starting at once apply each once), each recorded in ``storeypath.migrations``.
 
 from __future__ import annotations
 
+import atexit
 import os
 import re
 import threading
@@ -168,4 +169,15 @@ def forget(url: str) -> None:
     with _open_lock:
         db = _open.pop(url, None)
     if db is not None:
+        db.close()
+
+
+@atexit.register
+def _close_all() -> None:
+    """Every pool closed as the process ends, while its threads can still stop (left to
+    the very end, each of them is waited for in vain, 5 s apiece: `storeypath demo`)."""
+    with _open_lock:
+        dbs = list(_open.values())
+        _open.clear()
+    for db in dbs:
         db.close()
