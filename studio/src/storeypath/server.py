@@ -104,6 +104,7 @@ from .reading import NOT_A_ROOM, read_units
 from .symbols import SymbolSpotter
 from .vision import VisionModel
 from .privacy import words
+from .errors import Busy
 from .review import File, NotFound, Review
 from .types import SpaceType
 from .workspace import Placement, SourceDrawing, Workspace
@@ -368,6 +369,15 @@ class Studio:
         info = self.review_project(code, sight)
         from .export import footprint, site_positions
 
+        rooms: dict[str, int] = {}  # each floor's rooms and items in use (what deleting it retires)
+        for i, r in full.objects.items():
+            if r.status == "active" and r.kind == "space":
+                rooms[i.rsplit("-", 1)[0]] = rooms.get(i.rsplit("-", 1)[0], 0) + 1
+        items: dict[str, int] = {}
+        for it in full.items.values():
+            if it.status == "active" and it.floor_id:
+                items[it.floor_id] = items.get(it.floor_id, 0) + 1
+
         tree = []
         for loc in ws.locations:
             buildings = []
@@ -390,7 +400,8 @@ class Studio:
                                 "drawing": Path(f.source.path).name if f.source else None,
                                 "view": f.source.view if f.source else None,
                                 "layers": f.layers, "converted": f.converted_at is not None,
-                                "method": f.method}
+                                "method": f.method, "rooms": rooms.get(f"{b_id}-{f.code}", 0),
+                                "items": items.get(f"{b_id}-{f.code}", 0)}
                                for f in sorted(b.floors, key=lambda f: f.ordinal)],
                 })
             tree.append({"id": f"{ws.id}-{loc.code}", "code": loc.code, "name": loc.name, "buildings": buildings,
@@ -1240,6 +1251,49 @@ class Studio:
             raise ValueError("room is a room's ID")
         return {"from": self.store.take_over(code, floor, by, editor, room)}
 
+    def delete_floor(self, code: str, floor_id: str, body: dict, by=None) -> dict:
+        """A floor taken out of its building: only when its name is typed to confirm, while
+        nobody else is editing a room of it (Locked) and no job is changing the project
+        (Busy). Its rooms, doors and items are retired, never erased: their IDs are never
+        issued again (the building's counter goes on), and the building's next package
+        lists them retired. Its drawing stays (other floors may be drawn on it). One
+        change, recorded, that no undo goes back over."""
+        from .review import BUSY_MESSAGE, BUSY_WAIT_S
+        from .workspace import utcnow
+
+        try:
+            name = self.workspace(code).floor(floor_id).name
+        except (KeyError, ValueError):
+            raise NotFound(f"no floor {floor_id}") from None
+        confirm = body.get("confirm")
+        if not isinstance(confirm, str) or confirm.strip() != name.strip():
+            raise ValueError("type the floor's name to delete it")
+        self.store.whole_floor(code, floor_id, by)
+        lock = self._changing(code)
+        if not lock.acquire(timeout=BUSY_WAIT_S):
+            raise Busy(BUSY_MESSAGE)
+        try:
+            ws = self.store.load(code, floors=[floor_id])
+            b = ws.building(floor_id.rsplit("-", 1)[0])
+            f = ws.floor(floor_id)
+            now = utcnow()
+            rooms = items = 0
+            for r in ws.floor_objects(floor_id):
+                r.status, r.retired_at = "retired", now
+                rooms += r.kind == "space"
+            for it in ws.items.values():
+                if it.floor_id == floor_id and it.status == "active":
+                    it.status, it.retired_at = "retired", now
+                    items += 1
+            b.floors = [x for x in b.floors if x.code != f.code]
+            self.store.save(ws, floors=[floor_id], by=by, part="building", kind="floor deleted", targets=[floor_id],
+                            more={"floor_name": f.name, "rooms": rooms, "items": items, "barrier": True})
+        finally:
+            lock.release()
+        for png in [*self.cache.glob(f"prints/{code}/{floor_id}-*"), *self.cache.glob(f"prints/{code}/{floor_id}~*")]:
+            png.unlink(missing_ok=True)  # its drawing's pictures: none is asked for again
+        return {"deleted": floor_id, "name": f.name, "rooms": rooms, "items": items}
+
     # ---- the GPU helpers (vision.py), kept in the database ------------------------------
 
     HELPERS = "vision_helpers"  # settings key: {"helpers": [{url, key, enabled, parallel}]}
@@ -1816,6 +1870,14 @@ class Gate:
         sight = self.floor(code, floor_id, "view")
         if self.user is not LOCAL and self.user.role != "admin":
             raise Forbidden("only an admin may take over rooms someone is editing")
+        return sight
+
+    def delete_floor(self, code: str, floor_id: str) -> Sight:
+        """Deleting a floor: edit on its building (the building is changed; its packages
+        list what the floor held as retired)."""
+        sight = self.floor(code, floor_id, "view")
+        building = floor_id.rsplit("-", 1)[0]
+        _need(sight.building(building), "edit", f"the building {building}")
         return sight
 
     def convert(self, code: str, floor) -> Sight:

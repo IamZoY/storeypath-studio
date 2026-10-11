@@ -35,7 +35,7 @@ export async function request(path, body) {
     const data = await res.json().catch(() => ({}));
     if (sentAway(res, data)) throw new Error("log in again");
     if (res.status === 423) heardLocked(data.locked); // someone else is editing a room it touches: shown so
-    if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
+    if (!res.ok) throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), { status: res.status });
     if (change) {
       sending--;
       tell("saved");

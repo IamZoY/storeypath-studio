@@ -10,7 +10,7 @@ import { renderAssets } from "./items.js";
 import { say, toast } from "./notify.js";
 import { renderPlan } from "./plan.js";
 import { keepChosen } from "./selection.js";
-import { BASE, reviewSpaces, state, view3d } from "./state.js";
+import { BASE, CODE, reviewSpaces, state, view3d } from "./state.js";
 import { carry, dirty3d, update3d } from "./view3d.js";
 
 // what is to be read again: everything, or what these IDs are of; and whether a read is under way
@@ -103,6 +103,11 @@ export async function refreshFloor(change) {
     update3d();
     if (want.shape || floor.doors.some((d) => want.targets.has(d.id))) dirty3d([id]);
   } catch (e) {
+    if (e.status === 404 && state.floor?.id === id) { // the floor deleted (by someone else): its project
+      toast("This floor was deleted: back to the project", true);
+      setTimeout(() => { location.href = `/#/p/${encodeURIComponent(CODE)}`; }, 2500);
+      return;
+    }
     toast(`Could not show the change: ${e.message}`, true);
   } finally {
     live.busy = false;

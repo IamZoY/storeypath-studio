@@ -1303,11 +1303,14 @@ def diff(ws: Workspace, base: Workspace, scope=None) -> Changes:
         if key[0] == "floors":
             if old is None or old[0] != row or not _same_floor(node, old[1]):
                 ch.nodes.append((key[0], key[1:], {**row, **_floor_row(node)}))
-                ch.floors.add(f"{ws.id}-{'-'.join(key[1:])}")
+                if old is None or not _same_floor(node, old[1]):  # (its place in the list alone: not it)
+                    ch.floors.add(f"{ws.id}-{'-'.join(key[1:])}")
         elif old is None or old[0] != row:
             ch.nodes.append((key[0], key[1:], row))
     for key in old_nodes.keys() - new_nodes.keys():
         ch.nodes.append((key[0], key[1:], None))
+        if key[0] == "floors":  # a floor taken away is a floor it touched (its pages are told)
+            ch.floors.add(f"{base.id}-{'-'.join(key[1:])}")
     if ch.nodes:
         ch.tree = [loc.model_copy(deep=True) for loc in ws.locations]
 

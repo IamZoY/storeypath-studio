@@ -236,6 +236,7 @@ log).
 | `POST …/items/<id>` | edit on its floor, and on the floor it is carried to (and their locks) |
 | `POST …/floors/<id>/release` | view on the floor: their own lock of it let go (Done editing; leaving the floor) |
 | `POST …/floors/<id>/take-over` | an admin who sees the floor: its lock taken from whoever holds it, recorded in the history and the audit log |
+| `POST …/floors/<id>/delete {confirm}` | edit on its building, its name typed (`confirm`), nobody else editing a room of it (423): the floor taken out, its rooms, doors and items retired (IDs never issued again), its drawing kept; recorded (a barrier no undo goes back over) and audited |
 | `POST …/floors/<id>/vertical {type, space}` | edit on the floor, and the rooms it is drawn on: a lift, stairs or escalator drawn there ([Navigation](#navigation)) |
 | `GET …/objects/<id>/stack` | view on its floor: the floors a lift or stairs serves, those they may see |
 | `POST …/objects/<id>/copy {floors}` | edit on its floor and on each floor it is added on (the rooms it is drawn on: a floor where someone else edits one is left out, and named) |

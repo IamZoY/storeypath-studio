@@ -48,7 +48,12 @@ project and everything in it, once you type its name.
   drawing**: its rooms keep their IDs.
 - The project page shows, per floor, the drawing and plan it came from and *How it
   was read* (what each layer was taken to hold). *Read* reads a floor again whose
-  reading failed.
+  reading failed. *Delete…* takes a floor out of its building (a wrong plan added,
+  say), once you type its name, for whoever may edit the building and while nobody
+  else is editing a room of it: its rooms, doors and items are retired, never erased
+  (their IDs are never used again; a floor added in its place gets new ones), its
+  drawing stays, the building's next package lists them as retired, and no undo goes
+  back over it.
 
 ### The site plan
 

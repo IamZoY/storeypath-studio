@@ -142,6 +142,16 @@ def take_over(code: str, floor_id: str, request: Request, may: May, studio: TheS
     return answer(request, done)
 
 
+@calls.post(F + "/delete")
+def delete_floor(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    """A floor taken out of its building, its name typed to confirm (edit on the building):
+    its rooms, doors and items retired. Recorded in the audit log."""
+    may.delete_floor(code, floor_id)
+    done = studio.delete_floor(code, floor_id, body, by=may.user)
+    may.audit("floor deleted", floor_id, project=code, name=done["name"], rooms=done["rooms"], items=done["items"])
+    return answer(request, done)
+
+
 # ---- lifts and stairs: drawn where the drawing leaves them out, linked through the floors ----
 
 @calls.post(F + "/vertical")

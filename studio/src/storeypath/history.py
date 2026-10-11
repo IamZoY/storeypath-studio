@@ -15,7 +15,8 @@ Every change is a row of the project's history in Studio's database (db/store.py
               unlink, as found, finish (an object; finish may be of many rooms at once:
               before and after {"overrides": {id: …}}); add, move, turn, retype, values, carry, delete, restore (an
               item); draw, erase, resize (an edit); read, take over (a floor); create,
-              open, import, floors, align, site, place, arrange, export, drawing…
+              open, import, floors, align, site, place, arrange, export, drawing, floor
+              deleted (a building's floor taken away: a barrier on that floor)…
     floors    the floors it changed (none: the building's, or the project's)
     targets   the IDs it changed
     before, after   what it changed, as it was and as it became: an object's
@@ -267,6 +268,7 @@ def _describe(e: dict) -> str:
         "create": "created the project", "import": "brought the project in from a folder",
         "floors": f"added floors from {e.get('drawing') or 'a drawing'}", "align": "lined up the floors",
         "drawing": "added a drawing", "drawing removed": "took a drawing away",
+        "floor deleted": f"deleted the floor {e.get('floor_name') or 'a floor'}",
         "export": f"exported {e.get('file') or 'a package'}", "arrange": "set the buildings side by side",
         "site": "moved a building on the site plan",
         "place": "placed a building on the map" if part == "building" else "placed the site on the map",

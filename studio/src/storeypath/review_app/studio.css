@@ -69,6 +69,7 @@ body.studio .topbar {
 .floors tr:last-child td { border-bottom: none; }
 .floors td.actions { white-space: nowrap; }
 .floors td.actions a + a { margin-left: 12px; }
+.floors td.actions button.danger { margin-left: 12px; padding: 3px 10px; font-size: 13px; }
 .layers { margin: 4px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
 details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .placement { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)) auto; gap: 8px; align-items: end; margin-top: 10px; }

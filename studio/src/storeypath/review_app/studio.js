@@ -698,12 +698,35 @@ function buildingsCard(code, p) {
           el("a", { href: `/review.html?p=${encodeURIComponent(code)}#floor=${encodeURIComponent(f.id)}` },
             onFloor(p, f.id, "edit") ? "Review" : "View"),
           el("a", { href: worldUrl(code, { floor: f.id }), target: "_blank", title: "This floor in 3D" }, "3D"),
-        ] : f.method !== "package" && f.drawing && onFloor(p, f.id, "edit") ? readAgain(code, f) : null))))),
+        ] : f.method !== "package" && f.drawing && onFloor(p, f.id, "edit") ? readAgain(code, f) : null,
+          onBuilding(p, b.id, "edit") ? deleteFloor(code, f) : null))))),
     onBuilding(p, b.id, "edit") ? placementForm(code, b) : null,
   )));
 }
 
 // A floor whose reading failed or was stopped: read its drawing again.
+/** Deleting a floor, once its name is typed: its rooms, doors and items retired (their
+ * IDs never used again), its drawing kept. */
+function deleteFloor(code, f) {
+  const plural = (n, what) => `${n} ${what}${n === 1 ? "" : "s"}`;
+  const button = el("button", { type: "button", class: "danger", title: `Take ${f.name} out of the building` }, "Delete…");
+  button.addEventListener("click", async () => {
+    const typed = prompt(`Delete the floor ${f.name}? Its ${plural(f.rooms, "room")} and ${plural(f.items, "item")} are ` +
+      "retired: their IDs are never used again. Its drawing stays. Type the floor's name to delete it:");
+    if (typed === null) return;
+    button.disabled = true;
+    try {
+      const done = await api(`projects/${code}/floors/${encodeURIComponent(f.id)}/delete`, { confirm: typed });
+      toast(`${done.name} deleted: ${plural(done.rooms, "room")} and ${plural(done.items, "item")} retired`);
+      await projectPage(code);
+    } catch (e) {
+      toast(e.message, true);
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
 function readAgain(code, f) {
   const button = el("button", { type: "button", title: `Read ${f.drawing} for this floor again` }, "Read");
   button.addEventListener("click", async () => {
