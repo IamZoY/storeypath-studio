@@ -63,8 +63,31 @@ def _rounded(lonlat_geom) -> dict:
     out = shapely.transform(lonlat_geom, lambda c: np.round(c, COORD_DECIMALS))
     # two corners under a centimetre apart become one point: written once, not as a
     # zero-length edge (strict readers take it for a ring crossing itself)
-    out = shapely.remove_repeated_points(out)
+    try:
+        out = shapely.remove_repeated_points(out)
+    except shapely.errors.GEOSException:  # a ring under a centimetre across: not one once rounded
+        out = _without_collapsed(out)
     return json.loads(json.dumps(mapping(out)))  # tuples → lists
+
+
+def _without_collapsed(geom):
+    """Polygons rounded, their repeated points written once and the rings that are then
+    under three points (a hole or a part under a centimetre across) left out."""
+    def ring(coords):
+        pts = []
+        for p in coords:
+            if not pts or p != pts[-1]:
+                pts.append(p)
+        return pts if len(set(pts)) >= 3 else None
+
+    parts = []
+    for p in as_polygons(geom):
+        shell = ring(p.exterior.coords)
+        if shell is not None:
+            parts.append(Polygon(shell, [h for h in (ring(i.coords) for i in p.interiors) if h is not None]))
+    if not parts:
+        return geom
+    return parts[0] if len(parts) == 1 else MultiPolygon(parts)
 
 
 SLIVER_M2 = 0.01  # holes and parts smaller than this (1 dm²) do not survive 1 cm rounding
@@ -442,8 +465,8 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                 for it in sorted(ws.floor_items(f_id), key=lambda i: i.id):
                     out["items"].append(_item_feature(it, cat.get(it.type), g, placed[b_id][0].bearing, b_id, units))
             footprint = None
-            if outlines and g is not None:
-                footprint = g.geometry(unary_union(outlines))
+            if outlines and g is not None:  # (its floors' outlines' holes and parts of no size left out)
+                footprint = g.geometry(_without_slivers(unary_union(outlines)))
                 footprints.append(footprint)
             out["buildings"].append(
                 _feature(

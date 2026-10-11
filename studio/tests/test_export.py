@@ -242,3 +242,31 @@ def test_corners_closer_than_the_rounding_are_written_once(converted, tmp_path):
     ring = spaces[room.id]["geometry"]["coordinates"][0]
     assert all(ring[i] != ring[i + 1] for i in range(len(ring) - 1))
     assert validate_package(tmp_path / "p.storeypath") == []
+
+
+def test_a_floor_outline_with_a_hole_of_no_size_still_exports(converted):
+    # A large floor's outline came with holes of no size (its walls' faces a hair apart):
+    # rounded to a centimetre they were rings of two points, and the building's footprint
+    # could not be written (3D and every export failed). They are left out.
+    from shapely.geometry import Polygon, mapping, shape
+
+    from storeypath.export import _rounded
+
+    ws, d, f_id, b_id, *_ = converted
+    f = ws.floor(f_id)
+    outline = shape(f.outline)
+    x0, y0, *_ = outline.bounds
+    sliver = [(x0 + 1, y0 + 1), (x0 + 1.003, y0 + 1), (x0 + 1.006, y0 + 1.000001), (x0 + 1, y0 + 1)]
+    f.outline = mapping(Polygon(outline.exterior, [*outline.interiors, sliver]))
+    path = d / "holed.storeypath"
+    export_package(ws, path)
+    assert validate_package(path) == []
+    building = next(b for b in _read(path, "buildings.geojson")["features"] if b["id"] == b_id)
+    assert shape(building["geometry"]).is_valid
+    # and wherever a ring is under a centimetre once rounded: left out, the rest kept
+    x, y = 10.5, 50.3
+    holed = Polygon([(x, y), (x + 0.001, y), (x + 0.001, y + 0.001), (x, y + 0.001)],
+                    [[(x + 1e-4, y + 1e-4), (x + 1e-4 + 1e-9, y + 1e-4), (x + 1e-4 + 2e-9, y + 1e-4 + 1e-9), (x + 1e-4, y + 1e-4)]])
+    r = lambda v: round(v, 7)  # noqa: E731
+    assert _rounded(holed) == {"type": "Polygon", "coordinates": [[[x, y], [r(x + 0.001), y], [r(x + 0.001), r(y + 0.001)],
+                                                                   [x, r(y + 0.001)], [x, y]]]}
