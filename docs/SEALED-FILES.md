@@ -50,7 +50,11 @@ changed or cut short. Anything already written out is then not to be used.
 
 ## Reading one elsewhere
 
-Python, with `cryptography`:
+StoreyPath Viewer reads them: its 3D world, map and 2D plan (`open(file, { password })`,
+`readPackage(file, { password })`: a `SealedError` saying when the password is needed)
+and its Go reader (`OpenSealed`, `ReadSealed`, `Unseal`; `ErrNeedsPassword`), as its
+spec/SEALED.md says. Anything else can follow this format; in Python, with
+`cryptography`:
 
 ```python
 import hashlib, struct, unicodedata

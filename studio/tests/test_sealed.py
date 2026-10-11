@@ -84,6 +84,19 @@ def test_the_wrong_password_a_changed_file_or_one_cut_short_is_refused():
         unseal(b"PK\x03\x04 a package", PASSWORD)
 
 
+def test_the_viewers_sealed_sample_opens_here_as_the_package_it_was():
+    # StoreyPath Viewer's readers (3D, 2D, Go) open the same sample (spec/SEALED.md): what
+    # Studio seals, they read, and the other way round
+    from storeypath.assets import asset_dir
+
+    corpus = asset_dir("spec") / "conformance"
+    v = json.loads((corpus / "sealed.json").read_text())
+    plain = unseal((corpus / v["sealed"]).read_bytes(), v["password"])
+    assert plain == (corpus / v["plain"]).read_bytes()
+    with pytest.raises(SealError, match="not this file's"):
+        unseal((corpus / v["sealed"]).read_bytes(), "another password")
+
+
 def test_a_password_is_one_however_its_letters_were_typed_and_long_enough():
     assert unseal(seal(b"x", "café au lait"), "café au lait") == b"x"  # é as one character or two
     with pytest.raises(ValueError, match="at least 8"):
