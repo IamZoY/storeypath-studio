@@ -300,6 +300,21 @@ def test_a_long_look_says_how_far_it_has_got(workspace, monkeypatch):
     assert f"vision: asked about {rooms} of {rooms} rooms" in said
 
 
+def test_a_read_says_how_many_rooms_vision_was_asked_about_and_how_many_kept_what_it_saw(workspace):
+    # The same drawing read again asks about fewer rooms (what vision saw is kept): the
+    # floor's history says how many each read asked, so a count that differs is explained.
+    ws, d, f_id, _, _ = workspace
+    model = FakeVision(lambda p: {"outline": "exactly one room", "type": "storage"})
+    first = convert_floor(ws, f_id, d, vision=model)
+    rooms = sum(1 for r in ws.floor_objects(f_id) if r.kind == "space")
+    assert first.vision == {"rooms": rooms, "asked": rooms, "near": 0}
+    assert first.summary().endswith(f"; vision asked about {rooms} of {rooms} rooms, 0 kept from before (0 of them barely changed)")
+    again = convert_floor(ws, f_id, d, vision=model)
+    assert again.vision["asked"] == 0 and f"vision asked about 0 of {rooms} rooms, {rooms} kept from before" in again.summary()
+    without = convert_floor(ws, f_id, d)  # no model now: what it saw before still kept, and said so
+    assert without.vision == {"rooms": rooms, "asked": 0, "near": 0}
+
+
 def test_never_more_questions_in_flight_than_the_model_takes():
     # Several merged rooms are checked at once: the model still gets no more
     # questions at a time than it was set to take (STOREYPATH_VISION_PARALLEL).

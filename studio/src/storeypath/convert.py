@@ -51,14 +51,20 @@ class ConversionReport:
     unspecified: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     held: bool = False  # the read was not applied: it would have retired most of the floor
+    vision: dict = field(default_factory=dict)  # rooms looked at, asked about, kept as barely changed (look_at_rooms)
 
     def summary(self) -> str:
         if self.held:
             return f"{self.floor_id}: not changed: the drawing read too unlike the floor (see the warning)"
         source = " (spaces found from walls)" if self.method == "walls" else ""
+        seen = ""
+        if self.vision.get("rooms"):  # (why a floor read again asks about fewer: what it saw before is kept)
+            v = self.vision
+            seen = (f"; vision asked about {v.get('asked', 0)} of {v['rooms']} rooms, "
+                    f"{v['rooms'] - v.get('asked', 0)} kept from before ({v.get('near', 0)} of them barely changed)")
         return (
             f"{self.floor_id}: {len(self.kept)} kept, {len(self.added)} new, "
-            f"{len(self.retired)} retired, {len(self.unspecified)} need a type{source}"
+            f"{len(self.retired)} retired, {len(self.unspecified)} need a type{source}{seen}"
         )
 
 
@@ -95,6 +101,7 @@ def convert_floor(
                                skip_label=lambda t: reader.is_room_name(t) is False, drawn_walls=floor.edits.walls,
                                drawn_dividers=floor.edits.dividers)
     _drawn_spaces(extraction, floor.edits.spaces, profile.spaces.min_area)
+    tally: dict = {}  # what vision looked at (the report's)
     _read_room_types(extraction, reader)
     sha = file_sha256(path)
     spotted, spot_failed = _spot_symbols(floor, doc, profile, symbols, extraction.scale, sha)
@@ -103,12 +110,12 @@ def convert_floor(
     if vision is not None or ws.vision:
         sheet = FloorPrint(doc, extraction.scale, keep=tiles, sha=sha)
         units = extraction.units()
-        merged = look_at_rooms(units, doc, src, extraction.scale, sha, vision, ws.vision, say, sheet=sheet)
+        merged = look_at_rooms(units, doc, src, extraction.scale, sha, vision, ws.vision, say, sheet=sheet, tally=tally)
         if zones := split_merged(extraction, units, doc, src, sha, vision, ws.vision, merged, say, sheet):
             _name_zones(extraction, zones, profile, reader, spotted)
             units = extraction.units()
             look_at_rooms(units, doc, src, extraction.scale, sha, vision, ws.vision, say,
-                          only={i for i, u in enumerate(units) if any(u is z for z in zones)}, sheet=sheet)
+                          only={i for i, u in enumerate(units) if any(u is z for z in zones)}, sheet=sheet, tally=tally)
         if (ways := keep_ways_through(extraction)) and say is not None:
             say(f"vision: {ways} area(s) it saw as no room kept, as doors join them to several rooms")
         type_stairs(extraction.units(), stair_flights(_floor_segments(doc, src, extraction.scale)))
@@ -120,6 +127,7 @@ def convert_floor(
     _drawn_openings(extraction, floor.edits.openings, profile.doors.reach)
     _resized_openings(extraction, floor.edits.resized)
     report = apply_extraction(ws, floor_id, extraction, force=force)
+    report.vision = tally
     if not report.held:  # a read held back leaves the floor as it was
         floor.layers = analysis.summary() if analysis is not None else []
         floor.source.sha256 = sha

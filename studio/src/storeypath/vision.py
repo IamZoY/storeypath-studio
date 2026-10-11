@@ -985,12 +985,17 @@ def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | 
 
 def look_at_rooms(spaces: list[ExtractedSpace], doc, src, scale: float, sha: str, model: VisionModel | None,
                   answers: dict[str, dict], say=None, only: set[int] | None = None,
-                  sheet: FloorPrint | None = None) -> list[int]:
+                  sheet: FloorPrint | None = None, tally: dict | None = None) -> list[int]:
     """Ask the vision model about every room (or the ones in ``only``; answers kept
     in ``answers``, reused when a room's shape is unchanged) and apply what it says.
-    Returns the rooms it saw as several rooms merged."""
+    Returns the rooms it saw as several rooms merged. ``tally``: how many rooms it
+    looked at, how many were asked about (the rest kept what it saw before) and how
+    many kept what it saw of one barely changed, added to."""
     chosen = [k for k in range(len(spaces)) if only is None or k in only]
     seen, asked, near = _see([spaces[k].polygon for k in chosen], doc, src, scale, sha, model, answers, sheet, say)
+    if tally is not None:
+        for key, n in (("rooms", len(chosen)), ("asked", asked), ("near", near)):
+            tally[key] = tally.get(key, 0) + n
     if say is not None and asked:
         say(f"vision: asked about {asked} of {len(chosen)} rooms")
     if say is not None and near:
