@@ -183,6 +183,9 @@ ROWS = [
         passes={"admin", "owner", "engineer", "building_editor"}),
     Row("GET", "/api/jobs/{job}", ok=200, passes={"admin", "owner", "building_editor"},
         hidden={"floor_viewer", "engineer", "nobody"}),
+    # (a read alone stops: the job here is an export, stopped by nobody; who may stop it is asked first)
+    Row("POST", "/api/jobs/{job}/stop", {}, ok=(400, "only a read"), passes={"admin", "owner"},
+        hidden={"floor_viewer", "engineer", "nobody"}),
     Row("GET", C, ok=200, passes=PROJECT, hidden=OUTSIDE),
     Row("GET", C + "/review", ok=200, passes=PROJECT, hidden=OUTSIDE),
     Row("POST", C + "/delete", {"confirm": "not its name"}, ok=(400, "type the project's name"),

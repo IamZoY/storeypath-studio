@@ -5,6 +5,7 @@
 import { editableByAccess } from "./access.js";
 import { onSaving } from "./api.js";
 import { on } from "./bus.js";
+import { stopReading } from "./floor.js";
 import { $, el, icon } from "./dom.js";
 import { onToast, sayWith } from "./notify.js";
 import { reviewing } from "./reviewmode.js";
@@ -58,7 +59,16 @@ function renderHint() {
     return;
   }
   if (!state.floor) return box.replaceChildren();
-  if (state.converting) return box.replaceChildren(el("span", {}, "The floor's drawing is being read again…"));
+  if (state.converting) {
+    const stop = state.reading && editableByAccess() ? el("button", { type: "button", "data-testid": "stop-reading",
+      "data-tip": "Stop reading the drawing: the floor stays as it was, and what vision answered is kept (read again, it asks only about the rest)",
+      onclick: () => {
+        stop.disabled = true;
+        stop.textContent = "Stopping…";
+        stopReading();
+      } }, "Stop") : null;
+    return box.replaceChildren(el("span", {}, "The floor's drawing is being read again…"), stop);
+  }
   box.replaceChildren(el("span", {}, view3d.mode === "walk" ? walkHint() : VIEW_HINTS[view3d.mode] || ""));
 }
 

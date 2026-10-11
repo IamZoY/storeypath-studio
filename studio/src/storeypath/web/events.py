@@ -251,8 +251,8 @@ class Events:
 def _progress(job: Job, state: str, lines: int, since: int) -> dict:
     """A job as it was when looked at (``state``, ``lines`` of its log): its log from
     ``since`` (what was sent before) to there; its result once it is done."""
-    out = {"id": job.id, "title": job.title, "state": state, "error": job.error, "from": since,
-           "log": job.log[since:lines]}
+    out = {"id": job.id, "title": job.title, "state": state, "error": job.error, "stopped": job.stopped,
+           "from": since, "log": job.log[since:lines]}
     if state == "done":
         out["result"] = job.result
     return out

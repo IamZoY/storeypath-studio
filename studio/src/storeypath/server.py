@@ -131,11 +131,15 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class Stopped(Exception):
+    """A job a person stopped (Jobs.stop), where it says how far it has got."""
+
+
 @dataclass
 class Job:
     id: str
     title: str
-    state: str = "waiting"  # waiting, running, done, failed
+    state: str = "waiting"  # waiting, running, done, failed (a job stopped: failed, ``stopped``)
     log: list[str] = field(default_factory=list)
     result: object = None
     error: str | None = None
@@ -152,13 +156,21 @@ class Job:
     floors: list[str] = field(default_factory=list)
     submitted: str = field(default_factory=_now_iso)
     ended: str | None = None
+    stop_by: str | None = None  # who asked it to stop (as pages name them), once asked
+    stopped: bool = False  # it ended stopped (failed: what it did before is kept)
 
     def say(self, line: str) -> None:
         self.log.append(line)
 
+    def check(self) -> None:
+        """Stopped, when a person asked it to stop: a step calls this where stopping
+        leaves things whole (a read: each time it says how far it has got)."""
+        if self.stop_by is not None:
+            raise Stopped(f"stopped by {self.stop_by}")
+
     def view(self) -> dict:
-        return {"id": self.id, "title": self.title, "state": self.state, "log": self.log,
-                "result": self.result, "error": self.error}
+        return {"id": self.id, "title": self.title, "kind": self.kind, "state": self.state, "log": self.log,
+                "result": self.result, "error": self.error, "stopped": self.stopped}
 
     def listed(self, by: dict | None = None) -> dict:
         """As a project's jobs are listed: what it is and how it is, its last lines, and
@@ -167,7 +179,8 @@ class Job:
         return {"id": self.id, "title": self.title, "kind": self.kind, "about": self.about, "state": self.state,
                 "scope": list(self.scope), "floors": list(self.floors), "by": by, "submitted": self.submitted,
                 "started": self.started, "ended": self.ended, "log": self.log[-LOG_SHOWN:], "lines": len(self.log),
-                "result": self.result if over else None, "error": self.error}
+                "result": self.result if over else None, "error": self.error, "stopped": self.stopped,
+                "stopping": self.stop_by is not None and not over}
 
 
 class Jobs:
@@ -196,6 +209,19 @@ class Jobs:
             raise NotFound(f"no job {job_id}")
         return self._jobs[job_id]
 
+    STOPPABLE = ("read",)  # the jobs that stop where they say how far they have got
+
+    def stop(self, job: Job, who: str) -> Job:
+        """A read of drawings asked to stop (``who``: as pages name them): one waiting
+        never starts; one running stops the next time it says how far it has got (a
+        floor's vision does every PROGRESS_S), the floor it was reading left as it was."""
+        if job.kind not in self.STOPPABLE:
+            raise ValueError("only a read of drawings can be stopped")
+        if job.ended is None and job.stop_by is None:
+            job.stop_by = who
+            job.say(f"stopping: asked by {who}")
+        return job
+
     def of(self, project: str) -> list[Job]:
         """A project's jobs, as a page opened again shows them: to run, running, or ended
         within JOBS_SHOWN_S; the latest first."""
@@ -214,9 +240,14 @@ class Jobs:
             job, fn = self._queue.get()
             try:
                 job.state, job.started = "running", _now_iso()
+                job.check()  # (stopped while it waited)
                 job.result = fn(job)
                 job.ended = _now_iso()  # (before its state: a job done has ended)
                 job.state = "done"
+            except Stopped as e:  # what it did before is kept: it says what
+                job.ended, job.stopped = _now_iso(), True
+                job.state, job.error = "failed", str(e)
+                job.say(job.error)
             except Exception as e:  # reported on the page
                 job.ended = _now_iso()
                 job.state, job.error = "failed", _message(e)
@@ -1000,12 +1031,13 @@ class Studio:
                 self.store.save(ws, floors=[], by=by, part="building", kind="site", targets=moved)
 
     def convert(self, code: str, floor: str | None = None, force: bool = False, by=None,
-                editor: Editor | None = None) -> Job:
+                editor: Editor | None = None, drawn: bool = False) -> Job:
         """Read floors' drawings again (one, or all). A reading that finds no rooms on a
         floor that has some, or would retire most of them, is held back and the floor
         keeps its rooms (convert.py); ``force`` applies it all the same. ``editor``: a
         person reading one floor again from a page, which waits until nobody else holds
-        a room on it (Locked)."""
+        a room on it (Locked). ``drawn``: the floor read because a person drew on it (or
+        undid that): the rooms people corrected that it retires are not held back for."""
         if not isinstance(force, bool):
             raise ValueError("force is true or false")
         self._known(code)
@@ -1019,7 +1051,7 @@ class Studio:
             # beside the others when its drawing would stack it on one of them
             unread = {f"{ws.id}-{loc.code}-{b.code}" for loc in ws.locations for b in loc.buildings
                       if all(f.converted_at is None for f in b.floors)}
-            result = self._convert(code, floors, job, force=force, by=by)
+            result = self._convert(code, floors, job, force=force, by=by, drawn=drawn)
             if unread:
                 self._stand_apart(code, unread, job, by=by)
             return result
@@ -1028,7 +1060,8 @@ class Studio:
                                 scope=("floor", floor) if floor is not None else ("project", None),
                                 kind="read", floors=[floor] if floor is not None else None)
 
-    def _convert(self, code: str, floor_ids: list[str], job: Job, force: bool = False, by=None) -> dict:
+    def _convert(self, code: str, floor_ids: list[str], job: Job, force: bool = False, by=None,
+                 drawn: bool = False) -> dict:
         from .convert import convert_floor
 
         job.floors = list(dict.fromkeys([*job.floors, *floor_ids]))  # (a page opened again shows them being read)
@@ -1039,28 +1072,38 @@ class Studio:
             job.say(f"spotting symbols with {self.symbols.name} (research use only)")
         if self.vision.available():
             job.say(f"looking at the rooms with {self.vision.name}")
-        summaries, held, failed = [], [], []
+        summaries, held, failed, why = [], [], [], {}
         with self._changing(code):
             ws = self.store.load(code)
             names = {drawing_name(ws.floor(f).source.path) for f in floor_ids if ws.floor(f).source is not None}
             with self._files(code, names) as folder:
+                def say(line: str) -> None:  # (where a read stops when asked to)
+                    job.check()
+                    job.say("  " + line)
+
                 for fid in floor_ids:
                     if ws.floor(fid).source is None:
                         continue
+                    job.check()
                     job.say(f"converting {fid}")
                     # a read that would retire most of a floor is not applied: the floor keeps its rooms
                     try:
                         report = convert_floor(ws, fid, folder, self.model, self.symbols,
                                                self.vision if self.vision.available() else None,
-                                               say=lambda m: job.say("  " + m), force=force, tiles=self.cache / TILES)
+                                               say=say, force=force, tiles=self.cache / TILES, drawn=drawn)
                     except Exception as e:  # this floor stays as it was; the others are converted
-                        traceback.print_exc()
-                        job.say(f"  {fid}: not converted: {_message(e)}")
-                        failed.append(f"{fid}: {_message(e)}")
-                        saved = self.store.load(code)  # as last saved, with what the models answered meanwhile
+                        # what the models answered meanwhile is kept, so reading it again asks only about the rest
+                        saved = self.store.load(code)
                         saved.readings.update(ws.readings)
                         saved.vision.update(ws.vision)
                         ws = saved
+                        self.store.save(ws, floors=[], by=by, part="project", kind="answers", targets=[fid])
+                        if isinstance(e, Stopped):
+                            raise Stopped(f"{e}: {fid} stays as it was (what vision answered is kept: read again, "
+                                          "it asks only about the rest)") from None
+                        traceback.print_exc()
+                        job.say(f"  {fid}: not converted: {_message(e)}")
+                        failed.append(f"{fid}: {_message(e)}")
                         continue
                     job.say("  " + report.summary())
                     for w in report.warnings:
@@ -1068,10 +1111,11 @@ class Studio:
                     summaries.append(report.summary())
                     if report.held:
                         held.append(fid)
+                        why[fid] = report.hold
                     self.store.save_floor(ws, fid, by=by, more={"summary": report.summary(), "held": report.held})
         if failed:  # the job fails, the floors converted kept
             raise ValueError(f"not converted: {'; '.join(failed)}")
-        return {"summaries": summaries, "held": held}
+        return {"summaries": summaries, "held": held, "why": why}
 
     def move(self, code: str, building_id: str, body: dict, by=None) -> dict:
         """A building moved on its location's site plan: ``x``, ``y`` (metres from the
@@ -1375,7 +1419,7 @@ class Studio:
                     raise Forbidden(f"undoing this needs edit access to {f}; you have {sight.floor(f) or 'none'}")
 
         done = self.review(code).step_back(floor, by=by, editor=editor, redo=redo, check=check)
-        job = self.convert(code, done["floors"][0], by=_uid(by)) if done.pop("read") and done["floors"] else None
+        job = self.convert(code, done["floors"][0], by=_uid(by), drawn=True) if done.pop("read") and done["floors"] else None
         return {**done, "job": job}
 
     def history(self, code: str, floor: str | None = None, n=None, sight: Sight | None = None, by=None) -> dict:
@@ -2198,6 +2242,17 @@ class Gate:
             sight = None
         if sight is None or not sight.scope(*job.scope):
             raise NotFound(f"no job {job_id}")
+        return job
+
+    def stop_job(self, job_id: str) -> Job:
+        """A job a person may stop: who started it, an admin, or whoever may start it
+        again (a read: edit on the floors it reads, or on the project)."""
+        user = self._who()
+        job = self.job(job_id)
+        if self.accounts is None or user.role == "admin" or (job.user is not None and job.user == user.id):
+            return job
+        for floor in job.floors or [None]:
+            self.convert(job.project, floor)
         return job
 
     def jobs(self, code: str) -> dict:

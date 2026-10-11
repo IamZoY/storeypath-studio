@@ -59,7 +59,7 @@ def test_a_read_that_finds_no_rooms_keeps_the_floor_and_its_ids(tmp_path):
     ws.floor(f).source.path = "rev2.dxf"  # read with the old layer names: nothing found
     report = convert_floor(ws, f, tmp_path)
     assert report.held and report.retired == [] and report.added == []
-    assert any(w.startswith("nothing was changed") and "force" in w for w in report.warnings)
+    assert any(w.startswith("nothing was changed") and "read it anyway" in w for w in report.warnings)
     assert "not changed" in report.summary()
     assert _active(ws, f) == rooms and ws.floor(f).source.sha256 == sha
 

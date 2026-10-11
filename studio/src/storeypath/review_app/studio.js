@@ -99,6 +99,21 @@ async function runJob(started) {
   panel.className = "job";
   let job = await started;
   following.add(job.id);
+  const stop = $("job-stop");
+  stop.hidden = job.kind !== "read"; // (a read of drawings stops where it says how far it has got)
+  stop.disabled = Boolean(job.stopping);
+  stop.textContent = job.stopping ? "Stopping…" : "Stop";
+  stop.onclick = async () => {
+    stop.disabled = true;
+    stop.textContent = "Stopping…";
+    try {
+      await api(`jobs/${job.id}/stop`, {});
+    } catch (e) {
+      stop.disabled = false;
+      stop.textContent = "Stop";
+      toast(`Could not stop it: ${e.message}`, true);
+    }
+  };
   try {
     $("job-title").textContent = job.title;
     const say = (log) => $("job-log").replaceChildren(...log.slice(-12).map((l) => el("li", {}, l)));
@@ -111,10 +126,11 @@ async function runJob(started) {
     say(job.log);
   } finally {
     following.delete(job.id);
+    stop.hidden = true;
   }
   panel.classList.add(job.state);
   setTimeout(() => (panel.hidden = true), job.state === "failed" ? 15000 : 4000);
-  if (job.state === "failed") throw new Error(job.error || "failed");
+  if (job.state === "failed") throw Object.assign(new Error(job.error || "failed"), { stopped: Boolean(job.stopped) });
   return job.result;
 }
 
@@ -854,18 +870,24 @@ function deleteFloor(code, f) {
   return button;
 }
 
+/** Why a read of the floor ``id`` was held back, as the question whether to read it anyway. */
+function heldWhy(result, id) {
+  const why = result?.why?.[id] || "This reading finds far fewer rooms than the floor has (or none), so nothing was changed: the floor keeps its rooms and their IDs";
+  return `${why.charAt(0).toUpperCase()}${why.slice(1)}.\n\nThe rooms it no longer has are retired if you read it anyway (their IDs are never used again). Read anyway?`;
+}
+
 function readAgain(code, f) {
   const button = el("button", { type: "button", title: `Read ${f.drawing} for this floor again` }, "Read");
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
       const r = await runJob(api(`projects/${code}/floors/${f.id}/convert`, {}));
-      // a reading that would retire most of the floor is held back: applied only when asked
-      if ((r?.held || []).includes(f.id) && confirm('This reading finds far fewer rooms than the floor has (or none), so nothing was changed: the floor keeps its rooms and their IDs. If the drawing really lost those rooms, read it anyway: the rooms it no longer has are retired. Read anyway?')) await runJob(api(`projects/${code}/floors/${f.id}/convert`, { force: true }));
+      // a reading that would retire most of the floor, or rooms people corrected, is held back: applied only when asked
+      if ((r?.held || []).includes(f.id) && confirm(heldWhy(r, f.id))) await runJob(api(`projects/${code}/floors/${f.id}/convert`, { force: true }));
       toast(`${f.name} read`);
       await projectPage(code);
     } catch (e) {
-      toast(e.message, true);
+      toast(e.stopped ? `Reading stopped: ${e.message}` : e.message, !e.stopped);
       button.disabled = false;
     }
   });

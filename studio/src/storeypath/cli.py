@@ -434,11 +434,12 @@ def convert(
                                                   "($STOREYPATH_VISION_URL), when one is set")] = True,
     force: Annotated[bool, typer.Option("--force",
                                         help="apply a read even when it finds no rooms on a floor, or would retire "
-                                             "most of them (a drawing that really changed that much)")] = False,
+                                             "most of them or rooms people corrected (a drawing that really changed "
+                                             "that much)")] = False,
 ):
     """Read the drawings and update the project's objects, keeping existing IDs. A
-    read that would retire most of a floor's rooms (layers renamed, wrong units) is
-    not applied without --force: the floor keeps its rooms."""
+    read that would retire most of a floor's rooms (layers renamed, wrong units), or
+    rooms people corrected, is not applied without --force: the floor keeps its rooms."""
     from .llm import LocalModel
     from .symbols import SymbolSpotter
 
@@ -475,7 +476,7 @@ def convert(
                 ws = _as_saved(workspace, ws)
                 continue
             failed |= report.held
-            typer.secho(report.summary(), fg="yellow" if report.held else None)
+            typer.secho(report.summary() + (" (with --force)" if report.held else ""), fg="yellow" if report.held else None)
             for w in report.warnings:
                 typer.secho(f"  warning: {w}", fg="yellow")
             ws.save(workspace)  # each floor kept as soon as it is converted

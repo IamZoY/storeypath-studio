@@ -234,7 +234,7 @@ export async function followJob(job, say) {
   job = await follow;
   say(null);
   if (!job) throw new Error("the page went to another floor");
-  if (job.state === "failed") throw new Error(job.error || "failed");
+  if (job.state === "failed") throw Object.assign(new Error(job.error || "failed"), { stopped: Boolean(job.stopped) });
   return job;
 }
 

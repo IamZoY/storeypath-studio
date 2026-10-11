@@ -39,6 +39,14 @@ def job(job_id: str, request: Request, may: May):
     return answer(request, found)
 
 
+@calls.post("/api/jobs/{job_id}/stop")
+def stop_job(job_id: str, request: Request, may: May, studio: TheStudio):
+    """A read of drawings stopped (Jobs.stop): by who started it, an admin, or whoever may read them again."""
+    found = may.stop_job(job_id)
+    who = may.user
+    return answer(request, studio.jobs.stop(found, (who.name or who.username) if who is not None else "someone").view())
+
+
 @calls.get(P)
 def project(code: str, request: Request, may: May, studio: TheStudio):
     sight = may.see(code)

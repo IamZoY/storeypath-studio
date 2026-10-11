@@ -271,6 +271,7 @@ def _describe(e: dict) -> str:
         "floor deleted": f"deleted the floor {e.get('floor_name') or 'a floor'}",
         "export": f"exported {e.get('file') or 'a package'}", "arrange": "set the buildings side by side",
         "site": "moved a building on the site plan",
+        "answers": "kept what vision saw on a read that did not finish",
         "place": "placed a building on the map" if part == "building" else "placed the site on the map",
         "open": "opened a file into the project" if part == "building" else "opened the project from a file",
     }

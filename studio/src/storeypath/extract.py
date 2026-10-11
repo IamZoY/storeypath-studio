@@ -190,6 +190,33 @@ def plan_entities(doc: Drawing, region: tuple[float, float, float, float] | None
             yield e
 
 
+DRAWN_MARGIN = 0.1  # of a view's side: an entity this near it is printed (a text is measured at its insertion point)
+
+
+def drawn_in(doc: Drawing, view: tuple[float, float, float, float]):
+    """The entities a print of ``view`` (x0, y0, x1, y1, drawing units) shows: those
+    whose extents meet it (or come within DRAWN_MARGIN of it), a block larger than the
+    view taken apart as plan_entities takes one apart. plan_entities says which plan an
+    entity is of, by its middle; a print wants what crosses it, and nothing that does
+    not (a line whose middle is far off but runs across the view is drawn; a room
+    beside it is not)."""
+    entities, _, boxes = _entity_index(doc)
+    x0, y0, x1, y1 = view
+    m = DRAWN_MARGIN * max(x1 - x0, y1 - y0)
+    meets = (boxes[:, 0] <= x1 + m) & (boxes[:, 2] >= x0 - m) & (boxes[:, 1] <= y1 + m) & (boxes[:, 3] >= y0 - m)
+    larger = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) > (x1 - x0) * (y1 - y0)
+    # (pieces of a block taken apart are the view's by their middle, as plan_entities':
+    # half the view's side around it, so a piece crossing it is not left out)
+    half = max(x1 - x0, y1 - y0) / 2
+    budget = [MAX_BLOCK_PIECES]
+    for i in np.nonzero(meets)[0]:
+        e = entities[i]
+        if larger[i] and e.dxftype() == "INSERT":
+            yield from _pieces_in(e, (x0 - half, y0 - half, x1 + half, y1 + half), 1, (e.dxf.get("name", ""),), budget)
+        else:
+            yield e
+
+
 def _pieces_in(insert, region, depth: int, within: tuple[str, ...], budget: list[int]):
     """The pieces of a block placed across ``region`` that lie in it (see plan_entities)."""
     try:

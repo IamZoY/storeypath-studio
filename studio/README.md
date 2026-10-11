@@ -311,7 +311,7 @@ what they may see.
 | `add-floor FILE BUILDING-ID DRAWING --ordinal N` | add a floor and its drawing; `--view` (a plan's number or part of its title), or `--region x0,y0,x1,y1`; `--units`, `--height`, `--parapet`, `--profile`, `--code`, `--name` |
 | `align FILE BUILDING-ID` | line up floors drawn side by side; floors converted already stay where they are; `--reference` |
 | `levels FILE BUILDING-ID` | floor heights and the roof's parapet from the level labels on sections and plans |
-| `convert FILE` | read the drawings, keeping existing IDs; `--floor`, `--no-model`, `--no-vision`, `--no-symbols`; `--force` applies a reading held back because it would retire most of a floor |
+| `convert FILE` | read the drawings, keeping existing IDs; `--floor`, `--no-model`, `--no-vision`, `--no-symbols`; `--force` applies a reading held back because it would retire most of a floor, or rooms people corrected |
 | `list FILE` | objects with their IDs, types and labels; `--review` only the spaces that need a look, and why; `--floor`, `--retired` |
 | `fix FILE ID` | correct a space: `--type`, `--name`, `--number` (`""` removes a wrong one); no options accepts it as it is; `--clear` removes the corrections |
 | `review FILE` | open the review editor on this project (on this machine, port 8766, plain HTTP, no accounts), in a database of its own made for the while on the PostgreSQL `STOREYPATH_DATABASE_URL` names; the file is written again after every change |
@@ -455,8 +455,8 @@ revised drawing is converted, each space is matched to its previous version by r
 number and by overlap: matches keep their ID, removed spaces are retired (their IDs
 are never reused), and new spaces get new codes. A reading that finds no spaces on a
 floor that has some, or would retire more than half of them (layers renamed, wrong
-units), is held back: the floor keeps its rooms, and `convert --force` applies it if
-the drawing really changed that much.
+units), or that would retire rooms people corrected, is held back: the floor keeps its
+rooms, and `convert --force` applies it if the drawing really changed that much.
 
 To continue a project in another Studio, the web app's *Download project* gives one
 file (`*.storeypath-project`: the workspace, its drawings and the item types), which

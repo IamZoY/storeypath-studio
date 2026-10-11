@@ -133,3 +133,58 @@ def test_elevators_and_stairs_share_a_code_across_floors(workspace):
     offices2 = {parse_id(r.id).code for r in ws.floor_objects(f2) if r.type == "office"}
     offices3 = {parse_id(r.id).code for r in ws.floor_objects(f3) if r.type == "office"}
     assert not offices2 & offices3  # everything else gets its own code
+
+
+def test_a_read_that_would_retire_a_room_people_corrected_is_held_back_and_says_which(converted):
+    # The drawing revised: 208 and 209 made one room, 208 (it keeps 208's ID). A person
+    # had named 209: their correction cannot go on to the room that is 208's, so the
+    # read is held back and says which room it would retire; read anyway, it is retired
+    # with its correction, which stays with its retired ID.
+    ws, d, f_id, _, _, _ = converted
+    old = _by_number(ws, f_id)
+    ws.overrides[old["209"]] = Override(name="QUIET ROOM")
+    ws.overrides[old["201"]] = Override()  # (accepted as it is: nothing a read loses)
+    write_floor_dxf(d / "level-2-rev.dxf", _renovate(office_floor(2)))
+    ws.floor(f_id).source = SourceDrawing(path="level-2-rev.dxf")
+    held = convert_floor(ws, f_id, d)
+    assert held.held and f"QUIET ROOM 209 ({old['209']})" in held.hold and "not changed: the drawing now reads" in held.summary()
+    assert ws.objects[old["209"]].status == "active" and "218" not in _by_number(ws, f_id)  # nothing changed
+
+    anyway = convert_floor(ws, f_id, d, force=True)
+    assert anyway.lost == [old["209"]] and ws.objects[old["209"]].status == "retired"
+    assert ws.overrides[old["209"]].name == "QUIET ROOM"
+    assert "1 rooms people corrected retired" in anyway.summary()
+
+
+def test_a_correction_goes_on_with_its_room_reshaped_past_matching(converted):
+    # The drawing revised: 213, 214 and 215 made one room, its tag left off. 214 is
+    # wholly in it, and is a third of it: too unlike to keep its ID, but the person's
+    # correction of it goes on to the room it became (the others had none).
+    ws, d, f_id, _, _, _ = converted
+    old = _by_number(ws, f_id)
+    ws.overrides[old["214"]] = Override(type="office", name="QUIET ROOM")
+    cells = [c for c in office_floor(2) if c.label is None or c.label[-1] not in ("213", "215")]
+    for c in cells:
+        if c.label == ["214"]:
+            c.x0, c.x1, c.label = 20, 32, None
+    write_floor_dxf(d / "level-2-rev.dxf", cells)
+    ws.floor(f_id).source = SourceDrawing(path="level-2-rev.dxf")
+    report = convert_floor(ws, f_id, d)
+    assert not report.held and len(report.carried) == 1
+    was, now = report.carried[0]
+    assert was == old["214"] and now in report.added and ws.objects[was].status == "retired"
+    e = ws.effective(ws.objects[now])
+    assert (e["type"], e["name"]) == ("office", "QUIET ROOM")
+    assert "the corrections of 1 reshaped rooms went on with them" in report.summary()
+
+
+def test_a_read_after_a_person_drew_on_the_floor_is_not_held_for_the_rooms_it_changed(converted):
+    # A wall taken away in review (read again, as drawing does): the rooms it joined are
+    # the person's doing, their corrections retired with the room that went
+    ws, d, f_id, _, _, _ = converted
+    old = _by_number(ws, f_id)
+    ws.overrides[old["209"]] = Override(name="QUIET ROOM")
+    write_floor_dxf(d / "level-2-rev.dxf", _renovate(office_floor(2)))
+    ws.floor(f_id).source = SourceDrawing(path="level-2-rev.dxf")
+    report = convert_floor(ws, f_id, d, drawn=True)
+    assert not report.held and report.lost == [old["209"]]

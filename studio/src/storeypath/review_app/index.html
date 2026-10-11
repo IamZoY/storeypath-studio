@@ -36,7 +36,9 @@
   <main id="page" class="page"></main>
 
   <aside id="job" class="job" hidden>
-    <div class="job-head"><span class="spinner" aria-hidden="true"></span><strong id="job-title"></strong></div>
+    <div class="job-head"><span class="spinner" aria-hidden="true"></span><strong id="job-title"></strong>
+      <button type="button" id="job-stop" class="btn-ghost small" data-testid="stop-reading" hidden
+        title="Stop reading: the floor being read stays as it was, the floors read already are kept, and so is what vision answered (read again, it asks only about the rest)">Stop</button></div>
     <ol id="job-log"></ol>
   </aside>
 

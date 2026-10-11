@@ -55,12 +55,13 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from shapely import STRtree, wkt
+from shapely import STRtree, make_valid, wkt
+from shapely.errors import GEOSException
 from shapely.affinity import scale as scale_geom
 from shapely.affinity import translate
 from shapely.geometry import LineString, box
 
-from .extract import ExtractedSpace, ExtractedZone, plan_entities
+from .extract import ExtractedSpace, ExtractedZone, drawn_in, plan_entities
 from .geometry import as_polygons
 from .split import exact_parts
 from .types import SpaceType
@@ -614,17 +615,18 @@ def print_png(doc, bbox, width: int, height: int, text: bool = True) -> bytes:
 
 def _print_png(doc, bbox, width: int, height: int, text: bool = True) -> bytes:
     from ezdxf.addons.drawing import Frontend, RenderContext
-    from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
+
+    from .printing import Batches
 
     x0, y0, x1, y1 = bbox
     fig = Figure(figsize=(width / 100, height / 100), dpi=100)
     FigureCanvasAgg(fig)
     ax = fig.add_axes((0, 0, 1, 1))
-    pad = max(x1 - x0, y1 - y0) * 0.1  # blocks placed just outside reach in
-    entities = list(plan_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
-    Frontend(RenderContext(doc), MatplotlibBackend(ax), config=_print_config(text)).draw_entities(entities)
+    batches = Batches(ax, view=bbox)
+    Frontend(RenderContext(doc), batches, config=_print_config(text)).draw_entities(list(drawn_in(doc, bbox)))
+    batches.flush()
     ax.set_xlim(x0, x1)
     ax.set_ylim(y0, y1)
     ax.axis("off")
@@ -633,22 +635,24 @@ def _print_png(doc, bbox, width: int, height: int, text: bool = True) -> bytes:
     return out.getvalue()
 
 
-def _print(doc, bbox, px: int, highlight=(), pad: float = 0.0, marks=(), letters=()):
+def _print(doc, bbox, px: int, highlight=(), marks=(), letters=()):
     """A square part of the drawing as printed (black on white), ``px`` pixels a
     side: a matplotlib figure, ``highlight`` (shapely geometries, drawing units)
     outlined in red, ``marks`` (lines) in blue and ``letters`` ((text, (x, y)))
-    written in blue. ``pad`` (drawing units) brings in blocks placed just outside."""
+    written in blue. What crosses it is drawn (drawn_in), and nothing else."""
     from ezdxf.addons.drawing import Frontend, RenderContext
-    from ezdxf.addons.drawing.matplotlib import MatplotlibBackend
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
+
+    from .printing import Batches
 
     x0, y0, x1, y1 = bbox
     fig = Figure(figsize=(px / 100, px / 100), dpi=100)  # no pyplot: safe in Studio's job threads
     FigureCanvasAgg(fig)
     ax = fig.add_axes((0, 0, 1, 1))
-    entities = list(plan_entities(doc, (x0 - pad, y0 - pad, x1 + pad, y1 + pad)))
-    Frontend(RenderContext(doc), MatplotlibBackend(ax), config=_print_config()).draw_entities(entities)
+    batches = Batches(ax, view=bbox)
+    Frontend(RenderContext(doc), batches, config=_print_config()).draw_entities(list(drawn_in(doc, bbox)))
+    batches.flush()
     for g in highlight:
         for part in getattr(g, "geoms", [g]):
             xs, ys = getattr(part, "exterior", part).xy
@@ -674,8 +678,7 @@ def render(doc, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> byt
 def _render(doc, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:
     """A part of the drawing as printed, with ``highlight`` outlined in red and
     ``marks`` and ``letters`` in blue. PNG."""
-    x0, y0, x1, y1 = bbox
-    fig = _print(doc, bbox, px, highlight, pad=max(x1 - x0, y1 - y0) / 2, marks=marks, letters=letters)
+    fig = _print(doc, bbox, px, highlight, marks=marks, letters=letters)
     out = io.BytesIO()
     fig.savefig(out, format="png", dpi=100, facecolor="white")
     return out.getvalue()
@@ -685,12 +688,15 @@ class FloorPrint:
     """A floor printed once, in overlapping tiles, and looked at a part at a time,
     as a person reads a printed sheet: each room's view is cut out of a tile and
     its outline drawn on it, instead of drawing the plan again for every room.
-    Views wider than the tiles' overlap are drawn on their own. Only the last few
-    tiles are kept in memory (each is some 90 MB): rooms are best looked at tile by
+    Views wider than the tiles' overlap are drawn on their own, and those wider than
+    WHOLE_FROM_M (a courtyard, the hall of a whole wing) are cut from one print of the
+    whole floor (``region``, or the whole drawing), printed when the first is looked at:
+    each would otherwise take most of the floor's drawing time again. Only the last
+    few tiles are kept in memory (each is some 90 MB): rooms are best looked at tile by
     tile (see ``tile_of``). With ``keep`` (a folder) and the drawing's ``sha``, each tile
-    is kept on disk too, and the floor read again (a wall drawn in review: a tile shows
-    the drawing alone) takes it from there instead of printing it again (seconds each).
-    The tiles of the KEEP_DRAWINGS drawings last read are kept."""
+    (and the whole floor's print) is kept on disk too, and the floor read again (a wall
+    drawn in review: a tile shows the drawing alone) takes it from there instead of
+    printing it again. The tiles of the KEEP_DRAWINGS drawings last read are kept."""
 
     PX_PER_M = CROP_PX / CROP_MIN_M  # the smallest view keeps its full detail
     STRIDE_M = 30.0
@@ -698,9 +704,13 @@ class FloorPrint:
     KEEP_TILES = 4
     KEEP_DRAWINGS = 20
     TILE_VERSION = 1  # raised when _print draws a tile differently: those kept are printed again
+    WHOLE_FROM_M = 48.0
+    WHOLE_PX = 6144  # the whole floor's print, this many pixels a side (some 110 MB)
 
-    def __init__(self, doc, scale: float, keep: Path | str | None = None, sha: str | None = None):
+    def __init__(self, doc, scale: float, keep: Path | str | None = None, sha: str | None = None, region=None):
         self.doc, self.scale = doc, scale
+        self.region = tuple(region) if region is not None else None
+        self._whole = None  # (print, its left, its top, pixels per drawing unit) once printed; False: none
         self.stride = self.STRIDE_M / scale  # drawing units
         self.overlap = self.OVERLAP_M / scale
         self.tile_px = round((self.STRIDE_M + self.OVERLAP_M) * self.PX_PER_M)
@@ -730,64 +740,98 @@ class FloorPrint:
         if (i, j) in self._tiles:
             self._tiles.move_to_end((i, j))
         else:
-            from PIL import Image
-
-            tile = self._kept_tile(i, j)
+            tile = self._kept_tile(f"{i}_{j}")
             if tile is None:
                 x0, y0 = i * self.stride, j * self.stride
                 side = self.stride + self.overlap
-                fig = _print(self.doc, (x0, y0, x0 + side, y0 + side), self.tile_px, pad=self.overlap / 2)
-                fig.canvas.draw()
-                tile = Image.frombuffer("RGBA", fig.canvas.get_width_height(), fig.canvas.buffer_rgba()).convert("RGB")
-                self._keep_tile(i, j, tile)
+                tile = _image(_print(self.doc, (x0, y0, x0 + side, y0 + side), self.tile_px))
+                self._keep_tile(f"{i}_{j}", tile)
             self._tiles[(i, j)] = tile
             while len(self._tiles) > self.KEEP_TILES:
                 self._tiles.popitem(last=False)
         return self._tiles[(i, j)]
 
-    def _kept_tile(self, i: int, j: int):
+    def _kept_tile(self, name: str):
         if self.kept is None:
             return None
         from PIL import Image
 
         try:
-            with Image.open(self.kept / f"{i}_{j}.png") as kept:
+            with Image.open(self.kept / f"{name}.png") as kept:
                 return kept.convert("RGB")
         except (OSError, ValueError):
             return None  # not kept yet (or not whole): printed
 
-    def _keep_tile(self, i: int, j: int, tile) -> None:
+    def _keep_tile(self, name: str, tile) -> None:
         if self.kept is None:
             return
         try:
             self.kept.mkdir(parents=True, exist_ok=True)
-            part = self.kept / f"{i}_{j}.{os.getpid()}.part"
+            part = self.kept / f"{name}.{os.getpid()}.part"
             tile.save(part, format="PNG", compress_level=1)
-            part.replace(self.kept / f"{i}_{j}.png")  # whole, or not there
+            part.replace(self.kept / f"{name}.png")  # whole, or not there
         except OSError:
             pass
+
+    def _whole_floor(self):
+        """The whole floor's print (see _whole), or None when the drawing holds nothing."""
+        if self._whole is None:
+            self._whole = False
+            if self.region is not None:
+                x0, y0, x1, y1 = self.region
+            else:
+                from .extract import _entity_index
+
+                boxes = _entity_index(self.doc)[2]
+                if not len(boxes):
+                    return None
+                (x0, y0), (x1, y1) = boxes[:, :2].min(axis=0), boxes[:, 2:].max(axis=0)
+            side = max(x1 - x0, y1 - y0)
+            if not side > 0:
+                return None
+            cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+            bbox = (cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2)
+            name = f"whole-{self.WHOLE_PX}-" + "_".join(f"{v:.6g}" for v in bbox)
+            image = self._kept_tile(name)
+            if image is None:
+                image = _image(_print(self.doc, bbox, self.WHOLE_PX))
+                self._keep_tile(name, image)
+            self._whole = (image, bbox[0], bbox[3], self.WHOLE_PX / side)
+        return self._whole or None
 
     def view(self, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:
         with _DRAWING:
             return self._view(bbox, highlight, px, marks, letters)
 
     def _view(self, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:
-        x0, y0, x1, y1 = bbox
-        if max(x1 - x0, y1 - y0) > self.overlap:
-            return render(self.doc, bbox, highlight, px, marks, letters)
-        from PIL import ImageDraw, ImageFont
+        from PIL import Image, ImageDraw, ImageFont
 
-        i, j = self.tile_of(bbox)
-        tile = self._tile(i, j)
-        tx0, ty1 = i * self.stride, j * self.stride + self.stride + self.overlap
-        k = self.tile_px / (self.stride + self.overlap)  # pixels per drawing unit
+        x0, y0, x1, y1 = bbox
+        side = max(x1 - x0, y1 - y0)
+        if side > self.overlap:
+            whole = self._whole_floor() if side * self.scale > self.WHOLE_FROM_M else None
+            if whole is None or side * whole[3] < px:  # (a print of the whole too coarse for it: drawn on its own)
+                return render(self.doc, bbox, highlight, px, marks, letters)
+            sheet, tx0, ty1, k = whole
+        else:
+            i, j = self.tile_of(bbox)
+            sheet = self._tile(i, j)
+            tx0, ty1 = i * self.stride, j * self.stride + self.stride + self.overlap
+            k = self.tile_px / (self.stride + self.overlap)  # pixels per drawing unit
 
         def pixel(x, y):
             return (x - tx0) * k, (ty1 - y) * k
 
         left, top = pixel(x0, y1)
         right, bottom = pixel(x1, y0)
-        out = tile.crop((round(left), round(top), round(right), round(bottom))).resize((px, px))
+        cut = tuple(round(v) for v in (left, top, right, bottom))
+        out = sheet.crop(cut)
+        if cut[0] < 0 or cut[1] < 0 or cut[2] > sheet.width or cut[3] > sheet.height:  # beyond the print: paper, not black
+            inside = (max(cut[0], 0), max(cut[1], 0), min(cut[2], sheet.width), min(cut[3], sheet.height))
+            out = Image.new("RGB", out.size, "white")
+            if inside[0] < inside[2] and inside[1] < inside[3]:
+                out.paste(sheet.crop(inside), (inside[0] - cut[0], inside[1] - cut[1]))
+        out = out.resize((px, px))
         f = px / (right - left)
         draw = ImageDraw.Draw(out, "RGBA")
         for g in highlight:
@@ -807,6 +851,14 @@ class FloorPrint:
         buf = io.BytesIO()
         out.save(buf, format="PNG")
         return buf.getvalue()
+
+
+def _image(fig):
+    """A matplotlib figure's pixels, as an RGB image."""
+    from PIL import Image
+
+    fig.canvas.draw()
+    return Image.frombuffer("RGBA", fig.canvas.get_width_height(), fig.canvas.buffer_rgba()).convert("RGB")
 
 
 def _window(geom, scale: float, min_m: float = CROP_MIN_M):
@@ -844,17 +896,24 @@ class _Alike:
     None), for the room most like one no answer is kept for."""
 
     def __init__(self, answers: dict[str, dict], drawing: str, model: str | None):
-        self.kept = [(wkt.loads(a["shape"]), a) for a in answers.values()
+        # (a shape is kept rounded to the centimetre, which can leave it crossing itself:
+        # it is made valid, or two shapes could not be compared)
+        self.kept = [(make_valid(wkt.loads(a["shape"])), a) for a in answers.values()
                      if a.get("drawing") == drawing and a.get("outline") == ONE_ROOM and "shape" in a
                      and (model is None or a.get("model") == model)]
         self.tree = STRtree([shape for shape, _ in self.kept]) if self.kept else None
 
     def to(self, polygon) -> dict | None:
         best = None
+        polygon = make_valid(polygon)
         for i in self.tree.query(polygon) if self.tree is not None else ():
             shape, answer = self.kept[i]
-            both = polygon.union(shape).area
-            share = polygon.intersection(shape).area / both if both else 0.0
+            try:
+                shared = polygon.intersection(shape).area
+            except GEOSException:  # two shapes that cannot be compared are not alike
+                continue
+            both = polygon.area + shape.area - shared
+            share = shared / both if both > 0 else 0.0
             if share >= NEAR_SAME and (best is None or share > best[0]):
                 best = (share, answer)
         return best[1] if best else None
@@ -892,7 +951,8 @@ def _ask_each(todo: list, draw, ask, keep, model: VisionModel, say=None, what: s
                 model.failed = f"one of the {what} was not looked at: {type(e).__name__}: {e}"
 
     ahead = 2 * max(1, model.parallel)
-    with ThreadPoolExecutor(max_workers=max(1, model.parallel)) as pool:
+    pool = ThreadPoolExecutor(max_workers=max(1, model.parallel))
+    try:
         pending: set = set()
         for item in todo:
             while len(pending) >= ahead:  # the model is busy: no more drawn until it answers
@@ -914,6 +974,8 @@ def _ask_each(todo: list, draw, ask, keep, model: VisionModel, say=None, what: s
             finished, pending = wait(pending, timeout=PROGRESS_S, return_when=FIRST_COMPLETED)
             collect(finished)
             progress()
+    finally:  # (stopped, or failed: the questions not yet asked are let go, not waited for)
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | None, answers: dict[str, dict],

@@ -395,9 +395,19 @@ it when a revised drawing is read again:
   and the warning says why. If the drawing really changed that much, apply it on
   purpose: *Read anyway* in the web app, `storeypath convert --force` on the
   command line.
-
-A person's corrections (type, name, number, capacity, deleted) are kept by ID and
-applied again after every reading.
+- **Rooms people corrected.** A person's corrections (type, name, number, capacity,
+  hidden, deleted, a lift's link, finishes) are kept by ID and applied again after
+  every reading. A reading that would retire a room people corrected is held back
+  the same way, naming the rooms, unless the correction can go on with its room: when
+  four fifths of the room lie in one room the reading finds anew (the same room grown
+  or reshaped past matching), numbered as it was or not at all, and no other
+  corrected room goes into it. A correction is never put on a room that is another's
+  (two rooms merged into one that kept either's ID, a room split into pieces). Read
+  anyway, a retired room keeps its correction with its retired ID. A reading after a
+  person drew on the floor (or undid it) is not held for the rooms it changed: they
+  changed them.
+- **Items** (furniture, equipment) are kept where they were put, whatever the
+  reading: which room each is in is worked out from where it stands.
 
 ## 9. Review (a person)
 

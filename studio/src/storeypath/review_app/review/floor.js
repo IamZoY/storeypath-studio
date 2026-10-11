@@ -83,6 +83,7 @@ async function followReading(id) {
   const job = jobs.find((j) => (j.state === "waiting" || j.state === "running") && (j.floors || []).includes(id));
   if (!job || state.converting || state.floor?.id !== id) return;
   state.converting = true;
+  state.reading = job.id;
   emit("converting");
   try {
     await followJob(job, "The floor's drawing is being read…");
@@ -91,11 +92,24 @@ async function followReading(id) {
     state.converting = false;
     if (state.floor?.id === id) await openFloor(id, state.selected, { keepView: true });
   } catch (e) {
-    toast(`The reading did not finish: ${e.message}`, true);
+    toast(e.stopped ? `Reading stopped: ${e.message}` : `The reading did not finish: ${e.message}`, !e.stopped);
   } finally {
     state.converting = false;
+    state.reading = null;
     emit("converting");
     say("");
+  }
+}
+
+/** The read of the floor's drawing under way stopped: the floor stays as it was, and
+ * what vision answered is kept (read again, it asks only about the rest). */
+export async function stopReading() {
+  if (!state.reading) return;
+  try {
+    await request(`jobs/${state.reading}/stop`, {});
+    say("Stopping the read…");
+  } catch (e) {
+    toast(`Could not stop the read: ${e.message}`, true);
   }
 }
 
@@ -106,11 +120,18 @@ export async function reconvert() {
   state.converting = true;
   emit("converting");
   say("Re-reading drawing…");
+  const reading = async (body) => {
+    const started = await request(`${BASE}/floors/${id}/convert`, body);
+    state.reading = started.id;
+    emit("converting");
+    return followJob(started, "Re-reading drawing…");
+  };
   try {
-    let job = await followJob(await request(`${BASE}/floors/${id}/convert`, {}), "Re-reading drawing…");
-    // a reading that would retire most of the floor is held back: applied only when asked
-    if ((job.result.held || []).includes(id) && confirm("This reading finds far fewer rooms than the floor has (or none), so nothing was changed: the floor keeps its rooms and their IDs. If the drawing really lost those rooms, read it anyway: the rooms it no longer has are retired. Read anyway?")) {
-      job = await followJob(await request(`${BASE}/floors/${id}/convert`, { force: true }), "Re-reading drawing…");
+    let job = await reading({});
+    // a reading that would retire most of the floor, or rooms people corrected, is held back: applied only when asked
+    const why = job.result.why?.[id] || "This reading finds far fewer rooms than the floor has (or none), so nothing was changed: the floor keeps its rooms and their IDs";
+    if ((job.result.held || []).includes(id) && confirm(`${why.charAt(0).toUpperCase()}${why.slice(1)}.\n\nThe rooms it no longer has are retired if you read it anyway (their IDs are never used again). Read anyway?`)) {
+      job = await reading({ force: true });
     }
     toast(job.result.summaries.join("\n"));
     await refreshProject();
@@ -118,10 +139,11 @@ export async function reconvert() {
     state.converting = false;
     await openFloor(id, state.selected, { keepView: true });
   } catch (e) {
-    toast(`Could not re-read the drawing: ${e.message}`, true);
+    toast(e.stopped ? `Reading stopped: ${e.message}` : `Could not re-read the drawing: ${e.message}`, !e.stopped);
     say("");
   } finally {
     state.converting = false;
+    state.reading = null;
     emit("converting");
   }
 }

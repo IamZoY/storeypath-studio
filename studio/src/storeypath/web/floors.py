@@ -83,7 +83,7 @@ def sample(code: str, floor_id: str, request: Request, may: May, studio: TheStud
 def edits(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.floor(code, floor_id, "edit")
     studio.review(code).edit(floor_id, body, by=may.user, editor=may.editor)
-    return answer(request, studio.convert(code, floor_id, by=may.uid))
+    return answer(request, studio.convert(code, floor_id, by=may.uid, drawn=True))
 
 
 @calls.post(F + "/items")

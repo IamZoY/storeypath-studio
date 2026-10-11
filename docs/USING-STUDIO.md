@@ -154,9 +154,14 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   again. *3D window* (the Share menu, or the floor's inspector) opens the building on
   [Studio's 3D page](#3d-the-dollhouse-walking-and-the-3d-page), the whole window.
 - **Re-read drawing** (the inspector, with nothing chosen) reads the floor's drawing
-  again (a revised one too): IDs and corrections are kept. A reading that would retire
-  most of the floor's rooms is held back, the floor unchanged, and Studio asks before
-  applying it (*Read anyway*).
+  again (a revised one too): IDs and corrections are kept, and items stay where they
+  were put. A reading that would retire most of the floor's rooms, or any room people
+  corrected (named, typed, deleted…), is held back, the floor unchanged, and Studio
+  says which rooms and asks before applying it (*Read anyway*). A room reshaped past
+  matching takes its correction with it when nothing else can claim it. *Stop* (in the
+  status bar while it reads, or on the project page) stops a read: the floor stays as
+  it was, and what vision answered is kept, so reading it again asks only about the
+  rest.
 - **Share an area** (the *Share an area* tool, <kbd>A</kbd>, or the Share menu; anyone
   who may see the floor): drag a rectangle over a part of the floor Studio read wrong
   (at most 50 × 50 m), write what went wrong, look at the preview and download

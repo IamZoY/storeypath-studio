@@ -39,6 +39,14 @@ SAMPLE_TEXTS = 6  # unknown texts per layer asked about when reading what a laye
 # broken file): it is held back, the floor keeping its rooms and IDs, until it is
 # applied on purpose (``force``).
 HOLD_RETIRING_SHARE = 0.5
+# A room people corrected (named, typed, numbered, hidden, deleted, seated, linked,
+# finished) that a read would retire is theirs to let go: the read is held back and says
+# which, unless the room's correction can go on with it. It does when this much of the
+# room lies in one room the read finds anew (the same room, grown or reshaped past
+# matching), numbered as it was or not at all, which no other such room goes into: a
+# person's correction is never put on a room that is another's (two rooms merged into
+# one that keeps either's ID; a room split, its pieces each partly it).
+CARRY_SHARE = 0.8
 
 
 @dataclass
@@ -50,28 +58,34 @@ class ConversionReport:
     retired: list[str] = field(default_factory=list)
     unspecified: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    held: bool = False  # the read was not applied: it would have retired most of the floor
+    held: bool = False  # the read was not applied: it would have retired most of the floor, or rooms people corrected
+    hold: str | None = None  # why it was held back
+    carried: list[tuple[str, str]] = field(default_factory=list)  # (retired, new): a room's correction gone on with it
+    lost: list[str] = field(default_factory=list)  # rooms people corrected, retired all the same (force)
     vision: dict = field(default_factory=dict)  # rooms looked at, asked about, kept as barely changed (look_at_rooms)
 
     def summary(self) -> str:
         if self.held:
-            return f"{self.floor_id}: not changed: the drawing read too unlike the floor (see the warning)"
+            why = (self.hold or "the drawing read too unlike the floor (see the warning)").removeprefix("nothing was changed: ")
+            return f"{self.floor_id}: not changed: {why}"
         source = " (spaces found from walls)" if self.method == "walls" else ""
         seen = ""
         if self.vision.get("rooms"):  # (why a floor read again asks about fewer: what it saw before is kept)
             v = self.vision
             seen = (f"; vision asked about {v.get('asked', 0)} of {v['rooms']} rooms, "
                     f"{v['rooms'] - v.get('asked', 0)} kept from before ({v.get('near', 0)} of them barely changed)")
+        carried = f"; the corrections of {len(self.carried)} reshaped rooms went on with them" if self.carried else ""
+        lost = f"; {len(self.lost)} rooms people corrected retired, their corrections with them" if self.lost else ""
         return (
             f"{self.floor_id}: {len(self.kept)} kept, {len(self.added)} new, "
-            f"{len(self.retired)} retired, {len(self.unspecified)} need a type{source}{seen}"
+            f"{len(self.retired)} retired, {len(self.unspecified)} need a type{source}{seen}{carried}{lost}"
         )
 
 
 def convert_floor(
     ws: Workspace, floor_id: str, workspace_dir: str | Path = ".", model: LocalModel | None = None,
     symbols: SymbolSpotter | None = None, vision: VisionModel | None = None, say=None, force: bool = False,
-    tiles: str | Path | None = None,
+    tiles: str | Path | None = None, drawn: bool = False,
 ) -> ConversionReport:
     """Read a floor's drawing and register what it holds. With the "auto" profile the
     layers are read from what is drawn on them; ``model`` (a local language model)
@@ -79,7 +93,9 @@ def convert_floor(
     rooms that have no name; ``vision`` looks at every room as drawn (vision.py).
     A read that would retire most of the floor is held back unless ``force`` (see
     apply_extraction): the floor is then left as it was. ``tiles``: a folder where the
-    drawing's prints for the vision model are kept, for the floor read again (FloorPrint)."""
+    drawing's prints for the vision model are kept, for the floor read again (FloorPrint).
+    ``drawn``: read after a person drew on the floor in review (or undid it), see
+    apply_extraction."""
     floor = ws.floor(floor_id)
     if floor.source is None:
         raise ValueError(f"floor {floor_id} has no source drawing")
@@ -108,7 +124,7 @@ def convert_floor(
     type_rooms(extraction.units(), spotted)
     add_lift_doors(extraction)
     if vision is not None or ws.vision:
-        sheet = FloorPrint(doc, extraction.scale, keep=tiles, sha=sha)
+        sheet = FloorPrint(doc, extraction.scale, keep=tiles, sha=sha, region=src.region)
         units = extraction.units()
         merged = look_at_rooms(units, doc, src, extraction.scale, sha, vision, ws.vision, say, sheet=sheet, tally=tally)
         if zones := split_merged(extraction, units, doc, src, sha, vision, ws.vision, merged, say, sheet):
@@ -126,7 +142,7 @@ def convert_floor(
     _sizes_from_the_schedule(extraction, doc, src.region, vision, model, say)
     _drawn_openings(extraction, floor.edits.openings, profile.doors.reach)
     _resized_openings(extraction, floor.edits.resized)
-    report = apply_extraction(ws, floor_id, extraction, force=force)
+    report = apply_extraction(ws, floor_id, extraction, force=force, drawn=drawn)
     report.vision = tally
     if not report.held:  # a read held back leaves the floor as it was
         floor.layers = analysis.summary() if analysis is not None else []
@@ -216,11 +232,14 @@ def _keep_package_values(ws: Workspace, record: ObjectRecord) -> None:
     ws.overrides[record.id] = o
 
 
-def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction, force: bool = False) -> ConversionReport:
+def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction, force: bool = False,
+                     drawn: bool = False) -> ConversionReport:
     """Register an extracted floor in the workspace, reusing IDs where objects match.
-    A read that finds no spaces on a floor that has some, or that would retire more
-    than HOLD_RETIRING_SHARE of them, is held back unless ``force``: nothing changes,
-    and the report says so (``held``) with a warning."""
+    A read that finds no spaces on a floor that has some, that would retire more than
+    HOLD_RETIRING_SHARE of them, or rooms people corrected (CARRY_SHARE), is held back
+    unless ``force``: nothing changes, and the report says so (``held``) with a
+    warning. ``drawn``: read after a person drew on the floor (or undid it): rooms
+    people corrected that it retires are not held for, as the person changed them so."""
     report = ConversionReport(floor_id, method=ex.method, warnings=list(ex.warnings))
     floor = ws.floor(floor_id)
     building_id = parse_id(floor_id).prefix("building")
@@ -237,10 +256,12 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction, force: b
     taken = {r.id for r in unit_pairs.values()}
     container_pairs = _match_spaces([r for r in existing if r.id not in taken], containers)
     found = {id(units[i]): r for i, r in unit_pairs.items()} | {id(containers[i]): r for i, r in container_pairs.items()}
-    if not force and (hold := _hold_back(existing, found, ex)):
-        report.held = True
+    carry, lost = _carried(ws, existing, found, [*units, *containers])
+    if not force and (hold := _hold_back(existing, found, ex) or (None if drawn else _hold_corrected(ws, lost))):
+        report.held, report.hold = True, hold
         report.warnings.append(hold)
         return report
+    report.lost = [r.id for r in lost]
 
     def register(obj, kind: str) -> ObjectRecord:
         record = found.get(id(obj))
@@ -262,6 +283,9 @@ def apply_extraction(ws: Workspace, floor_id: str, ex: FloorExtraction, force: b
         record.detected_ignored = obj.ignored
         record.geometry = _local(obj.polygon)
         record.parent, record.zones = None, []
+        if (was := carry.get(id(obj))) is not None:  # a person's correction, going on with the room
+            ws.overrides[record.id] = ws.overrides[was.id].model_copy(deep=True)
+            report.carried.append((was.id, record.id))
         return record
 
     space_records = [register(s, "space") for s in ex.spaces]
@@ -299,7 +323,59 @@ def _hold_back(existing: list[ObjectRecord], found: dict, ex: FloorExtraction) -
     what = "no spaces" if not ex.spaces else f"{len(ex.spaces)} spaces, {len(existing) - retiring} of them where they were"
     return (f"nothing was changed: the drawing read {what}, so {retiring} of the floor's {len(existing)} spaces and "
             "their IDs would be retired. Check the drawing (its layers, units or part read); if it really "
-            "changed this much, convert again with force (storeypath convert --force)")
+            "changed this much, read it anyway")
+
+
+def _corrected(ws: Workspace, record: ObjectRecord) -> bool:
+    """Whether people set something of a room (a correction setting nothing only says it
+    was looked at and accepted as it is)."""
+    o = ws.overrides.get(record.id)
+    return o is not None and any(v is not None for v in o.model_dump().values())
+
+
+def _carried(ws: Workspace, existing: list[ObjectRecord], found: dict, found_now: list) -> tuple[dict, list]:
+    """The rooms people corrected that a read retires: those whose correction goes on
+    with them (CARRY_SHARE), as {id of the room found: the retired record}, and the
+    others."""
+    kept = {r.id for r in found.values()}
+    corrected = [r for r in existing if r.id not in kept and _corrected(ws, r)]
+    if not corrected:
+        return {}, []
+    new = [u for u in found_now if id(u) not in found]
+    tree = STRtree([u.polygon for u in new]) if new else None
+    into: dict[int, list[tuple[ObjectRecord, object]]] = {}
+    for r in corrected:
+        was = shape(r.geometry)
+        if tree is None or not was.area > 0:
+            continue
+        for j in tree.query(was, predicate="intersects"):
+            u = new[int(j)]
+            if was.intersection(u.polygon).area >= CARRY_SHARE * was.area and u.number in (None, "", r.number):
+                into.setdefault(id(u), []).append((r, u))
+    carry = {k: rooms[0][0] for k, rooms in into.items() if len(rooms) == 1}
+    gone_on = {r.id for r in carry.values()}
+    return carry, [r for r in corrected if r.id not in gone_on]
+
+
+HOLD_LISTED = 8  # rooms a held read names
+
+
+def _hold_corrected(ws: Workspace, lost: list[ObjectRecord]) -> str | None:
+    """Why a read is held back for the rooms people corrected it would retire (see
+    CARRY_SHARE), or None."""
+    if not lost:
+        return None
+
+    def named(r: ObjectRecord) -> str:
+        e = ws.effective(r)
+        words = " ".join(w for w in (e["name"], e["number"]) if w) or str(e["type"]).replace("_", " ")
+        return f"{words} ({r.id})"
+
+    listed = ", ".join(named(r) for r in lost[:HOLD_LISTED]) + (f" and {len(lost) - HOLD_LISTED} more"
+                                                                  if len(lost) > HOLD_LISTED else "")
+    return (f"nothing was changed: the drawing now reads {len(lost)} room(s) people corrected otherwise, and reading it "
+            f"would retire them: {listed}. Their corrections stay with their retired IDs (none goes on to another "
+            "room). If that is right, read it anyway")
 
 
 def _sizes_from_the_schedule(ex: FloorExtraction, doc, region, vision, model, say) -> None:
