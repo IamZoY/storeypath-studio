@@ -135,7 +135,7 @@ jobs:
           docker run -d --name storeypath -p 127.0.0.1:8080:8080 -v storeypath:/data ghcr.io/storeypath/studio:$version
           \`\`\`
 
-          then open http://localhost:8080. See the README for requirements and air-gapped installs.
+          then open https://localhost:8080 (log in as admin, password admin). See the README for requirements and air-gapped installs.
           EOF
           prerelease=""
           case "$version" in *-*) prerelease="--prerelease" ;; esac
