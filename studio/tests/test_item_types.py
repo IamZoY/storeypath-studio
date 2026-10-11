@@ -300,8 +300,37 @@ def test_a_type_given_a_3d_model_takes_its_size_and_a_package_carries_it_once(st
     status, said, _ = call(port, "PUT", put, raw=b"solid sofa", token=kim)
     assert status == 400 and "not a binary glTF" in said["error"] and sofa()["model"]
 
+    # made again from its file in units chosen (a tenth of the size the type was: doubted), then as its
+    # size says and stood up (drawn Z up: its depth was its height), its turn kept
+    fit = "/api/catalogue/types/SOFA/model/fit"
+    status, made, _ = call(port, "POST", fit, {"units": "mm"}, token=kim)
+    assert status == 200 and (made["size"], made["units"], made["units_from"], made["units_chosen"], made["turn"]) == \
+        ([0.09, 0.2, 0.075], "mm", "chosen", "mm", 90)
+    assert any("times the size the type was" in x for x in made["doubts"]) and sofa()["depth"] == 0.2
+    status, made, _ = call(port, "POST", fit, {"units": "auto", "up": "z"}, token=kim)
+    assert status == 200 and (made["size"], made["units"], made["units_from"], made["units_chosen"], made["up"]) == \
+        ([0.75, 2.0, 0.9], "cm", "size", None, "z") and made["doubts"] == [] and made["kind"] == "glTF"
+    assert call(port, "POST", fit, {"units": "furlong"}, token=kim)[0] == 400
+    assert call(port, "POST", fit, {"up": "z"}, token=tokens["bob"])[0] == 403
+
     # taken away: drawn by its shape again
     assert call(port, "POST", "/api/catalogue/types/SOFA/model/delete", {}, token=kim)[0] == 200
     assert sofa()["model"] is None and call(port, "GET", "/api/catalogue/models/SOFA.glb", token=kim)[0] == 404
     assert [e["action"] for e in accounts.audit_tail() if e["action"].startswith("item type model")] == \
-        ["item type model removed", "item type model turned", "item type model added"]
+        ["item type model removed", "item type model refitted", "item type model refitted", "item type model turned",
+         "item type model added"]
+
+
+def test_a_type_given_a_model_in_another_format_says_what_was_left_out(studio):
+    from storeypath.model_files import assimp_command
+    from test_model_files import obj
+
+    if assimp_command() is None:
+        pytest.skip("Assimp is not installed (brew install assimp; apt install assimp-utils)")
+    port, _, _, tokens, _ = studio
+    o, _ = obj()  # its .mtl not sent
+    status, made, _ = call(port, "PUT", "/api/catalogue/types/SOFA/model?name=sofa.obj", raw=o.encode(), token=tokens["kim"])
+    assert status == 200 and (made["kind"], made["size"], made["units"]) == ("OBJ", [2.0, 0.9, 0.75], "cm")
+    assert "its materials (sofa.mtl) were not sent" in made["notes"][0]
+    status, said, _ = call(port, "PUT", "/api/catalogue/types/SOFA/model?name=sofa.skp", raw=b"\xff\xfeSketchUp", token=tokens["kim"])
+    assert status == 400 and "export it from SketchUp Pro" in said["error"]

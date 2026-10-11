@@ -209,16 +209,25 @@ the floors in review.
   project file, and lists the types it brings, each *New*, *Changed* (and what) or
   *Same*: the new ones are chosen, a changed one only when you choose it. *Save as a
   file* gives the catalogue, or the types ticked, as a `.json` for another Studio.
-- **A 3D model** for a type: in its editor, *Add a model (.glb)…* takes a supplier's
-  model of the real thing as binary glTF (Blender and most 3D tools export it). Studio
-  reads it in metres (one drawn in centimetres or millimetres, by its size), simplifies
-  it to a few thousand triangles, and gives the type its size, so the plan and 3D agree;
-  it shows the model from its front and from above. Its front should face +Z, as glTF
-  has it: *Turn 90°* turns it until it does. Its items are then drawn in 3D as the model,
-  made the type's size (change the size and it is stretched to it); the plan still draws
-  the type's shape. *Replace…* sends another, *Remove* draws the shape again. A
-  compressed model (Draco, meshopt) or one whose textures are files of their own is
-  refused: export it again as one plain `.glb`.
+- **A 3D model** for a type: in its editor, *Add a model…* takes a model of the real
+  thing in the formats furniture is published in: glTF (`.glb`, or a `.gltf` with its
+  files), FBX, OBJ, Collada (`.dae`), 3DS, 3MF, X3D, PLY or STL; or a `.zip` of one with
+  its textures (an OBJ's colours are in its `.mtl`: send both). Studio makes it glTF
+  (the others by [Assimp](https://github.com/assimp/assimp)), reads it in metres (in the
+  units the file says, else by its size: centimetres or millimetres when metres would make
+  it larger than furniture), simplifies it to a few thousand triangles, and gives the
+  type its size, so the plan and 3D agree; it shows the model from its front and from
+  above, and says what was not sent (a texture, a `.mtl`). Its front should face +Z, as
+  glTF has it: *Turn 90°* turns it until it does. Files are often wrong about their size
+  (one ten times too big, say): a size no furniture has, or far from the type's before,
+  is pointed out, and *Units* reads it again in others (metres to millimetres, inches,
+  feet); one drawn Z up, as CAD draws, lies on its back: *Stand it up*. Its items are
+  then drawn in 3D as the model, made the type's size (change the size and it is
+  stretched to it); the plan still draws the type's shape. *Replace…* sends another,
+  *Remove* draws the shape again. SketchUp, Revit, 3ds Max, Blender and similar files
+  are only read by their own programs: Studio says how to export them (as FBX, OBJ,
+  Collada or glTF). A compressed glTF (Draco, meshopt) is refused: export it again
+  without compression.
 - **Place** one with the *Place* tool (<kbd>I</kbd>): choose its type in the tool's
   options and click where it goes (or right-click, *Place an item here…*). Drag it to
   move it; <kbd>R</kbd> turns it 90°, <kbd>,</kbd> and <kbd>.</kbd> by 15°, the arrows

@@ -1301,33 +1301,44 @@ class ProjectStore:
         return bytes(row[0]) if row else None
 
     def model_source(self, code: str) -> dict | None:
-        """The file a type's model was made from, as it came: {name, source, turn}."""
+        """The file a type's model was made from, as it came, and how it was made from it:
+        {name, source, turn, units (chosen, or None), up}."""
         with self.db.connection() as conn:
-            row = conn.execute("SELECT name, source, turn FROM item_models WHERE code = %s", (code,)).fetchone()
-        return {"name": row[0], "source": bytes(row[1]), "turn": row[2]} if row else None
+            row = conn.execute("SELECT name, source, turn, units_chosen, up FROM item_models WHERE code = %s",
+                               (code,)).fetchone()
+        return {"name": row[0], "source": bytes(row[1]), "turn": row[2], "units": row[3], "up": row[4]} if row else None
 
     def models(self) -> dict[str, dict]:
         """What each type's model is, by its code (no bytes): name, triangles, size…"""
         with self.db.connection() as conn:
             rows = conn.execute("SELECT code, name, source_sha256, source_triangles, units, turn, sha256, triangles, "
-                                "size, added_by, added_at, length(source), length(glb) FROM item_models").fetchall()
+                                "size, added_by, added_at, length(source), length(glb), units_from, units_chosen, up, "
+                                "size_before FROM item_models").fetchall()
         return {r[0]: {"name": r[1], "source_sha256": r[2], "source_triangles": r[3], "units": r[4], "turn": r[5],
                        "sha256": r[6], "triangles": r[7], "size": r[8], "added_by": r[9], "added_at": r[10].isoformat(),
-                       "source_bytes": r[11], "bytes": r[12]} for r in rows}
+                       "source_bytes": r[11], "bytes": r[12], "units_from": r[13], "units_chosen": r[14], "up": r[15],
+                       "size_before": r[16]}
+                for r in rows}
 
-    def save_model(self, code: str, name: str, source: bytes, model, turn: int, by=None) -> None:
-        """A type's model (models.Model) kept, with the file it was made from; one it had
-        replaced."""
+    def save_model(self, code: str, name: str, source: bytes, model, turn: int, by=None, units: str | None = None,
+                   up: str = "y", before=None) -> None:
+        """A type's model (models.Model) kept, with the file it was made from and how
+        (``turn``, the ``units`` chosen, ``up``); one it had replaced (``before``, the type's
+        size before it had a model, kept from the first)."""
         with self.db.transaction() as conn:
             conn.execute(
                 "INSERT INTO item_models (code, name, source, source_sha256, source_triangles, units, turn, glb, sha256, "
-                "triangles, size, added_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (code) "
+                "triangles, size, added_by, units_from, units_chosen, up, size_before) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (code) "
                 "DO UPDATE SET name = EXCLUDED.name, source = EXCLUDED.source, source_sha256 = EXCLUDED.source_sha256, "
                 "source_triangles = EXCLUDED.source_triangles, units = EXCLUDED.units, turn = EXCLUDED.turn, "
                 "glb = EXCLUDED.glb, sha256 = EXCLUDED.sha256, triangles = EXCLUDED.triangles, size = EXCLUDED.size, "
-                "added_by = EXCLUDED.added_by, added_at = now()",
+                "added_by = EXCLUDED.added_by, added_at = now(), units_from = EXCLUDED.units_from, "
+                "units_chosen = EXCLUDED.units_chosen, up = EXCLUDED.up, "
+                "size_before = coalesce(item_models.size_before, EXCLUDED.size_before)",
                 (code, name, source, hashlib.sha256(source).hexdigest(), model.source_triangles, model.units, turn,
-                 model.glb, hashlib.sha256(model.glb).hexdigest(), model.triangles, _j(list(model.size)), _j(who_of(by))))
+                 model.glb, hashlib.sha256(model.glb).hexdigest(), model.triangles, _j(list(model.size)), _j(who_of(by)),
+                 model.units_from, units, up, _j(list(before)) if before else None))
             self._catalogue_changed(conn)
 
     def drop_model(self, code: str) -> bool:

@@ -333,39 +333,70 @@ class Studio:
     # ---- item types' 3D models (models.py) ---------------------------------------------
 
     def models(self) -> dict:
-        """What each type's model is, by its code: its name, triangles, size, turn…"""
-        return self.store.models()
+        """What each type's model is, by its code: its name, triangles, size, turn, units,
+        and what about its size no furniture is (``doubts``: models.doubts)."""
+        from . import model_files, models
 
-    def add_model(self, code: str, data: bytes, name: str = "", turn: int = 0, by=None) -> dict:
-        """A type's 3D model, made from a .glb's bytes (models.make_model; ModelError, a
-        ValueError, saying why one cannot be), kept with the file as it came, and the type
-        given the model's size (its width, depth and height), so the plan and 3D agree.
-        One it had is replaced. What it is now (models())."""
-        from . import models
+        out = self.store.models()
+        for m in out.values():
+            m["doubts"] = models.doubts(m["size"], m["size_before"])
+            m["kind"] = model_files.kind_of(m["name"]) or "glTF"
+        return out
+
+    def add_model(self, code: str, data: bytes, name: str = "", turn: int = 0, by=None, units: str | None = None,
+                  up: str = "y") -> dict:
+        """A type's 3D model, made from a file of any format read (model_files.as_glb: glTF,
+        FBX, OBJ, Collada… or a .zip of one with its textures; models.make_model; a
+        ModelError, a ValueError, says why one cannot be), kept with the file as it came,
+        and the type given the model's size (its width, depth and height), so the plan and
+        3D agree. ``turn``, ``units`` (None: as the file or its size says) and ``up``: how
+        it is made from the file. One it had is replaced. What it is now (models()), with
+        what was left out of it (``notes``)."""
+        from . import model_files, models
 
         self._type(code)
+        if len(data) > models.MAX_FILE:
+            raise models.ModelError(f"the file is {len(data) >> 20} MB: a model is at most {models.MAX_FILE >> 20} MB")
         name = Path(str(name or "")).name[:200] or f"{code}.glb"
-        made = models.make_model(data, code, name, turn, generator=f"StoreyPath Studio {version('storeypath')}")
+        found = model_files.as_glb(data, name)
+        made = models.make_model(found.glb, code, name, turn, generator=f"StoreyPath Studio {version('storeypath')}",
+                                 units=units, stated=found.stated, up=up)
         with self._lock:
-            self.store.save_model(code, name, data, made, turn, by=by)
             cat = self.store.catalogue()
             t = cat.get(code)
+            before = [t.width, t.depth, t.height]  # (kept from the first model: store.save_model)
+            self.store.save_model(code, name, data, made, turn, by=by, units=units, up=up,
+                                  before=before if all(isinstance(x, (int, float)) and x > 0 for x in before) else None)
             t.width, t.depth, t.height = made.size
             self.store.save_catalogue(cat)
-        return self.store.models()[code]
+        return {**self.models()[code], "notes": found.notes}
 
     def turn_model(self, code: str, turn, by=None) -> dict:
         """A type's model made again from its file, turned ``turn`` degrees (models.TURNS)
         from how it came: its width and depth then the type's."""
+        return self.fit_model(code, {"turn": turn}, by=by)
+
+    def fit_model(self, code: str, how: dict, by=None) -> dict:
+        """A type's model made again from its file another way: ``how`` any of ``turn``
+        (degrees: models.TURNS), ``units`` (models.UNIT_SIZE, or "auto": as the file or its
+        size says) and ``up`` ("y", or "z": drawn Z up, stood up); the rest as it was."""
         from . import models
 
-        if turn not in models.TURNS:
+        if not isinstance(how, dict) or not how or set(how) - {"turn", "units", "up"}:
+            raise ValueError("send any of turn, units and up")
+        if "turn" in how and how["turn"] not in models.TURNS:
             raise ValueError(f"turn: {', '.join(map(str, models.TURNS))} (degrees, counter-clockwise seen from above)")
+        if "units" in how and how["units"] != "auto" and how["units"] not in models.UNIT_SIZE:
+            raise ValueError(f"units: auto, {', '.join(models.UNIT_SIZE)}")
+        if "up" in how and how["up"] not in models.UPS:
+            raise ValueError("up: y or z")
         self._type(code)
         source = self.store.model_source(code)
         if source is None:
             raise NotFound(f"{code} has no model")
-        return self.add_model(code, source["source"], source["name"], turn, by=by)
+        units = how.get("units", source["units"])
+        return self.add_model(code, source["source"], source["name"], how.get("turn", source["turn"]), by=by,
+                              units=None if units == "auto" else units, up=how.get("up", source["up"]))
 
     def drop_model(self, code: str) -> dict:
         """A type's model taken away: drawn by its shape again (its size kept)."""

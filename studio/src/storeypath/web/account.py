@@ -82,7 +82,9 @@ def model_picture(code: str, request: Request, may: May, studio: TheStudio, quer
 
 @calls.put("/api/catalogue/types/{code}/model")
 def add_model(code: str, request: Request, may: May, studio: TheStudio, sent: Sent, query: Query):
-    """A .glb sent as a type's 3D model (?name= the file's name, ?turn= degrees)."""
+    """A model file sent as a type's 3D model, in any format read (model_files.py): a .glb,
+    an FBX, an OBJ… or a .zip of one with its textures (?name= the file's name, ?turn=
+    degrees)."""
     may.capability("catalogue")
     turn = (query.get("turn") or ["0"])[0]
     if not turn.lstrip("-").isdigit():
@@ -97,6 +99,15 @@ def turn_model(code: str, request: Request, may: May, studio: TheStudio, body: B
     may.capability("catalogue")
     made = studio.turn_model(code, body.get("turn"), by=may.user)
     may.audit("item type model turned", None, code=code, turn=made["turn"])
+    return answer(request, made)
+
+
+@calls.post("/api/catalogue/types/{code}/model/fit")
+def fit_model(code: str, request: Request, may: May, studio: TheStudio, body: Body):
+    """A type's model made again from its file: any of {turn, units, up}."""
+    may.capability("catalogue")
+    made = studio.fit_model(code, body, by=may.user)
+    may.audit("item type model refitted", None, code=code, turn=made["turn"], units=made["units"], up=made["up"])
     return answer(request, made)
 
 

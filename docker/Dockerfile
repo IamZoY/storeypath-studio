@@ -139,12 +139,14 @@ ARG MODEL=Qwen3.5-4B-Q4_K_M.gguf
 # Studio's database: PostgreSQL and PostGIS as Debian packages (trixie has 17 and 3.5),
 # with psql, pg_dump and pg_restore of the same version. The packages would make a
 # cluster of their own: they are told not to (docker/start.sh makes Studio's in /data/pg).
+# Item types' models in the formats furniture is published in (FBX, OBJ, Collada…) are
+# made glTF by Assimp's command (assimp-utils: Studio's model_files.py runs it).
 ARG PG=17
 RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-common \
     && sed -ri 's/^#?[[:space:]]*create_main_cluster[[:space:]]*=.*/create_main_cluster = false/' \
            /etc/postgresql-common/createcluster.conf \
-    && apt-get install -y --no-install-recommends python3 libgomp1 tini \
+    && apt-get install -y --no-install-recommends python3 libgomp1 tini assimp-utils \
            "postgresql-${PG}" "postgresql-${PG}-postgis-3" \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home --home-dir /home/storeypath storeypath \
@@ -170,7 +172,7 @@ RUN cp /opt/llama/LICENSE /usr/share/storeypath/licenses/LICENSE-llama.cpp.txt \
           /usr/share/storeypath/licenses/LICENSE-storeypath.txt \
     && printf 'Qwen3.5 model weights: Apache License 2.0, Copyright Alibaba Cloud (Qwen team).\nhttps://huggingface.co/Qwen\n' \
           > /usr/share/storeypath/licenses/LICENSE-model.txt \
-    && for p in "postgresql-${PG}" "postgresql-${PG}-postgis-3" tini; do \
+    && for p in "postgresql-${PG}" "postgresql-${PG}-postgis-3" tini assimp-utils libassimp5; do \
            cp "/usr/share/doc/$p/copyright" "/usr/share/storeypath/licenses/COPYRIGHT-$p.txt"; \
        done \
     && if [ -f /opt/storeypath/symbols/weights/best.pth ]; then \

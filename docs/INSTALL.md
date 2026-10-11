@@ -81,7 +81,7 @@ their checksums, and baked in.
 | Built from | [docker/Dockerfile](../docker/Dockerfile) | [storeypath-gpu-helper](https://github.com/StoreyPath/storeypath-gpu-helper), a repository of its own |
 | Published | `ghcr.io/storeypath/studio`, amd64 and arm64, by [the release workflow](../.github/workflows/release.yml) for each version tag | not published: build it yourself (amd64) |
 | Models fetched first | `docker/fetch-models.sh`: Qwen3.5-4B (2.7 GB) | its `fetch-vision.sh`: Gemma 4 31B, 4-bit (about 18 GB) and its image encoder (about 1 GB) |
-| Inside | Studio; its database, PostgreSQL 17 with PostGIS 3; LibreDWG's `dwg2dxf` for DWG; llama.cpp's `llama-server` for the CPU (it picks the fastest CPU code at start); the language model; Node.js for pre-built 3D; the viewers | llama.cpp's `llama-server` built for CUDA (A100/A30, A10/A40/RTX 30, L4/L40/RTX 40, H100/H200, Blackwell) with NVIDIA's CUDA runtime, and the vision model: nothing else |
+| Inside | Studio; its database, PostgreSQL 17 with PostGIS 3; LibreDWG's `dwg2dxf` for DWG; llama.cpp's `llama-server` for the CPU (it picks the fastest CPU code at start); the language model; Assimp for 3D models in other formats than glTF; Node.js for pre-built 3D; the viewers | llama.cpp's `llama-server` built for CUDA (A100/A30, A10/A40/RTX 30, L4/L40/RTX 40, H100/H200, Blackwell) with NVIDIA's CUDA runtime, and the vision model: nothing else |
 | Starts | its database, then Studio; the language model loads in the background | the vision model on the GPU (a minute or two); Studio uses it once it answers |
 
 ### Build the Studio image
@@ -136,19 +136,20 @@ STOREYPATH_DATABASE_URL=postgresql://user:password@localhost/storeypath`. On its
 DXF, and room names by the rules alone: the container also holds
 [LibreDWG](https://www.gnu.org/software/libredwg/)'s `dwg2dxf` for DWG drawings and
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` for the language
-model, and without Docker you install them yourself.
+model, and [Assimp](https://github.com/assimp/assimp)'s `assimp` for item types' 3D models
+in formats other than glTF (FBX, OBJ, Collada…), and without Docker you install them yourself.
 
 **macOS**, with [Homebrew](https://brew.sh):
 
 ```sh
-brew install libredwg llama.cpp
+brew install libredwg llama.cpp assimp
 ```
 
-**Linux.** Neither is packaged by Debian or Ubuntu, so build them as the container
-does (in any folder outside the repository):
+**Linux.** Assimp is packaged by Debian and Ubuntu; the other two are not, so build them
+as the container does (in any folder outside the repository):
 
 ```sh
-sudo apt-get install build-essential cmake git curl ca-certificates xz-utils pkg-config python3
+sudo apt-get install build-essential cmake git curl ca-certificates xz-utils pkg-config python3 assimp-utils
 
 curl -fsSLO https://ftp.gnu.org/gnu/libredwg/libredwg-0.14.tar.xz
 tar xf libredwg-0.14.tar.xz

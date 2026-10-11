@@ -1,14 +1,17 @@
 """Item types' 3D models (format 0.9.2; spec/FORMAT.md, Models): a supplier's model of
 a sofa or a desk, shown in 3D in place of the shape its type is drawn as.
 
-A model comes as binary glTF (.glb) and is read here whole: its nodes where they place
-its meshes, its materials' colours (a texture by its average colour), its vertices'
-colours. It is read in metres (one whose size says centimetres or millimetres, as read
-so), turned a quarter at a time when its front faces another way than glTF's +Z,
-simplified to MODEL_TRIANGLES at most, and written again as the small file a package
-carries: one mesh in the type's own frame (its middle at x = z = 0, its bottom at y = 0,
-its front +Z), each vertex its colour and its finish, no textures. The file as it came is
-kept, so the model can be made again (turned another way).
+A model comes as binary glTF (.glb; any other format is made one by model_files.py) and
+is read here whole: its nodes where they place its meshes, its materials' colours (a
+texture by its average colour), its vertices' colours. It is read in metres: in the units
+the file says, else as its size says (centimetres or millimetres when metres would make
+it larger than furniture is), else in the units a person chose. It is stood up when drawn
+Z up (as a format with no up of its own may be), turned a quarter at a time when its front
+faces another way than glTF's +Z, simplified to MODEL_TRIANGLES at most, and written again
+as the small file a package carries: one mesh in the type's own frame (its middle at
+x = z = 0, its bottom at y = 0, its front +Z), each vertex its colour and its finish, no
+textures. The file as it came is kept, so the model can be made again (turned another
+way, in other units).
 """
 
 from __future__ import annotations
@@ -23,13 +26,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
-MAX_FILE = 64 << 20  # a model as it comes: at most 64 MB
+MAX_FILE = 128 << 20  # a model as it comes (a .zip with its textures): at most 128 MB
 MAX_SOURCE_TRIANGLES = 4_000_000
 MODEL_TRIANGLES = 5000  # the model Studio makes: at most this many triangles
 MAX_TRIANGLES = 20_000  # a model a package carries: at most this many (FORMAT.md, Models)
 TURNS = (0, 90, 180, 270)  # counter-clockwise, seen from above
 TOO_BIG_M = 30.0  # no piece of furniture is this large: a model this size is in centimetres (or millimetres)
-UNITS = (("m", 1.0), ("cm", 0.01), ("mm", 0.001))
+UNITS = (("m", 1.0), ("cm", 0.01), ("mm", 0.001))  # guessed by its size, in this order
+UNIT_SIZE = {"m": 1.0, "dm": 0.1, "cm": 0.01, "mm": 0.001, "in": 0.0254, "ft": 0.3048}  # chosen: metres each
+UPS = ("y", "z")  # the way up a model is drawn: glTF's Y (most formats), or Z (CAD's)
 
 _MAGIC, _JSON, _BIN = b"glTF", 0x4E4F534A, 0x004E4942
 _COMPONENTS = {5120: np.int8, 5121: np.uint8, 5122: np.int16, 5123: np.uint16, 5125: np.uint32, 5126: np.float32}
@@ -59,13 +64,21 @@ class Model:
     triangles: int
     source_triangles: int
     units: str
+    units_from: str = "size"  # how its units were known: "file" (it says), "size" (guessed), "chosen"
 
 
-def make_model(data: bytes, code: str, name: str = "", turn: int = 0, generator: str = "StoreyPath Studio") -> Model:
+def make_model(data: bytes, code: str, name: str = "", turn: int = 0, generator: str = "StoreyPath Studio",
+               units: str | None = None, stated: float | None = None, up: str = "y") -> Model:
     """The model of the type ``code`` from a .glb's bytes (``name``: the file's),
-    ``turn``-ed (TURNS). Raises ModelError for a file it cannot read."""
+    ``turn``-ed (TURNS); in ``units`` (UNIT_SIZE) when a person chose them, else in the
+    metres a unit the file ``stated``, else as its size says; stood up from Z up
+    (``up``: UPS). Raises ModelError for a file it cannot read."""
     if turn not in TURNS:
         raise ModelError(f"a model is turned {', '.join(map(str, TURNS))} degrees")
+    if units is not None and units not in UNIT_SIZE:
+        raise ModelError(f"units: {', '.join(UNIT_SIZE)}")
+    if up not in UPS:
+        raise ModelError("up: y or z")
     if len(data) > MAX_FILE:
         raise ModelError(f"the file is {len(data) >> 20} MB: a model is at most {MAX_FILE >> 20} MB")
     gltf, binary = read_glb(data)
@@ -77,7 +90,15 @@ def make_model(data: bytes, code: str, name: str = "", turn: int = 0, generator:
         raise ModelError(f"the file is not glTF as glTF 2.0 says ({type(e).__name__}: {e})") from None
     if not len(tri):
         raise ModelError("the file has no triangles: no mesh, or only lines and points")
-    tri, units = _in_metres(tri)
+    if units is not None:
+        tri, units_from = tri * UNIT_SIZE[units], "chosen"
+    elif stated:
+        tri, units, units_from = tri * stated, _unit_name(stated), "file"
+    else:
+        tri, units = _in_metres(tri)
+        units_from = "size"
+    if up == "z":  # (x, y, z) Z up → Y up: its front, −Y, comes to +Z
+        tri = tri[..., [0, 2, 1]] * np.array([1.0, 1.0, -1.0])
     tri = _turned(tri, turn)
     lo, hi = tri.reshape(-1, 3).min(axis=0), tri.reshape(-1, 3).max(axis=0)
     tri = tri - np.array([(lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2])
@@ -86,11 +107,35 @@ def make_model(data: bytes, code: str, name: str = "", turn: int = 0, generator:
     groups, group_of = _groups(colour, finish)
     positions, vgroup, index = simplify(tri, group_of, MODEL_TRIANGLES)
     extras = {"code": code, "source": name, "source_sha256": hashlib.sha256(data).hexdigest(),
-              "source_triangles": int(len(tri)), "turn": turn}
+              "source_triangles": int(len(tri)), "turn": turn, "units": units, "up": up}
     glb = write_glb(positions, groups[vgroup, :3], groups[vgroup, 3:], index, generator, extras)
     w, h, d = (hi - lo).tolist()
     return Model(glb=glb, size=(round(w, 3), round(d, 3), round(h, 3)), triangles=int(len(index)),
-                 source_triangles=int(len(tri)), units=units)
+                 source_triangles=int(len(tri)), units=units, units_from=units_from)
+
+
+def _unit_name(metres: float) -> str:
+    """A unit's name (UNIT_SIZE), or its size in metres when it has none."""
+    return next((n for n, k in UNIT_SIZE.items() if abs(k - metres) <= 1e-9 * k), f"{metres:g} m")
+
+
+def doubts(size, before=None) -> list[str]:
+    """What about a model's size (width, depth, height: metres) no furniture is, or its
+    type was not (``before``: its size before it had a model): a sign it was read in the
+    wrong units, or stood the wrong way up."""
+    w, d, h = size
+    out = []
+    if h > 2.6:
+        out.append(f"it is {h:.2f} m tall: taller than furniture is")
+    if max(w, d) > 5:
+        out.append(f"it is {max(w, d):.2f} m across: larger than furniture is")
+    if max(size) < 0.05:
+        out.append(f"it is {max(size) * 100:.1f} cm at most: smaller than furniture is")
+    if before and min(before) > 0:
+        r = max(size) / max(before)
+        if r > 2.5 or r < 0.4:
+            out.append(f"it is {r:.2g} times the size the type was ({' × '.join(f'{x:.2f}' for x in before)} m)")
+    return out
 
 
 # ---- reading glTF ----------------------------------------------------------------------

@@ -242,7 +242,7 @@ function boxGlb(w, h, d) {
   return Buffer.concat([head, th, text, bh, bin]);
 }
 
-test("a type's 3D model: added from a .glb, pictured, the type given its size; turned; removed", async () => {
+test("a type's 3D model: added from a .glb, pictured, the type given its size; turned; read in other units, doubted; stood up; removed", async () => {
   const file = join(folder, "armchair.glb");
   writeFileSync(file, boxGlb(80, 90, 70)); // (centimetres: read so by its size)
   await click('.it-row[data-code="SOFA"]');
@@ -263,6 +263,24 @@ test("a type's 3D model: added from a .glb, pictured, the type given its size; t
   const turned = await soon(() => typeOf("SOFA"), (t) => t.width === 0.7);
   truly(turned.width === 0.7 && turned.depth === 0.8, `turned: ${JSON.stringify(turned)}`);
   await until(() => /turned 90°/.test(document.querySelector(".it-model")?.textContent || ""), "said turned");
+  // read in metres (as a file 100 times too big would be): its size doubted; then as its size says again
+  const units = (v) => R((value) => {
+    const s = document.querySelector(".it-model-units select");
+    s.value = value;
+    s.dispatchEvent(new Event("change"));
+  }, v);
+  await units("m");
+  await until(() => /taller than furniture is/.test(document.querySelector(".it-model-doubt")?.textContent || ""), "its size doubted");
+  truly((await typeOf("SOFA")).height === 90 && await R(() => document.querySelector(".it-model-units select").value) === "m", "read in metres");
+  await units("auto");
+  await until(() => !document.querySelector(".it-model-doubt") && /\(as its size says\)/.test(document.querySelector(".it-model")?.textContent || ""),
+    "as its size says again");
+  // stood up (drawn Z up): its depth was its height
+  await R(() => [...document.querySelectorAll(".it-model button")].find((b) => b.textContent === "Stand it up").click());
+  const stood = await soon(() => typeOf("SOFA"), (t) => t.height === 0.7);
+  truly(stood.width === 0.9 && stood.depth === 0.8 && stood.height === 0.7, `stood up: ${JSON.stringify(stood)}`);
+  await until(() => [...document.querySelectorAll(".it-model button")].some((b) => b.textContent === "Lay it as it came"
+    && b.getAttribute("aria-pressed") === "true"), "said stood up");
   await R(() => [...document.querySelectorAll(".it-model button")].find((b) => b.textContent === "Remove").click());
   await until(() => /drawn as its shape/.test(document.querySelector(".it-model")?.textContent || ""), "removed");
   truly((await typeOf("SOFA")).model === null, "no model");

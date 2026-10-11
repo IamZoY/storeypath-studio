@@ -174,6 +174,7 @@ ROWS = [
     Row("PUT", "/api/catalogue/types/{type}/model?name=sofa.glb", raw=b"not a model", ok=(400, "not a binary glTF"),
         passes={"admin"}),
     Row("POST", "/api/catalogue/types/{type}/model/turn", {"turn": 45}, ok=(400, "turn"), passes={"admin"}),
+    Row("POST", "/api/catalogue/types/{type}/model/fit", {"units": "furlong"}, ok=(400, "units"), passes={"admin"}),
     Row("POST", "/api/catalogue/types/{type}/model/delete", {}, ok=(404, "has no model"), passes={"admin"}),
     Row("GET", "/api/projects", ok=200, passes=ALL),
     Row("POST", "/api/projects", {"name": ""}, ok=(400, "needs a name"), passes={"admin", "owner", "engineer"}),

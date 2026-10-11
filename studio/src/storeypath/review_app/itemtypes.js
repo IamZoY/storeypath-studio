@@ -66,6 +66,11 @@ async function api(path, body, { raw } = {}) {
 
 const metres = (v) => `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 const sizeOf = (t) => `${metres(t.width)} × ${metres(t.depth)} × ${metres(t.height)} m`;
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+// what a type's model may come as (model_files.py): a format read, or a .zip of one with its textures
+const MODEL_FILES = ".glb,.gltf,.fbx,.obj,.dae,.3ds,.3mf,.x3d,.ply,.stl,.off,.zip";
+// the units a model may be read in, chosen (models.UNIT_SIZE)
+const UNIT_NAMES = { m: "metres", dm: "decimetres", cm: "centimetres", mm: "millimetres", in: "inches", ft: "feet" };
 const shapeName = (t) => (t.shape ? SHAPE_ABOUT[t.shape]?.[0] ?? t.shape : `${SHAPE_ABOUT[shapeOf(t)][0]}, by its code`);
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
@@ -414,9 +419,19 @@ export async function itemTypesPage(page, me, toast) {
       await load();
       const now = view.types.find((x) => x.code === t.code);
       Object.assign(t, { width: now.width, depth: now.depth, height: now.height, model: now.model });
-      toast(said(made));
+      toast([said(made), ...(made.notes ?? []).map((n) => `Note: ${n}`)].join(". "), Boolean(made.notes?.length));
       renderList();
       renderEditor();
+    };
+    // the model made again from its file another way: any of turn, units, up
+    const fit = async (how, doing, said) => {
+      busy(doing);
+      try {
+        await done(await api(`catalogue/types/${encodeURIComponent(t.code)}/model/fit`, how), said);
+      } catch (err) {
+        toast(err.message, true);
+        drawModel(box, t, isNew, off);
+      }
     };
     const send = async (file) => {
       if (!file) return;
@@ -432,31 +447,43 @@ export async function itemTypesPage(page, me, toast) {
         drawModel(box, t, isNew, off);
       }
     };
-    const pick = el("input", { type: "file", accept: ".glb,model/gltf-binary", hidden: true, onchange: () => send(pick.files[0]) });
+    const pick = el("input", { type: "file", accept: `${MODEL_FILES},model/gltf-binary`, hidden: true, onchange: () => send(pick.files[0]) });
     if (!t.model || !info) {
       box.replaceChildren(
         el("p", { class: "muted small" }, isNew ? "Add the type first, then its model." : "None: in 3D it is drawn as its shape."),
         off || isNew ? null : el("div", { class: "row" }, pick, el("button", { type: "button", class: "btn-sm", onclick: () => pick.click() },
-          "Add a model (.glb)…")),
-        off || isNew ? null : el("p", { class: "muted small" }, "A binary glTF file of the thing itself, its front facing +Z (as glTF has "
-          + "it): simplified, and the type given its size. The plan still draws its shape."));
+          "Add a model…")),
+        off || isNew ? null : el("p", { class: "muted small" }, "A 3D model of the thing itself: glTF (.glb), FBX, OBJ, Collada (.dae), "
+          + "3DS, 3MF, X3D, PLY or STL, or a .zip of one with its textures (and an OBJ's .mtl). It is simplified, and the type "
+          + "given its size. The plan still draws its shape."));
       return;
     }
     const v = encodeURIComponent(info.sha256.slice(0, 12));
     const src = (view) => `/api/catalogue/models/${encodeURIComponent(t.code)}.svg?view=${view}&v=${v}`;
-    const units = { cm: "drawn in centimetres", mm: "drawn in millimetres" }[info.units];
+    const said = { file: "as the file says", size: "as its size says", chosen: "as chosen" }[info.units_from] ?? "";
+    const auto = info.units_chosen ? "As the file or its size says"
+      : `As ${info.units_from === "file" ? "the file" : "its size"} says (${UNIT_NAMES[info.units] ?? info.units})`;
+    const unitsPick = el("select", { "aria-label": "The units it is in", disabled: Boolean(off),
+      onchange: () => fit({ units: unitsPick.value }, "Reading it again…",
+        (m) => `Read in ${UNIT_NAMES[m.units] ?? m.units}: ${t.code} is now ${m.size.map(metres).join(" × ")} m`) },
+    el("option", { value: "auto" }, auto),
+    Object.entries(UNIT_NAMES).map(([k, name]) => el("option", { value: k }, cap(name))));
+    unitsPick.value = info.units_chosen ?? "auto";
     box.replaceChildren(
       el("div", { class: "it-model-views" },
         el("figure", {}, el("img", { src: src("front"), alt: `${t.name_en || t.code}'s model from its front`, loading: "lazy" }),
           el("figcaption", { class: "muted small" }, "Front")),
         el("figure", {}, el("img", { src: src("top"), alt: `${t.name_en || t.code}'s model from above, its front down`, loading: "lazy" }),
           el("figcaption", { class: "muted small" }, "From above, front down"))),
-      el("p", { class: "small" }, el("strong", {}, info.name), " · ",
+      el("p", { class: "small" }, el("strong", {}, info.name), info.kind && info.kind !== "glTF" ? ` (${info.kind})` : "", " · ",
         `${info.triangles.toLocaleString()} triangles`,
         info.source_triangles > info.triangles ? ` (simplified from ${info.source_triangles.toLocaleString()})` : "",
-        units ? ` · ${units}` : "", info.turn ? ` · turned ${info.turn}°` : ""),
-      el("p", { class: "muted small" }, `Its own size ${info.size.map(metres).join(" × ")} m. In 3D it is made the type's size; `
-        + "the plan still draws its shape."),
+        info.up === "z" ? " · stood up" : "", info.turn ? ` · turned ${info.turn}°` : ""),
+      el("p", { class: "muted small" }, `Its own size ${info.size.map(metres).join(" × ")} m, read in `
+        + `${UNIT_NAMES[info.units] ?? info.units} (${said}). In 3D it is made the type's size; the plan still draws its shape.`),
+      info.doubts?.length ? el("p", { class: "small it-model-doubt", role: "note" },
+        `Check its size: ${info.doubts.join("; ")}. If it was read in the wrong units, choose them below; if it lies on its back, stand it up.`) : null,
+      el("label", { class: "it-model-units small" }, "Units", unitsPick),
       off ? null : el("div", { class: "row" }, pick,
         el("button", { type: "button", class: "btn-sm", title: "Its front faces the next side (a quarter, counter-clockwise from above)",
           onclick: async () => {
@@ -469,6 +496,11 @@ export async function itemTypesPage(page, me, toast) {
               drawModel(box, t, isNew, off);
             }
           } }, "Turn 90°"),
+        el("button", { type: "button", class: "btn-sm", "aria-pressed": String(info.up === "z"),
+          title: info.up === "z" ? "Back as it came: drawn Y up, as glTF has it" : "Drawn Z up (as CAD draws), so it lies on its back: stand it up",
+          onclick: () => fit({ up: info.up === "z" ? "y" : "z" }, "Standing it up…",
+            (m) => `${m.up === "z" ? "Stood up" : "As it came"}: ${t.code} is now ${m.size.map(metres).join(" × ")} m`) },
+        info.up === "z" ? "Lay it as it came" : "Stand it up"),
         el("button", { type: "button", class: "btn-sm btn-ghost", onclick: () => pick.click() }, "Replace…"),
         el("button", { type: "button", class: "btn-sm btn-ghost", title: "Drawn as its shape again (its size kept)", onclick: async () => {
           busy("Removing it…");

@@ -43,8 +43,9 @@ three plans on one sheet, to drop into a project. The tests' own campus is
 `samples.build_demo`.
 
 DWG drawings and the language model need two more programs, `dwg2dxf` and
-`llama-server`, and the model itself: [Without Docker](../docs/INSTALL.md#without-docker)
-has the steps for macOS and Linux. `uv sync --extra vision` adds what looking at the
+`llama-server`, and the model itself; item types' 3D models in formats other than glTF
+need Assimp's `assimp` (STOREYPATH_ASSIMP names another): [Without
+Docker](../docs/INSTALL.md#without-docker) has the steps for macOS and Linux. `uv sync --extra vision` adds what looking at the
 plans with a vision model needs.
 
 ## In the browser
@@ -211,7 +212,7 @@ log).
 | `GET status`, `catalogue`, `projects` | logged in; projects: those they have any access to, each cut to what they see, with `can`. Where the server keeps things (the data folder and the database in `status`) is told to admins alone |
 | `POST catalogue`, `PUT catalogue/types-in` | admin, or `catalogue` |
 | `GET catalogue/models` (what each type's 3D model is), `catalogue/models/<code>.glb`, `catalogue/models/<code>.svg?view=front\|top\|side` | logged in |
-| `PUT catalogue/types/<code>/model?name=&turn=` (a `.glb`), `POST …/model/turn` `{turn}`, `POST …/model/delete` | admin, or `catalogue` |
+| `PUT catalogue/types/<code>/model?name=&turn=` (a `.glb`, FBX, OBJ, Collada… or a `.zip` of one with its textures: [model_files.py](src/storeypath/model_files.py)), `POST …/model/turn` `{turn}`, `POST …/model/fit` `{turn, units, up}` (any of them: made again from its file), `POST …/model/delete` | admin, or `catalogue` |
 | `POST projects` | admin or engineer, who owns it |
 | `PUT open` | a new project: admin or engineer, who owns it (when nothing is kept of who a project of its code was shared with; else an admin opens it, and that stays). A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin. The file is read once, and every part of it that names its project must name the same one: the project checked is the one written. A new project never takes the place of a folder that is not its own. Someone who may not see the project here is answered as for a new project, never told its name |
 | `GET projects/<code>`, `…/review` | any access; cut to what they see |
