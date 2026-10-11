@@ -307,3 +307,32 @@ def test_a_package_carries_its_network_and_stacks(demo, tmp_path):
                 data = json.dumps(doc)
             w.writestr(name, data)
     assert any("unknown node door:NOWHERE" in p for p in validate_package(tmp_path / "broken.storeypath"))
+
+
+def test_a_long_corridor_of_many_doors_is_walked_as_every_line_looked_at_would_and_quickly(monkeypatch):
+    # A long corridor (hundreds of doors and corners) took a minute when every line between
+    # its points was looked at: a coarse grid now throws out those that surely leave it, and
+    # the ways are found from every door at once. The same walks, two doors in one place too.
+    import time
+
+    from storeypath import navigation
+
+    # a comb: a corridor 60 m long with 30 bays off it, a door at the end of each and two
+    # in the corridor in one place
+    teeth = [box(2 * i, 2, 2 * i + 1.2, 6) for i in range(30)]
+    from shapely.ops import unary_union
+
+    region = unary_union([box(0, 0, 60, 2), *teeth])
+    terminals = [(f"bay{i:02d}", (2 * i + 0.6, 5.5)) for i in range(30)] + [("lobby", (30.0, 1.0)), ("kiosk", (30.0, 1.0))]
+    monkeypatch.setattr(navigation, "GRID_PAIRS", 0)  # the grid first, however few the lines
+    grid = navigation.walks(region, terminals)
+    monkeypatch.setattr(navigation, "GRID_PAIRS", 10**12)  # every line looked at exactly
+    every = navigation.walks(region, terminals)
+    length = lambda line: sum(math.dist(line[i], line[i + 1]) for i in range(len(line) - 1))  # noqa: E731
+    assert {(a, b): round(length(line), 6) for a, b, line in grid} == {(a, b): round(length(line), 6) for a, b, line in every}
+    assert any({a, b} == {"kiosk", "lobby"} for a, b, _ in grid)  # (one place: a walk of no length)
+    far = next(line for a, b, line in grid if {a, b} == {"bay00", "bay01"})
+    assert len(far) == 4 and length(far) == pytest.approx(2 * math.hypot(0.6, 3.5) + 0.8)  # round the corners out of a bay and into the next
+    t = time.perf_counter()
+    navigation.walks(region, terminals)
+    assert time.perf_counter() - t < 2

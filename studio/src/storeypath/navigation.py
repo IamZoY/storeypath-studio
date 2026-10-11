@@ -188,7 +188,12 @@ def approach_point(area, region, middle, along) -> tuple[float, float] | None:
 def walks(region, terminals: list[tuple[str, tuple[float, float]]]) -> list[tuple[str, str, list]]:
     """The walks across one room between its nodes: (id, id, points), the ids in order.
     Each the shortest way in the walking region (round its corners); only those no other
-    way through the room's nodes is nearly as short as (a greedy spanner)."""
+    way through the room's nodes is nearly as short as (a greedy spanner).
+
+    Of the lines between its nodes and the region's inward corners, a coarse grid of the
+    region first throws out those that surely leave it (most, in a long corridor), and
+    the ways are found from every node at once over those inside (a corridor
+    of hundreds of doors and corners in seconds, not a minute)."""
     if len(terminals) < 2:
         return []
     # the corners of the region drawn a little simpler (a wall drawn with many points
@@ -202,43 +207,109 @@ def walks(region, terminals: list[tuple[str, tuple[float, float]]]) -> list[tupl
     pts = np.array(points + corners, dtype=float)
     n, k = len(pts), len(points)
     ii, jj = np.triu_indices(n, 1)
-    seg = np.stack([pts[ii], pts[jj]], axis=1)
-    length = np.hypot(seg[:, 1, 0] - seg[:, 0, 0], seg[:, 1, 1] - seg[:, 0, 1])
-    seen = np.ones(len(ii), dtype=bool)
+    d = pts[jj] - pts[ii]
+    length = np.hypot(d[:, 0], d[:, 1])
     real = length > 1e-9
-    if real.any():
-        seen[real] = shapely.covers(tol, shapely.linestrings(seg[real]))
-    dist = np.full((n, n), np.inf)
-    np.fill_diagonal(dist, 0.0)
-    dist[ii[seen], jj[seen]] = length[seen]
-    dist[jj[seen], ii[seen]] = length[seen]
-    nxt = np.where(np.isfinite(dist), np.arange(n)[None, :], -1)
-    for m in range(n):  # every pair's shortest way (Floyd–Warshall), and its next point
-        alt = dist[:, m, None] + dist[None, m, :]
-        better = alt < dist - 1e-12
-        if better.any():
-            dist = np.where(better, alt, dist)
-            nxt = np.where(better, nxt[:, m, None], nxt)
-    d = dist[:k, :k]
+    pair = np.flatnonzero(real)
+    if len(pair) > GRID_PAIRS:
+        pair = pair[_maybe_inside(tol, pts[ii[pair]], pts[jj[pair]])]
+    seen = pair[shapely.covers(tol, shapely.linestrings(np.stack([pts[ii[pair]], pts[jj[pair]]], axis=1)))]
+    seen = np.concatenate([seen, np.flatnonzero(~real)])
+    u, v, w = np.r_[ii[seen], jj[seen]], np.r_[jj[seen], ii[seen]], np.r_[length[seen], length[seen]]
+    dist, pred = _shortest_from(n, k, u, v, w)
+    d = dist[:, :k]
     pairs = sorted((float(d[a, b]), ids[a], ids[b], a, b) for a in range(k) for b in range(a + 1, k)
                    if np.isfinite(d[a, b]))
     have = np.full((k, k), np.inf)
     np.fill_diagonal(have, 0.0)
     out = []
-    for w, _, _, a, b in pairs:
-        if have[a, b] <= SPANNER_STRETCH * w + SPANNER_SLACK_M:
+    for w_, _, _, a, b in pairs:
+        if have[a, b] <= SPANNER_STRETCH * w_ + SPANNER_SLACK_M:
             continue
-        have = np.minimum(have, np.minimum(have[:, a, None] + w + have[None, b, :],
-                                           have[:, b, None] + w + have[None, a, :]))
-        way = [a]
-        while way[-1] != b:
-            way.append(int(nxt[way[-1], b]))
-        line = [tuple(pts[i]) for i in way]
+        have = np.minimum(have, np.minimum(have[:, a, None] + w_ + have[None, b, :],
+                                           have[:, b, None] + w_ + have[None, a, :]))
+        way = [b]
+        while way[-1] != a:
+            way.append(int(pred[a, way[-1]]))
+            if way[-1] < 0 or len(way) > n:
+                raise RuntimeError(f"no way back from {ids[b]} to {ids[a]}")
+        line = [tuple(pts[i]) for i in reversed(way)]
         if ids[a] < ids[b]:
             out.append((ids[a], ids[b], line))
         else:
             out.append((ids[b], ids[a], line[::-1]))
     return out
+
+
+GRID_PAIRS = 20000  # lines to look at beyond which a coarse grid of the region first throws some out
+GRID_CELL_M = 0.2
+
+
+def _maybe_inside(region, a, b, samples: int = 24) -> np.ndarray:
+    """Whether each line a–b may be inside ``region``: False for those with a point in a
+    cell of a GRID_CELL_M grid that is wholly outside it (more than two cells from it),
+    which surely leave it; the rest are looked at exactly."""
+    from PIL import Image, ImageDraw
+
+    cell = GRID_CELL_M
+    grown = region.buffer(cell * 2, join_style="mitre")
+    x0, y0, x1, y1 = grown.bounds
+    image = Image.new("1", (int((x1 - x0) / cell) + 2, int((y1 - y0) / cell) + 2), 0)
+    draw = ImageDraw.Draw(image)
+    at = lambda ring: [((x - x0) / cell - 0.5, (y - y0) / cell - 0.5) for x, y in ring.coords]  # noqa: E731 (a cell's middle at its index)
+    for poly in sorted(as_polygons(grown), key=lambda p: -p.area):  # (one in another's hole after it)
+        draw.polygon(at(poly.exterior), fill=1)
+        for hole in poly.interiors:
+            draw.polygon(at(hole), fill=0)
+    inside = np.asarray(image, dtype=bool)
+    t = (np.arange(samples) + 0.5) / samples
+    out = np.ones(len(a), dtype=bool)
+    for s in range(0, len(a), 100_000):
+        p, q = a[s:s + 100_000], b[s:s + 100_000]
+        cx = ((p[:, None, 0] + (q[:, None, 0] - p[:, None, 0]) * t - x0) / cell).astype(np.int64)
+        cy = ((p[:, None, 1] + (q[:, None, 1] - p[:, None, 1]) * t - y0) / cell).astype(np.int64)
+        out[s:s + 100_000] = inside[cy, cx].all(axis=1)
+    return out
+
+
+def _shortest_from(n: int, k: int, u, v, w) -> tuple[np.ndarray, np.ndarray]:
+    """The shortest ways from points 0…k-1 to all n over the edges u→v (length w), all at
+    once (rounds of every edge, Bellman–Ford): their lengths (k × n) and each point's
+    point before it on one (-1: none)."""
+    dist = np.full((k, n), np.inf)
+    dist[np.arange(k), np.arange(k)] = 0.0
+    pred = np.full((k, n), -1, dtype=np.int64)
+    if not len(u):
+        return dist, pred
+    order = np.argsort(v, kind="stable")
+    u, v, w = u[order], v[order], w[order]
+    changed = np.zeros(n, dtype=bool)
+    changed[:k] = True
+    while True:  # each round, the edges from points a way to changed in the last
+        e = np.flatnonzero(changed[u])
+        if not len(e):
+            break
+        ue, ve = u[e], v[e]
+        starts = np.flatnonzero(np.r_[True, ve[1:] != ve[:-1]])
+        heads = ve[starts]
+        best = np.minimum.reduceat(dist[:, ue] + w[e], starts, axis=1)
+        now = dist[:, heads]
+        better = best < now - 1e-12
+        dist[:, heads] = np.where(better, best, now)
+        changed[:] = False
+        changed[heads[better.any(axis=0)]] = True
+    # each point's point before it: an edge on a shortest way to it, from a point nearer
+    # (or as near, over an edge of no length: from the source, or from a point numbered
+    # lower, so that two points in one place never lead to each other)
+    via, here, there = dist[:, u] + w, dist[:, u], dist[:, v]
+    with np.errstate(invalid="ignore"):  # (inf − inf: not on one)
+        tight = np.isfinite(via) & (np.abs(via - there) <= 1e-9 * np.maximum(1.0, there))
+        nearer = here < there - 1e-12
+    source = np.arange(k)[:, None]
+    on = tight & (nearer | (u[None, :] == source) | (u[None, :] < v[None, :])) & (v[None, :] != source)
+    s, e = np.nonzero(on)
+    pred[s, v[e]] = u[e]
+    return dist, pred
 
 
 def _length(points) -> float:
