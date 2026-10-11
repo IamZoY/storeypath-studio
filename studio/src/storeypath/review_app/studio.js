@@ -217,18 +217,23 @@ function watchProject(code) {
   });
 }
 
-/** By each floor of the page: who is on it (small marks), and who is editing it. */
+/** By each floor of the page: who is on it (small marks), and who is editing its rooms. */
 function showWhoIsOn() {
   for (const spot of document.querySelectorAll("[data-on-floor]")) {
     const p = live.floors.get(spot.dataset.onFloor);
-    const editing = p?.editing?.who;
-    const others = (p?.viewing || []).filter((v) => v.id !== editing?.id);
-    const said = [editing ? `${editing.name} is editing` : null,
+    const editors = (p?.editing || []).map((e) => e.who);
+    const others = (p?.viewing || []).filter((v) => !editors.some((e) => e.id === v.id));
+    const rooms = (n) => `${n} room${n === 1 ? "" : "s"}`;
+    const said = [...(p?.editing || []).map((e) => `${e.who.name} is editing ${rooms(e.rooms.length)}`),
       others.length ? `${others.map((v) => v.name).join(", ")} ${others.length === 1 ? "is" : "are"} looking at it` : null]
       .filter(Boolean).join("; ");
     spot.title = said;
-    spot.replaceChildren(...[editing ? avatar(editing, "editing") : null, ...others.slice(0, 4).map((v) => avatar(v)),
-      editing ? el("span", { class: "muted small" }, ` ${editing.name.split(" ")[0]} editing`) : null].filter(Boolean));
+    const first = (e) => e.name.split(" ")[0];
+    spot.replaceChildren(...[...editors.slice(0, 3).map((e) => avatar(e, "editing")),
+      ...others.slice(0, Math.max(0, 4 - editors.length)).map((v) => avatar(v)),
+      editors.length ? el("span", { class: "muted small" },
+        ` ${editors.slice(0, 2).map(first).join(", ")}${editors.length > 2 ? ` +${editors.length - 2}` : ""} editing`) : null]
+      .filter(Boolean));
   }
 }
 

@@ -13,8 +13,9 @@ class Busy(Exception):
 
 
 class Locked(Exception):
-    """Another person is editing the floor (they hold its lock): nothing was changed,
-    423. ``holder``: who, and since when ({floor, who: {id, username, name}, since})."""
+    """Another person is editing a room the change touches (they hold its lock): nothing
+    was changed, 423. ``holder``: who, which room, since when ({floor, room, room_name,
+    who: {id, username, name}, since})."""
 
     def __init__(self, message: str, holder: dict):
         super().__init__(message)

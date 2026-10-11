@@ -5,11 +5,11 @@
 // handlers). Everywhere: the wheel zooms, the middle button, Space held or the Pan tool
 // move the plan, a right-click opens the menu.
 
-import { editable, viewOnly } from "./access.js";
+import { editable, viewOnly, whyNotRoom } from "./access.js";
 import { emit } from "./bus.js";
 import { drawnNear, openingNear } from "./drawing.js";
 import { $ } from "./dom.js";
-import { assetOf, changeAsset, drawGuides, placing, renderAssets } from "./items.js";
+import { assetOf, changeAsset, drawGuides, itemRoom, placing, renderAssets } from "./items.js";
 import { closeMenu, openMenu } from "./menu.js";
 import { planPoint, showCursor, spaceAt, stopFlight, updateView, zoomAt } from "./plan.js";
 import { settle } from "../fit.js";
@@ -82,7 +82,8 @@ function bindPane(pane) {
       return;
     }
     const picked = !state.tool && assetOf(e.target);
-    const asset = picked && editable() ? picked : null; // dragged only by who may change the floor
+    // dragged only by who may change the floor, and not in a room someone else is editing
+    const asset = picked && editable() && !whyNotRoom(itemRoom(picked)) ? picked : null;
     drag = { mode: "press", x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty, moved: false, target: e.target,
       asset, picked, from: asset ? [asset.x, asset.y] : null };
     if (asset) { // its room holds it; walls and other items draw it (fit.js)

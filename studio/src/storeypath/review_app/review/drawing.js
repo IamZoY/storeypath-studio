@@ -7,7 +7,7 @@
 // The tools (tools.js): Wall (W), Space (R), Divide (D), Door / window / opening (O). The
 // Stairs and lifts tool (vertical.js) draws its shape with the space's corners here.
 
-import { viewOnly } from "./access.js";
+import { roomTaken, viewOnly } from "./access.js";
 import { followJob, request } from "./api.js";
 import { emit } from "./bus.js";
 import { $, el, svg } from "./dom.js";
@@ -383,6 +383,7 @@ export async function deleteItem() {
     const { at, span } = drawnOpeningOf(d);
     return takeAway("opening", at, span);
   }
+  if (roomTaken(...(d.connects || []))) return;
   try {
     const updated = await request(`${BASE}/objects/${d.id}`, { ignored: !d.ignored });
     Object.assign(d, updated);

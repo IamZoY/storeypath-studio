@@ -155,17 +155,20 @@ def test_an_undo_over_what_another_changed_since_is_refused_naming_them(team):
     assert override(team, s.id) == {"name": "Sara's"}
 
 
-def test_an_undo_needs_the_floor_and_edit_on_it(team):
+def test_an_undo_needs_the_room_and_edit_on_it(team):
     s, t = office(team, team.hq0), office(team, team.hq0, 1)
-    assert team("khalid", "POST", f"objects/{s.id}", {"ignored": True})[0] == 200
+    assert team("khalid", "POST", f"objects/{s.id}", {"hidden": True})[0] == 200
     assert team("khalid", "POST", f"floors/{team.hq0}/release", {})[0] == 200
-    assert team("sara", "POST", f"objects/{t.id}", {"ignored": True})[0] == 200  # sara is editing it now
+    inside = shape(s.geometry).representative_point()
+    assert team("sara", "POST", f"floors/{team.hq0}/items", {"type": "DESK-JUNIOR", "x": inside.x, "y": inside.y})[0] == 200
+    assert team("sara", "POST", f"objects/{t.id}", {"hidden": True})[0] == 200  # sara is editing his room now, and another
     status, refused = team("khalid", "POST", "undo", {"floor": team.hq0})
-    assert status == 423 and refused["locked"]["who"]["name"] == "Sara Ahmed"
-    assert override(team, s.id) == {"ignored": True}
+    assert status == 423 and refused["locked"]["who"]["name"] == "Sara Ahmed" and refused["locked"]["room"] == s.id
+    assert override(team, s.id) == {"hidden": True}
     assert team("vera", "POST", "undo", {"floor": team.hq0})[0] == 403  # view only
     assert team("sara", "POST", f"floors/{team.hq0}/release", {})[0] == 200
     assert team("khalid", "POST", "undo", {"floor": team.hq0})[0] == 200 and override(team, s.id) is None
+    assert override(team, t.id) == {"hidden": True}  # hers stays
 
 
 def test_the_history_says_who_did_what_and_what_was_undone(team):

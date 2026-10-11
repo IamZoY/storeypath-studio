@@ -200,11 +200,14 @@ def test_finishes_are_changed_by_who_may_edit_the_floor_while_they_hold_it(team)
     assert team("vera", "POST", f"objects/{s.id}", body)[0] == 403  # view only
     assert team("vera", "POST", f"floors/{team.hq0}/finishes", {"type": "office", **body})[0] == 403
     assert team("bob", "POST", f"floors/{team.hq0}/finishes", {"type": "office", **body})[0] in (403, 404)
-    assert team("sara", "POST", f"objects/{s.id}", body)[0] == 200  # sara takes the floor's lock
-    status, refused = team("khalid", "POST", f"objects/{s.id}", {"floor_finish": "FLOOR-WOOD-OAK"})
-    assert status == 423 and refused["locked"]["who"]["name"] == "Sara Ahmed"
-    assert team("khalid", "POST", f"floors/{team.hq0}/finishes", {"type": "office", **body})[0] == 423
+    assert team("sara", "POST", f"objects/{s.id}", body)[0] == 200  # sara takes the room's lock
+    oak = {"floor_finish": "FLOOR-WOOD-OAK"}
+    status, refused = team("khalid", "POST", f"objects/{s.id}", oak)
+    assert status == 423 and refused["locked"]["who"]["name"] == "Sara Ahmed" and refused["locked"]["room"] == s.id
+    assert team("khalid", "POST", f"floors/{team.hq0}/finishes", {"type": "office", **oak})[0] == 423  # hers among them
     assert override(team, s.id) == body
+    other = rooms(team, team.hq0, "office")[1]
+    assert team("khalid", "POST", f"objects/{other.id}", oak)[0] == 200  # another office of the floor: his to change
     # khalid may not undo over sara's change of the room
     team("sara", "POST", f"floors/{team.hq0}/release", {})
     assert team("khalid", "POST", f"objects/{s.id}", {"wall_finish": "WALL-STONE"})[0] == 200

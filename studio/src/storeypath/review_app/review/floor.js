@@ -57,7 +57,7 @@ export async function openFloor(id, spaceId = null, { keepView = false } = {}) {
   state.segments = null;
   state.wallStart = null;
   if (changed) clearUnderlay();
-  onFloor(id, floor.lock); // (together.js: this floor's stream, who is on it)
+  onFloor(id, floor.editing); // (together.js: this floor's stream, who is editing which of its rooms)
   renderPlan();
   if (!keepView || changed) fit();
   if (changed) clearSelection();

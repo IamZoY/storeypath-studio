@@ -52,8 +52,9 @@ arm64, on Linux, macOS or Windows with Docker. [More ways to run it](docs/INSTAL
 - **Yours, offline.** One container with its database inside, on your own machine.
   Nothing is downloaded when it runs: no telemetry, no map tiles; the language model
   runs inside it, and the vision model on a GPU of yours.
-- **Built for a team.** Accounts, sharing down to a single floor, one editor a floor
-  at a time, everyone else's changes shown live, undo, history and an audit log.
+- **Built for a team.** Accounts, sharing down to a single floor, many people on a
+  floor at once (one a room), everyone else's changes shown live, undo, history and an
+  audit log.
 - **IDs that never change.** Read a revised drawing again and every room keeps its ID;
   carry a desk to another building and it keeps its tag. Each export lists what was
   added, changed and retired.

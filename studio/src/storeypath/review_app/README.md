@@ -62,7 +62,8 @@ in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`
 | `review/view3d.js` | 3D and walking (StoreyPath's world, `/viewer/src/world/world.js`): the pointer, what a click would do marked under it, the ghost, items carried, the HUD |
 | `review/menu.js` | the right-click menu, on the plan and in 3D and walking (`menu3d`) |
 | `review/rooms.js` | a room's corrections, saved; capacity and grade |
-| `review/live.js`, `../together.js` | others' changes shown live; presence, the floor's lock, undo and redo, History |
+| `review/live.js`, `../together.js` | others' changes shown live; presence, who is editing which rooms, undo and redo, History |
+| `review/held.js` | the rooms someone else is editing, outlined in their colour; the banner when the room chosen is one |
 | `review/api.js`, `notify.js`, `access.js`, `dom.js`, `tooltip.js` | calls to Studio, toasts and the status line, who may edit, elements and icons, tooltips |
 | `icons/lucide.svg` | the icons, one `<symbol>` each (Lucide, ISC: `icons/LICENSE-lucide.txt`) |
 

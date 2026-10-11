@@ -80,6 +80,6 @@ item ID in packages of two projects.
 | 9 | Looking at the plans with a vision model, on a GPU | done: the GPU helper |
 | 10 | Completing a floor in review: walls, dividers, doors, windows, openings, spaces | done |
 | 11 | Furniture and equipment with IDs of their own; capacity and grade | done (format 0.7) |
-| 12 | Many people at once: Studio on PostgreSQL, one editor a floor, changes seen live, undo and history | done |
+| 12 | Many people at once: Studio on PostgreSQL, many people a floor (one a room), changes seen live, undo and history | done |
 | 13 | Floor and wall finishes | done (format 0.9) |
 | 14 | Doors that open when walking; Studio's own 3D page | done |

@@ -72,7 +72,7 @@ def test_who_is_on_a_floor_comes_and_goes(team):
         vera = team.stream("vera", team.hq0)
         came = sara.until(lambda k, d: k == "presence" and d["viewing"])[-1][1]
         assert came["floor"] == team.hq0 and [p["name"] for p in came["viewing"]] == ["Vera Viewer"]
-        assert came["editing"] is None
+        assert came["editing"] == []
         khalid = team.stream("khalid", team.hq0)
         both = sara.until(lambda k, d: k == "presence" and len(d["viewing"]) == 2)[-1][1]
         assert [p["name"] for p in both["viewing"]] == ["Khalid Engineer", "Vera Viewer"]
@@ -87,10 +87,11 @@ def test_who_is_on_a_floor_comes_and_goes(team):
         office = team.spaces(team.hq0)[0]
         assert team("khalid", "POST", f"objects/{office.id}", {"correction": {"name": "Board"}})[0] == 200
         editing = vera.until(lambda k, d: k == "presence" and d["editing"])[-1][1]
-        assert editing["editing"]["who"]["name"] == "Khalid Engineer" and editing["editing"]["since"]
+        (his,) = editing["editing"]
+        assert his["who"]["name"] == "Khalid Engineer" and his["since"] and his["rooms"] == [office.id]
         # done editing: nobody is
         assert team("khalid", "POST", f"floors/{team.hq0}/release", {})[1] == {"released": True}
-        assert vera.until(lambda k, d: k == "presence" and d["editing"] is None)[-1][1]["floor"] == team.hq0
+        assert vera.until(lambda k, d: k == "presence" and d["editing"] == [])[-1][1]["floor"] == team.hq0
         khalid.close()
         gone = sara.until(lambda k, d: k == "presence" and len(d["viewing"]) == 1)[-1][1]
         assert [p["name"] for p in gone["viewing"]] == ["Vera Viewer"]

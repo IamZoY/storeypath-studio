@@ -39,7 +39,7 @@ ROOT = "storeypath-data"  # every member of an older Studio's backup is under th
 # in the order they are loaded: each after those it refers to
 TABLES = ("users", "project_access", "grants", "audit", "projects", "locations", "buildings", "floors", "objects",
           "overrides", "items", "readings", "vision", "drawings", "exports", "catalogue", "settings", "history")
-LEFT_OUT = ("sessions", "floor_locks", "migrations")  # who is logged in, who is editing: not kept
+LEFT_OUT = ("sessions", "room_locks", "migrations")  # who is logged in, who is editing: not kept
 ORDER = {"history": "seq", "grants": "id", "audit": "id", "exports": "id"}
 # drawings sent and not yet kept (their private information is still in them): not kept
 WHERE = {"drawings": "NOT incoming"}

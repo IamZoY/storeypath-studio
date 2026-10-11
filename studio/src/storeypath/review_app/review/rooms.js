@@ -3,7 +3,7 @@
 // change of its own, saved at once (undone and redone; others see it live). Also what
 // their desks say of them (capacity and grade), and the next one to review.
 
-import { viewOnly } from "./access.js";
+import { roomTaken, viewOnly } from "./access.js";
 import { request } from "./api.js";
 import { emit } from "./bus.js";
 import * as finish from "./finish.js";
@@ -47,7 +47,7 @@ export function setFlag(id, flag, value) {
 /** A space's change saved (``body`` as Studio takes it: objects/<id>); shown at once. */
 export async function saveSpace(body, id = state.selected, { quiet = false } = {}) {
   const s = state.byId.get(id);
-  if (!s || viewOnly()) return null;
+  if (!s || viewOnly() || roomTaken(s.kind === "zone" ? s.space_id || s.id : s.id)) return null;
   let updated;
   try {
     updated = await request(`${BASE}/objects/${s.id}`, body);

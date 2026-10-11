@@ -236,26 +236,32 @@ log).
 | `POST …/items/<id>` | edit on its floor, and on the floor it is carried to (and their locks) |
 | `POST …/floors/<id>/release` | view on the floor: their own lock of it let go (Done editing; leaving the floor) |
 | `POST …/floors/<id>/take-over` | an admin who sees the floor: its lock taken from whoever holds it, recorded in the history and the audit log |
-| `POST …/floors/<id>/vertical {type, space}` | edit on the floor, and its lock: a lift, stairs or escalator drawn there ([Navigation](#navigation)) |
+| `POST …/floors/<id>/vertical {type, space}` | edit on the floor, and the rooms it is drawn on: a lift, stairs or escalator drawn there ([Navigation](#navigation)) |
 | `GET …/objects/<id>/stack` | view on its floor: the floors a lift or stairs serves, those they may see |
-| `POST …/objects/<id>/copy {floors}` | edit on its floor and on each floor it is added on (each floor's lock: one someone else edits is left out, and named) |
+| `POST …/objects/<id>/copy {floors}` | edit on its floor and on each floor it is added on (the rooms it is drawn on: a floor where someone else edits one is left out, and named) |
 | `GET jobs/<id>` | an admin, or view (now) on what it works on: its project, building or floor (who started it too, while they still may) |
 | `GET backup` | admin, or `backup` |
 | `GET admin/helpers`, `POST admin/helpers {helpers}`, `POST admin/helpers/test {url, key?}` | admin: the GPU helpers ([Looking at the plans](#looking-at-the-plans-vision)) |
 
 ## Many people at once
 
-**One editor a floor at a time.** The first change a person makes to a floor in Review
-(a correction, an item, a wall drawn, the floor read again) takes the floor for them,
-in the change's own transaction; anyone else's change to it is refused (423) and
-nothing is saved. Their pages show it as it happens: *Khalid is editing this floor
-since 10:20 — you can look; you can edit when they are done*, with what changes the floor
-there but held (an admin may *Take over*: recorded in the history and the audit log).
-The one editing it sees *You are editing this floor* and *Done editing*, which lets it
-go; so does leaving the floor (another floor, the page closed), or leaving it alone for
-15 minutes: a page open on the floor keeps it (its stream's heartbeat), and a page gone
-without saying so lets it go 15 minutes later. A person holds the floor whichever of
-their pages they use. Steps that work on the whole project (adding floors, reading
+**Many people a floor, one a room.** A person's change in Review takes the lock of
+each room it touches, in the change's own transaction: a room corrected (named,
+typed, flagged, finished), a zone's room, the rooms a door joins, the room an item
+stands in where it was and where it goes (an item standing in no room locks only
+itself), and the rooms within 30 cm of a wall, door or space drawn or taken away.
+Anyone else's change to one of those is refused (423, naming who holds which room since
+when) and nothing is saved; their changes to the floor's other rooms go through. Pages
+show it as it happens: rooms someone else is editing are outlined in their colour, the
+room chosen says *Khalid is editing OFFICE 011 since 10:20: you can look, and change it
+when they are done* (an admin may *Take over* that room, or every room others edit on
+the floor: recorded in the history and the audit log), and the status bar says *You're
+editing 3 rooms* with *Done editing*, which lets them go, and who else is editing how
+many. A room is let go too when its person leaves the floor (another floor, the page
+closed), or makes no change to it for 5 minutes: a page left open keeps nothing, so
+nobody is kept out of rooms someone went past. A person holds their rooms whichever of
+their pages they use. Reading a whole floor again from Review waits until nobody else
+holds a room on it. Steps that work on the whole project (adding floors, reading
 every floor again, placing buildings, exporting, opening a file into it) hold the
 project in the database for as long as they run (an advisory lock): Review's changes
 meanwhile are answered *busy* (409), from this Studio or another on the same database.
@@ -385,7 +391,7 @@ graphics, or when High draws slowly), *High* or *Low*: kept in the browser, and 
 same on *Navigate*.
 
 Editing in 3D and walking, for whoever may edit the floor (the same requests as on the
-plan: the floor's lock, undo and history as for any change):
+plan: the rooms' locks, undo and history as for any change):
 
 | | 3D | Walk |
 |---|---|---|
@@ -807,7 +813,7 @@ is added already typed, cut out of the room it is drawn in with a way through, a
 floor is read again. A lift's or stairs' editor lists the floors of its building it
 serves and what is linked there (the same code, drawn over it, or linked by hand);
 *Add on floors…* draws it where it is on the floors ticked, typed and linked to it;
-*Link with…*, *Unlink* and *Link as found* correct the link. Each takes the floors'
+*Link with…*, *Unlink* and *Link as found* correct the link. Each takes the rooms'
 locks as any change does. Packages carry the result as each space's `stack`
 ([stacks.py](src/storeypath/stacks.py)), and the way rides those lifts and stairs.
 Calls: `POST …/floors/<id>/vertical`, `GET …/objects/<id>/stack`,

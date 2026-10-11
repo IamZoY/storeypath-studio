@@ -13,13 +13,12 @@ in the project that the person may see:
                       each floor it changed the person may see (a building's or the
                       project's, to who may see it whole)
     event: presence   who is on a floor: {floor, viewing: [{id, name, username}],
-                      editing: {who, since} or null}; at once for each floor someone is
-                      on, then whenever that changes
+                      editing: [{who, since, rooms: [IDs]}]}; at once for each floor
+                      someone is on, then whenever that changes
     event: deleted    the project is gone
     event: heartbeat  {at}, at once and every HEARTBEAT_S: the stream is checked then
                       (the session, the person's access) and ends when they may no
-                      longer see the project; a stream on a floor keeps its person's
-                      lock of it (they are editing it) while it is open
+                      longer see the project
 
 What else happens is sent with Events.publish(code, kind, data, scope), from any
 thread: each stream sends it on (``event: <kind>``) when its person may see ``scope``
@@ -108,7 +107,7 @@ class Events:
         self.live = None  # live.Live, started with the first stream
 
     def attach(self, studio) -> None:
-        """Studio, whose database's changes (and floor locks) the streams are told of."""
+        """Studio, whose database's changes (and room locks) the streams are told of."""
         self.studio = studio
 
     def _start_live(self) -> None:
@@ -138,9 +137,9 @@ class Events:
             return {s.floor for s in self._streams.get(code, ()) if s.floor}
 
     def presence(self, code: str, floor: str, lock: dict | None) -> dict:
-        """Who is on a floor: viewing it (pages open on it), editing it (its lock)."""
-        return {"floor": floor, "viewing": self.viewing(code, floor),
-                "editing": {"who": lock["who"], "since": lock["since"]} if lock else None}
+        """Who is on a floor: viewing it (pages open on it), editing which of its rooms
+        (their locks, store.locks: [{who, since, rooms}], empty when nobody is)."""
+        return {"floor": floor, "viewing": self.viewing(code, floor), "editing": (lock or {}).get("editors", [])}
 
     def snapshot(self, code: str, sight: Sight) -> list[dict]:
         """Who is on each floor of a project someone is on, of those ``sight`` sees (from
@@ -275,15 +274,13 @@ def events(code: str, request: Request, may: May, studio: TheStudio, query: Quer
     person = {"id": "local", "username": "local", "name": "This computer"} if user is LOCAL else user.view()
 
     def check() -> Sight | None:
-        """What the person may see of the project now: their session and access again;
-        their lock of the floor shown kept (they are there)."""
+        """What the person may see of the project now: their session and access again
+        (a page open on a floor keeps no room of it: a room is kept by changes to it)."""
         user = web.accounts.session(may.token) if web.accounts is not None else LOCAL
         try:
             again = Gate(studio, web.accounts, user, may.address, may.token).see(code)
         except (Refused, NotFound):
             return None
-        if floor is not None and again.floor(floor):
-            studio.store.touch_locks(code, [floor], user)
         return again
 
     return StreamingResponse(web.events.stream(code, sight, check, floor, person), media_type="text/event-stream",

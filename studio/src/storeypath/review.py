@@ -26,13 +26,14 @@ and read again whenever it changes on disk. The web server is in server.py:
     POST /api/projects/<code>/floors/<id>/sample/preview  {area, keep?, remove?}: what an area sample of the
                                                   floor would hold (areasample/): its pictures, what is taken out
     POST /api/projects/<code>/floors/<id>/sample  {area, note?, keep?, remove?}: the sample, <id>.spsample
-    POST /api/projects/<code>/floors/<id>/release    one's lock of the floor let go (Done editing)
-    POST /api/projects/<code>/floors/<id>/take-over  an admin takes the floor from whoever edits it
+    POST /api/projects/<code>/floors/<id>/release    one's rooms on the floor let go (Done editing)
+    POST /api/projects/<code>/floors/<id>/take-over {room?}  an admin takes a room (or every room) others edit
     POST /api/projects/<code>/undo {floor?}       one's own latest change undone (step_back); …/redo
 
 A change is refused (Busy, answered 409) while a job works on the project: the job
-would save over it. A person's change takes the lock of each floor it touches, and is
-refused (Locked, 423) while another person holds one (db/store.py). Each change is
+would save over it. A person's change takes the lock of each room it touches, and is
+refused (Locked, 423) while another person holds one (db/store.py): many people edit a
+floor at once, one a room. Each change is
 recorded with what says it in words as it was then (history.py: label, what, was,
 now…), and each person undoes and redoes their own (step_back).
 
@@ -372,7 +373,7 @@ class Review:
         """A change (``fn``: the project as it is -> (Changes, answer)), made only while no
         job is changing the project (else Busy: a job saves the copy it loaded, which
         would lose the change). One that fails part way changes nothing. ``editor``: a
-        person's change from a page, which takes the lock of each floor it touches
+        person's change from a page, which takes the lock of each room it touches
         (Locked while another person holds one)."""
         lock = self._changing() if self._changing else None
         if lock is not None and not lock.acquire(timeout=BUSY_WAIT_S):

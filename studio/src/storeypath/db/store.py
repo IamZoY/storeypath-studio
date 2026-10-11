@@ -25,15 +25,18 @@ the same changes, without reading it again.
   What is written is what differs, row by row.
 - ``create(ws)``: a new project; ``delete(code)``: a project and everything of it.
 
-One editor a floor at a time. A person's change from a page (``editor``: their
-session, the page) takes the lock of each floor it touches for that person, in its own
-transaction (``floor_locks``), or is refused (Locked, 423, naming who holds it) while
-another person holds one. A lock goes when its person leaves the floor
-(release_lock), when nothing (no change, no heartbeat of their page open on it,
-touch_locks) kept it for LOCK_IDLE_S, or when an admin takes it over (take_over,
-recorded in the history). Steps of Studio's own (a floor read again, an export) take no
-floor lock: they hold the project's step lock (StepLock) while they change it, which
-also keeps every other Studio on the database out of it.
+Many people on a floor, one a room. A person's change from a page (``editor``: their
+session, the page) takes the lock of each room it touches for that person
+(rooms_touched: a space, its zones and doors, the items in it, what is drawn on it; an
+item standing in no room by its own ID), in its own transaction (``room_locks``), or is
+refused (Locked, 423, naming who holds which room) while another person holds one. A
+room's lock goes when its person is done editing the floor or leaves it (release_lock),
+when they made no change to it for ROOM_IDLE_S (a page left open keeps none: others are
+not kept out of rooms a person went past), or when an admin takes it over (take_over,
+recorded in the history). A person reading a whole floor again waits until nobody else
+holds a room on it (whole_floor). Steps of Studio's own (a floor read again, an export)
+take no room locks: they hold the project's step lock (StepLock) while they change it,
+which also keeps every other Studio on the database out of it.
 
 Times are UTC. Geometry is GeoJSON in each building's own frame (local metres), kept
 exactly; PostGIS geometries are made from it in the database (SRID 0).
@@ -55,6 +58,7 @@ from typing import Any, Callable
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from shapely.geometry import LineString, Point, Polygon, shape
 
 from ..errors import Conflict, Locked, NotFound
 from ..workspace import (ExportRecord, FloorEdits, Item, Location, ObjectRecord, Override, Project, Reading,
@@ -66,7 +70,8 @@ LOCAL = {"local": True}  # who a change is of on this computer without accounts
 OBJECT_MORE = ("connects", "parent", "zones", "span", "width", "swings", "sill", "height", "tag", "issues",
                "detected_ignored")
 DRAWINGS = "drawings"  # a floor's drawing is drawings/<name>: its name in the project's drawings
-LOCK_IDLE_S = 15 * 60  # a floor's lock nothing kept for this long (no change, no heartbeat) is free
+ROOM_IDLE_S = 5 * 60  # a room its person made no change to for this long is free again
+NEAR_M = 0.3  # what is drawn touches the rooms within this of it (half a thick wall)
 STEP_LOCK = 0x5370  # pg_advisory_lock(STEP_LOCK, hashtext(code)): a project-wide step works on the project
 
 
@@ -76,7 +81,7 @@ class ProjectExists(Exception):
 
 @dataclass(frozen=True)
 class Editor:
-    """Where a person's change comes from: their session (whose floor locks it takes)
+    """Where a person's change comes from: their session (whose room locks it takes)
     and the page that sent it (told back with the change, so that page knows it has it)."""
 
     session: str
@@ -168,6 +173,113 @@ class _Nothing(Exception):
 def floor_of(object_id: str) -> str:
     """The floor an object (by its ID) is on: its ID without its own code."""
     return object_id.rsplit("-", 1)[0]
+
+
+# ---- the rooms a change touches (room locks) ----------------------------------------
+
+def rooms_touched(base: Workspace, after: Workspace, ch: Changes) -> dict[str, set[str]]:
+    """The rooms a change touches, by floor (each the lock it takes): a space changed or
+    corrected; a zone's own space; the spaces a door or opening joins; the space an item
+    stands in, where it was and where it is (the item itself, by its ID, where it stands
+    in none); the spaces within NEAR_M of what was drawn on a floor, or taken away."""
+    out: dict[str, set[str]] = {}
+    for oid in (*ch.objects, *ch.overrides):
+        for ws in (base, after):
+            for room in _rooms_of(ws.objects.get(oid), oid):
+                out.setdefault(floor_of(oid), set()).add(room)
+    for iid in ch.items:
+        for ws in (base, after):
+            it = ws.items.get(iid)
+            if it is not None and it.floor_id:
+                out.setdefault(it.floor_id, set()).add(room_at(ws, it.floor_id, (it.x, it.y)) or iid)
+    for fid, edits in ch.edits.items():
+        near = rooms_near(base, fid, _drawn_changed(_edits_of(base, fid), edits))
+        if near:
+            out.setdefault(fid, set()).update(near)
+    return out
+
+
+def rooms_near(ws: Workspace, floor: str, shapes) -> set[str]:
+    """The rooms of a floor within NEAR_M of any of ``shapes`` (shapely geometries)."""
+    near = [g.buffer(NEAR_M) for g in shapes]
+    return {sid for sid, g in _spaces(ws, floor) if any(n.intersects(g) for n in near)} if near else set()
+
+
+def room_at(ws: Workspace, floor: str, at) -> str | None:
+    """The room (a space's ID) a point on a floor is in, as Review places an item there
+    (review_app/fit.js roomAt): a space not ignored, or the space of a zone it is in."""
+    p = Point(at)
+    hit = next((sid for sid, g in _spaces(ws, floor) if g.covers(p)), None)
+    if hit is None:
+        hit = next((sid for sid, g in _spaces(ws, floor, kind="zone") if g.covers(p)), None)
+    return hit
+
+
+def room_name(ws: Workspace, room: str) -> str:
+    """A room as people know it: its name and number, else its code; an item by its tag."""
+    if room in ws.items:
+        return f"the item {room}"
+    o = ws.objects.get(room)
+    if o is None:
+        return room.rsplit("-", 1)[-1]
+    fix = ws.overrides.get(room)
+    name = (fix.name if fix and fix.name else None) or o.name
+    number = (fix.number if fix and fix.number else None) or o.number
+    return " ".join(x for x in (name, number) if x) or room.rsplit("-", 1)[-1]
+
+
+def _rooms_of(o: ObjectRecord | None, oid: str) -> list[str]:
+    if o is None or o.kind == "space":
+        return [oid]
+    if o.kind == "zone":
+        return [o.parent or oid]
+    return list(o.connects) or [oid]  # a door, a window, an opening: the spaces it joins
+
+
+def _spaces(ws: Workspace, floor: str, kind: str = "space"):
+    """The floor's rooms not retired nor ignored (zones: as their space), with their
+    shapes: (room ID, shapely geometry)."""
+    prefix = floor + "-"
+    for oid, o in ws.objects.items():
+        if o.kind != kind or o.status != "active" or not oid.startswith(prefix) or not o.geometry:
+            continue
+        fix = ws.overrides.get(oid)
+        if (fix.ignored if fix is not None and fix.ignored is not None else o.detected_ignored):
+            continue
+        try:
+            g = shape(o.geometry)
+        except (ValueError, TypeError, AttributeError):
+            continue
+        yield (o.parent or oid) if kind == "zone" else oid, g
+
+
+def _edits_of(ws: Workspace, floor: str) -> FloorEdits:
+    for loc in ws.locations:
+        for b in loc.buildings:
+            for f in b.floors:
+                if f"{ws.id}-{loc.code}-{b.code}-{f.code}" == floor:
+                    return f.edits
+    return FloorEdits()
+
+
+def _drawn_changed(old: FloorEdits, new: FloorEdits) -> list:
+    """What was drawn on a floor, or taken away, between two of its edits: shapes."""
+    shapes = []
+    a, b = old.model_dump(mode="json"), new.model_dump(mode="json")
+    for name in b:
+        for x in [x for x in a.get(name, []) if x not in b[name]] + [x for x in b[name] if x not in a.get(name, [])]:
+            try:
+                if name in ("walls", "dividers"):
+                    shapes.append(LineString(x))
+                elif name == "openings":
+                    shapes.append(LineString(x["span"]))
+                elif name == "resized":
+                    shapes.append(Point(x["at"]).buffer(max(0.5, (x.get("width") or 1) / 2)))
+                elif name == "spaces":
+                    shapes.append(Polygon(x))
+            except (ValueError, TypeError, KeyError):
+                continue
+    return shapes
 
 
 def drawing_name(path: str) -> str:
@@ -552,7 +664,7 @@ class ProjectStore:
         answer; that is written, with its history row, and notified. A change of nothing
         is rolled back, and records nothing. ``create``: a new project (ProjectExists when
         its code is taken). ``editor``: a person's change from a page, which takes the
-        lock of each floor it touches (Locked when another person holds one)."""
+        lock of each room it touches (rooms_touched; Locked while another person holds one)."""
         changed = None
         try:
             with self.db.transaction() as conn:
@@ -576,7 +688,9 @@ class ProjectStore:
                 changes, result = fn(base)
                 if changes.empty() and create is None:
                     raise _Nothing
-                taken = self._take_locks(conn, code, changes.floors, by, editor) if editor is not None else []
+                after = changes.apply(base)
+                taken = self._take_locks(conn, code, rooms_touched(base, after, changes), by, editor, base) \
+                    if editor is not None else []
                 self._write(conn, code, changes, by)
                 seq = self._history(conn, code, version, changes, by)
                 said = {"project": code, "floors": sorted(changes.floors), "seq": seq, "version": version}
@@ -585,7 +699,7 @@ class ProjectStore:
                 if taken:
                     said["locks"] = taken
                 conn.execute("SELECT pg_notify(%s, %s)", (CHANNEL, _dumps(said)))
-                changed = (version, changes.apply(base))
+                changed = (version, after)
         except _Nothing:
             return result
         self._keep(code, *changed)
@@ -856,7 +970,7 @@ class ProjectStore:
                 "SELECT u.undoes FROM history u WHERE u.project = %s AND u.undoes = ANY(%s) AND NOT EXISTS "
                 "(SELECT 1 FROM history r WHERE r.project = u.project AND r.redoes = u.seq)", (code, list(seqs)))}
 
-    # ---- one editor a floor at a time -----------------------------------------------
+    # ---- many people on a floor, one a room ------------------------------------------
 
     def _holder(self, conn, who_id: str | None) -> dict:
         """Who holds a lock, as the pages are told: {id, username, name}; this computer."""
@@ -865,29 +979,45 @@ class ProjectStore:
         row = conn.execute("SELECT username, name FROM users WHERE id = %s", (who_id,)).fetchone()
         return {"id": who_id, "username": row[0] if row else "?", "name": (row[1] or row[0]) if row else "Someone"}
 
-    def _take_locks(self, conn, code: str, floors, by, editor: Editor) -> list[str]:
-        """The locks of ``floors`` taken (or kept) for the person ``by``, in the change's
-        transaction (the project's row is held by it: lock takers come one at a time);
-        Locked when another person holds one. The floors whose lock was not theirs before."""
+    def _take_locks(self, conn, code: str, rooms: dict[str, set[str]], by, editor: Editor,
+                    ws: Workspace) -> list[str]:
+        """The locks of ``rooms`` (floor -> its rooms) taken, or kept, for the person
+        ``by``, in the change's transaction (the project's row is held by it: lock takers
+        come one at a time); Locked, naming who and the room (as ``ws`` names it), while
+        another person holds one. The floors where a room became theirs."""
         who = _user_id(by)
         taken = []
-        for f in sorted(floors):
-            row = conn.execute(
-                "SELECT who, since, last_seen < now() - make_interval(secs => %s) FROM floor_locks WHERE floor = %s "
-                "FOR UPDATE", (LOCK_IDLE_S, f)).fetchone()
-            if row is not None and not row[2] and row[0] != who:
-                holder = {"floor": f, "who": self._holder(conn, row[0]), "since": row[1].isoformat()}
-                raise Locked(f"{holder['who']['name']} is editing this floor (since {row[1]:%H:%M} UTC): you can "
-                             "look; you can edit when they are done", holder)
-            if row is None or row[2] or row[0] != who:
-                conn.execute("INSERT INTO floor_locks (floor, project, who, session) VALUES (%s, %s, %s, %s) "
-                             "ON CONFLICT (floor) DO UPDATE SET who = EXCLUDED.who, session = EXCLUDED.session, "
-                             "since = now(), last_seen = now()", (f, code, who, editor.session))
+        for f in sorted(rooms):
+            want = sorted(rooms[f])
+            rows = conn.execute(
+                "SELECT room, who, since, last_seen < now() - make_interval(secs => %s) FROM room_locks "
+                "WHERE floor = %s AND room = ANY(%s) ORDER BY room FOR UPDATE", (ROOM_IDLE_S, f, want)).fetchall()
+            for room, holder, since, idle in rows:
+                if not idle and holder != who:
+                    raise self._locked(conn, ws, f, room, holder, since)
+            mine = sorted(room for room, holder, _, idle in rows if not idle and holder == who)
+            if mine:
+                conn.execute("UPDATE room_locks SET session = %s, last_seen = now() WHERE floor = %s AND room = ANY(%s)",
+                             (editor.session, f, mine))
+            new = [r for r in want if r not in mine]
+            if new:
+                conn.execute("INSERT INTO room_locks (floor, room, project, who, session) "
+                             "SELECT %s, r, %s, %s, %s FROM unnest(%s::text[]) AS r ON CONFLICT (floor, room) DO UPDATE "
+                             "SET who = EXCLUDED.who, session = EXCLUDED.session, since = now(), last_seen = now()",
+                             (f, code, who, editor.session, new))
                 taken.append(f)
-            else:
-                conn.execute("UPDATE floor_locks SET session = %s, last_seen = now() WHERE floor = %s",
-                             (editor.session, f))
         return taken
+
+    def _locked(self, conn, ws: Workspace, floor: str, room: str, who_id, since, *, whole: bool = False) -> Locked:
+        """Another person holds a room: what the page is told (423)."""
+        holder = {"floor": floor, "room": room, "room_name": room_name(ws, room), "who": self._holder(conn, who_id),
+                  "since": since.isoformat()}
+        then = f"(since {since:%H:%M} UTC)"
+        if whole:
+            return Locked(f"{holder['who']['name']} is editing {holder['room_name']} on this floor {then}: you can "
+                          "read the floor again when nobody else is editing it", holder)
+        return Locked(f"{holder['who']['name']} is editing {holder['room_name']} {then}: you can look; you can "
+                      "change it when they are done", holder)
 
     def _hold_project(self, conn, code: str) -> None:
         if conn.execute("SELECT 1 FROM projects WHERE code = %s FOR UPDATE", (code,)).fetchone() is None:
@@ -897,84 +1027,90 @@ class ProjectStore:
         if floors:
             conn.execute("SELECT pg_notify(%s, %s)", (CHANNEL, _dumps({"project": code, "locks": sorted(floors)})))
 
-    def take_lock(self, code: str, floor: str, by, editor: Editor) -> None:
-        """A floor's lock taken (or kept) for a person before a step of theirs changes it
-        (reading it again): Locked when another person holds it."""
-        with self.db.transaction() as conn:
-            self._hold_project(conn, code)
-            self._notify_locks(conn, code, self._take_locks(conn, code, [floor], by, editor))
+    def whole_floor(self, code: str, floor: str, by) -> None:
+        """A step of a person's on a whole floor (reading it again) may go ahead: Locked,
+        naming who and a room of theirs, while another person holds a room on it."""
+        with self.db.connection() as conn:
+            row = conn.execute("SELECT room, who, since FROM room_locks WHERE floor = %s AND last_seen >= now() - "
+                               "make_interval(secs => %s) AND who IS DISTINCT FROM %s::text ORDER BY since, room LIMIT 1",
+                               (floor, ROOM_IDLE_S, _user_id(by))).fetchone()
+            if row is not None:
+                raise self._locked(conn, self.current(code), floor, *row, whole=True)
 
     def release_lock(self, code: str, floor: str, by) -> bool:
-        """A person's lock of a floor let go (they left it, or are done editing it):
-        whether they held it."""
+        """A person's rooms on a floor let go (they left it, or are done editing it):
+        whether they held any."""
         with self.db.transaction() as conn:
-            gone = conn.execute("DELETE FROM floor_locks WHERE floor = %s AND project = %s AND who IS NOT DISTINCT "
-                                "FROM %s RETURNING floor", (floor, code, _user_id(by))).fetchone()
+            gone = conn.execute("DELETE FROM room_locks WHERE floor = %s AND project = %s AND who IS NOT DISTINCT "
+                                "FROM %s::text RETURNING room", (floor, code, _user_id(by))).fetchall()
             if gone:
                 self._notify_locks(conn, code, [floor])
-        return gone is not None
+        return bool(gone)
 
-    def take_over(self, code: str, floor: str, by, editor: Editor) -> dict | None:
-        """A floor's lock taken from whoever holds it (by an admin), recorded in the history
-        as the floor taken over: who held it ({id, username, name}), None when nobody did
-        (then it is just taken)."""
+    def take_over(self, code: str, floor: str, by, editor: Editor, room: str | None = None) -> list[dict]:
+        """A room another person holds taken by an admin (``room``), or every room others
+        hold on the floor, recorded in the history: the people they were taken from
+        ({id, username, name}), none when nobody else held them."""
         who = _user_id(by)
         with self.db.transaction() as conn:
             self._hold_project(conn, code)
-            row = conn.execute("SELECT who, last_seen < now() - make_interval(secs => %s) FROM floor_locks "
-                               "WHERE floor = %s FOR UPDATE", (LOCK_IDLE_S, floor)).fetchone()
-            held = row is not None and not row[1] and row[0] != who
-            was = self._holder(conn, row[0]) if held else None
-            conn.execute("INSERT INTO floor_locks (floor, project, who, session) VALUES (%s, %s, %s, %s) "
-                         "ON CONFLICT (floor) DO UPDATE SET who = EXCLUDED.who, session = EXCLUDED.session, "
-                         "since = now(), last_seen = now()", (floor, code, who, editor.session))
-            if held:
-                version = conn.execute("SELECT version FROM projects WHERE code = %s", (code,)).fetchone()[0]
-                ch = Changes(part="floor", kind="take over", targets=[floor], floors={floor},
-                             before={"lock": was}, after={"lock": self._holder(conn, who)},
-                             more={"from_name": was["name"]})
-                seq = self._history(conn, code, version, ch, by)
-                conn.execute("SELECT pg_notify(%s, %s)", (CHANNEL, _dumps({
-                    "project": code, "floors": [floor], "seq": seq, "version": version, "locks": [floor]})))
-            else:
-                self._notify_locks(conn, code, [floor])
+            rows = conn.execute(
+                "SELECT room, who FROM room_locks WHERE floor = %s AND last_seen >= now() - make_interval(secs => %s) "
+                "AND who IS DISTINCT FROM %s::text AND (%s::text IS NULL OR room = %s) ORDER BY since, room FOR UPDATE",
+                (floor, ROOM_IDLE_S, who, room, room)).fetchall()
+            if not rows:
+                return []
+            conn.execute("UPDATE room_locks SET who = %s, session = %s, since = now(), last_seen = now() "
+                         "WHERE floor = %s AND room = ANY(%s)", (who, editor.session, floor, [r for r, _ in rows]))
+            was = []
+            for holder in dict.fromkeys(w for _, w in rows):
+                was.append(self._holder(conn, holder))
+            ws = self.current(code)
+            version = conn.execute("SELECT version FROM projects WHERE code = %s", (code,)).fetchone()[0]
+            ch = Changes(part="floor", kind="take over", targets=[room or floor], floors={floor},
+                         before={"lock": was[0], "people": was, "rooms": [r for r, _ in rows]},
+                         after={"lock": self._holder(conn, who)},
+                         more={"from_name": ", ".join(p["name"] for p in was),
+                               "room_name": room_name(ws, room) if room else None})
+            seq = self._history(conn, code, version, ch, by)
+            conn.execute("SELECT pg_notify(%s, %s)", (CHANNEL, _dumps({
+                "project": code, "floors": [floor], "seq": seq, "version": version, "locks": [floor]})))
         return was
 
     def locks(self, code: str, floors=None) -> dict[str, dict]:
-        """The floors of a project someone is editing (of ``floors``, when given): floor ->
-        {floor, who: {id, username, name}, since, session}."""
+        """Who is editing the floors of a project (of ``floors``, when given): floor ->
+        {floor, editors: [{who: {id, username, name}, since, rooms: [IDs]}] (by when they
+        started), rooms: {room: {who, since}}}; floors nobody edits left out."""
         with self.db.connection() as conn:
             rows = conn.execute(
-                "SELECT l.floor, l.who, u.username, u.name, l.since, l.session FROM floor_locks l "
+                "SELECT l.floor, l.room, l.who, u.username, u.name, l.since FROM room_locks l "
                 "LEFT JOIN users u ON u.id = l.who WHERE l.project = %s AND l.last_seen >= now() - "
-                "make_interval(secs => %s) AND (%s::text[] IS NULL OR l.floor = ANY(%s))",
-                (code, LOCK_IDLE_S, None if floors is None else list(floors),
+                "make_interval(secs => %s) AND (%s::text[] IS NULL OR l.floor = ANY(%s)) ORDER BY l.since, l.room",
+                (code, ROOM_IDLE_S, None if floors is None else list(floors),
                  None if floors is None else list(floors))).fetchall()
-        out = {}
-        for floor, who, username, name, since, session in rows:
+        out: dict[str, dict] = {}
+        for floor, room, who, username, name, since in rows:
             person = {"id": "local", "username": "local", "name": "This computer"} if who is None \
                 else {"id": who, "username": username or "?", "name": name or username or "Someone"}
-            out[floor] = {"floor": floor, "who": person, "since": since.isoformat(), "session": session}
+            f = out.setdefault(floor, {"floor": floor, "editors": [], "rooms": {}})
+            editor = next((e for e in f["editors"] if e["who"]["id"] == person["id"]), None)
+            if editor is None:
+                editor = {"who": person, "since": since.isoformat(), "rooms": []}
+                f["editors"].append(editor)
+            editor["rooms"].append(room)
+            f["rooms"][room] = {"who": person, "since": since.isoformat()}
         return out
 
-    def touch_locks(self, code: str, floors, by) -> int:
-        """A person's locks of ``floors`` kept (their page is open on them): how many."""
-        if not floors:
-            return 0
-        with self.db.transaction() as conn:
-            return conn.execute("UPDATE floor_locks SET last_seen = now() WHERE project = %s AND floor = ANY(%s) AND "
-                                "who IS NOT DISTINCT FROM %s AND last_seen >= now() - make_interval(secs => %s)",
-                                (code, list(floors), _user_id(by), LOCK_IDLE_S)).rowcount
-
     def sweep_locks(self) -> dict[str, list[str]]:
-        """The locks nothing kept for LOCK_IDLE_S let go: project -> its floors let go
-        (each project's pages told)."""
+        """The rooms their person made no change to for ROOM_IDLE_S let go: project -> the
+        floors of those (each project's pages told)."""
         with self.db.transaction() as conn:
-            rows = conn.execute("DELETE FROM floor_locks WHERE last_seen < now() - make_interval(secs => %s) "
-                                "RETURNING project, floor", (LOCK_IDLE_S,)).fetchall()
+            rows = conn.execute("DELETE FROM room_locks WHERE last_seen < now() - make_interval(secs => %s) "
+                                "RETURNING project, floor", (ROOM_IDLE_S,)).fetchall()
             out: dict[str, list[str]] = {}
             for project, floor in rows:
-                out.setdefault(project, []).append(floor)
+                if floor not in out.setdefault(project, []):
+                    out[project].append(floor)
             for project, floors in out.items():
                 self._notify_locks(conn, project, floors)
         return out

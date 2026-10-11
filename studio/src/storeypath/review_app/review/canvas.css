@@ -40,6 +40,10 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 
 /* ---- spaces, zones, doors and what was drawn here ---------------------------------------- */
 #outline { fill: none; stroke: var(--plan-outlines); stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* a room someone else is editing (held.js): outlined in their colour, under what is chosen */
+#held path { fill: hsl(var(--hue) 70% 55% / 0.12); stroke: hsl(var(--hue) 75% 58%); stroke-width: 2.5;
+  stroke-dasharray: 7 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+:root[data-theme="light"] #held path { fill: hsl(var(--hue) 70% 45% / 0.1); stroke: hsl(var(--hue) 70% 40%); }
 #spaces path {
   fill-opacity: .5; fill-rule: evenodd; cursor: pointer;
   stroke: var(--plan-space-stroke); stroke-width: 1; vector-effect: non-scaling-stroke;

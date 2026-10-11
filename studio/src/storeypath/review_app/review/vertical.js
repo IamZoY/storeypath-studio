@@ -231,10 +231,11 @@ function render(s, info) {
   box.replaceChildren(...parts);
 }
 
-/** Who else is editing a floor (Studio's floor locks): their name, since when. */
+/** Who else is editing the room of a floor where it would be drawn (Studio's room locks):
+ * their name, the room, since when. */
 function editing(f) {
   const since = new Date(f.locked.since).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return `${f.locked.who?.name || "Someone"} is editing it (since ${since})`;
+  return `${f.locked.who?.name || "Someone"} is editing ${f.locked.room_name || "the room"} there (since ${since})`;
 }
 
 /** The floors to add it on, ticked; then each drawn, read again, typed and linked. A

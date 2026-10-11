@@ -5,11 +5,12 @@ Studio or command made it: db/store.py) and hands each change to the events hub
 
 A change ({project, floors, seq, version[, page, locks]}) is read from the history (who,
 what, in words: history.describe) and sent as ``change`` once for each floor it changed
-(a building's or the project's change, once, to who sees that whole); a floor whose
-lock changed hands ({project, locks}), or that someone came to or left, is sent as
-``presence``: who is viewing it, who is editing it. A project deleted
-({project, deleted}) is sent as ``deleted``. Locks nothing kept for LOCK_IDLE_S are let
-go every SWEEP_S (store.sweep_locks), their floors' pages told the same way.
+(a building's or the project's change, once, to who sees that whole); a floor where a
+room's lock changed hands ({project, locks}), or that someone came to or left, is sent
+as ``presence``: who is viewing it, who is editing which of its rooms. A project deleted
+({project, deleted}) is sent as ``deleted``. Rooms their person made no change to for
+ROOM_IDLE_S are let go every SWEEP_S (store.sweep_locks), their floors' pages told the
+same way.
 
 Only projects with a stream open are read about. The connection is made again (after
 a pause, up to RECONNECT_MAX_S) when it is lost; what changed meanwhile is not sent

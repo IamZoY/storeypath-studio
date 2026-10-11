@@ -19,6 +19,7 @@ from shapely.geometry import Polygon, shape
 
 from . import errors
 from .accounts import rank
+from .db.store import room_name, rooms_near
 from .geometry import as_polygons, iou
 from .review import NotFound, _ring
 from .stacks import NOT_LINKED, STACK_TYPES, building_floors, floor_of, stacks
@@ -66,7 +67,7 @@ def found(ws, floor_id: str, ring) -> str | None:
 
 
 def _as(by, editor) -> dict:
-    """Who a change is of, and (with floor locks) the page making it: what Review's own
+    """Who a change is of, and (with room locks) the page making it: what Review's own
     changes are given."""
     return {"by": by, **({"editor": editor} if editor is not None else {})}
 
@@ -108,7 +109,7 @@ def add(studio, code: str, floor_id: str, body: dict, by=None, editor=None):
     return studio.jobs.submit(f"Drawing a {what}", run, project=code, user=_uid(by), scope=("floor", floor_id))
 
 
-# Another person editing a floor (with floor locks: errors.Locked) leaves that floor out
+# Another person editing a room where it would be drawn (errors.Locked) leaves that floor out
 LOCKED = getattr(errors, "Locked", ())
 
 
@@ -189,8 +190,9 @@ def serves(ws, object_id: str, sight=None, locks=None, me: str | None = None) ->
     spaces there and how they are linked (``how``: "code", "overlap" (found so),
     "person" (linked by hand), "alone"; ``setting``: the person's, null for as found);
     the lifts and stairs of other floors it may be linked with; only the floors
-    ``sight`` lets its person see. ``locks``: who is editing which floor (store.locks);
-    a floor someone other than ``me`` (a user's ID) edits says who (``locked``)."""
+    ``sight`` lets its person see. ``locks``: who is editing which rooms (store.locks);
+    a floor where someone other than ``me`` (a user's ID) edits a room it would be drawn
+    on says who, which room (``locked``)."""
     r = _vertical(ws, object_id)
     building = floor_of(floor_of(object_id))
     seen = (lambda f: True) if sight is None else (lambda f: bool(sight.floor(f)))
@@ -216,11 +218,13 @@ def serves(ws, object_id: str, sight=None, locks=None, me: str | None = None) ->
                     here.append(entry)
                 elif fid != floor_of(object_id):
                     candidates.append({**entry, "floor_id": fid, "floor": f.name})
-        lock = (locks or {}).get(fid)
-        other = lock and lock["who"]["id"] != me and {k: v for k, v in lock.items() if k != "session"}
+        held = ((locks or {}).get(fid) or {}).get("rooms") or {}
+        others = {room: h for room, h in held.items() if h["who"]["id"] != me}
+        hit = sorted(rooms_near(ws, fid, [shape(r.geometry)]) & others.keys()) if others else []
+        other = {"floor": fid, "room": hit[0], "room_name": room_name(ws, hit[0]), **others[hit[0]]} if hit else None
         floors.append({"id": fid, "name": f.name, "ordinal": f.ordinal, "this": fid == floor_of(object_id),
                        "spaces": here, "drawing": f.source is not None, "edit": may_edit(fid),
-                       "locked": other or None})
+                       "locked": other})
     o = ws.overrides.get(object_id)
     return {"id": object_id, "type": ws.effective(r)["type"], "label": _label(ws, r),
             "stack": mine.key if mine else None, "setting": o.stack if o else None,

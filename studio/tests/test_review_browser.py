@@ -7,7 +7,8 @@ the labels over the print, the light theme, another page's change shown live, 3D
 walking. And Studio's 3D page (world.html, tests/browser/world.mjs) on the demo campus
 (`storeypath demo`): each of its controls, a room's details, walking and its doors,
 presenting, the light theme, what its address says, and the way Review opens it. And the Item
-types page (tests/browser/itemtypes.mjs). Needs
+types page (tests/browser/itemtypes.mjs), and two people on one floor, one a room
+(tests/browser/together.mjs). Needs
 Node.js, Chrome (or Chromium; CHROME names another) and the viewer built."""
 
 import os
@@ -84,6 +85,25 @@ def test_review_in_a_browser(tmp_path):
         run = subprocess.run(["node", str(HERE / "browser" / "review.mjs"), address, code],
                              capture_output=True, text=True, timeout=900)
         assert run.returncode == 0, run.stdout + run.stderr
+
+
+@pytest.mark.skipif(_missing() is not None, reason=_missing() or "")
+def test_many_people_on_a_floor_in_a_browser(tmp_path, monkeypatch):
+    """Two people on HQ's ground floor, one a room (tests/browser/together.mjs): Sara's page
+    shows the room Khalid is editing as his, refuses to place an item in it, places one in
+    hers, and frees his once he is done. A Studio with accounts (people.Team)."""
+    from people import Team
+    from storeypath import accounts as acc
+
+    monkeypatch.setattr(acc, "SCRYPT_N", 2**10)
+    monkeypatch.delenv("STOREYPATH_ALLOWED_HOSTS", raising=False)
+    team = Team(tmp_path / "data")
+    try:
+        run = subprocess.run(["node", str(HERE / "browser" / "together.mjs"), f"http://127.0.0.1:{team.port}", team.code,
+                              team.tokens["sara"], team.tokens["khalid"]], capture_output=True, text=True, timeout=600)
+        assert run.returncode == 0, run.stdout + run.stderr
+    finally:
+        team.close()
 
 
 @pytest.mark.skipif(_missing() is not None, reason=_missing() or "")

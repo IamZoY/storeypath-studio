@@ -20,7 +20,7 @@ F = "/api/projects/{code}/floors/{floor_id}"
 @calls.get(F)
 def floor(code: str, floor_id: str, request: Request, may: May, studio: TheStudio):
     may.floor(code, floor_id, "view")
-    return answer(request, {**studio.review(code).floor(floor_id), "lock": studio.lock_of(code, floor_id)})
+    return answer(request, {**studio.review(code).floor(floor_id), "editing": studio.editing(code, floor_id)})
 
 
 @calls.get(F + "/drawing")
@@ -134,9 +134,11 @@ def release(code: str, floor_id: str, request: Request, may: May, studio: TheStu
 @calls.post(F + "/take-over")
 def take_over(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.take_over(code, floor_id)
-    done = studio.take_over(code, floor_id, by=may.user, editor=may.editor)
-    if done["from"] is not None:
-        may.audit("floor taken over", floor_id, project=code, was=done["from"].get("username"))
+    room = body.get("room")
+    done = studio.take_over(code, floor_id, by=may.user, editor=may.editor, room=room)
+    if done["from"]:
+        may.audit("room taken over" if room else "floor taken over", room or floor_id, project=code,
+                  was=", ".join(p.get("username") or "?" for p in done["from"]))
     return answer(request, done)
 
 

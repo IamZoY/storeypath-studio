@@ -259,7 +259,8 @@ def _describe(e: dict) -> str:
         return f"gave {it} another size"
     if part == "floor":
         if kind == "take over":
-            return f"took over editing the floor from {e.get('from_name') or 'someone'}"
+            what = e.get("room_name") or "the floor"
+            return f"took over editing {what} from {e.get('from_name') or 'someone'}"
         held = " (held back: it would have retired most of the rooms)" if e.get("held") else ""
         return f"read the floor's drawing again{held}"
     lines = {

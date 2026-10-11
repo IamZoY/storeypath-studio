@@ -186,7 +186,7 @@ def test_a_lift_drawn_short_of_a_wall_opens_onto_the_room_not_onto_the_strip_lef
     assert not (y0 == y1 == pytest.approx(7.9)) and way.span.length == pytest.approx(2.5)
 
 
-# ---- many people at once: one editor a floor (floor locks), and each one's undo ------------
+# ---- many people at once: one a room (room locks), and each one's undo ------------------
 
 @pytest.fixture
 def team(tmp_path, monkeypatch):
@@ -209,25 +209,38 @@ def drawn_by(team, who, floor, ring=CORNER, kind="elevator"):
 
 
 def hold(team, who, floor):
-    """Someone editing a floor: a change of theirs on it (an office renamed) takes its lock."""
+    """Someone editing the room of a floor where the lift goes (CORNER): a change of theirs
+    to it (renamed) takes its lock. The room."""
+    from storeypath.db.store import room_at
+
+    there = room_at(team.studio.workspace(team.code), floor, (171.25, 66.25))
+    assert team(who, "POST", f"objects/{there}", {"correction": {"name": f"{who}'s"}})[0] == 200
+    return there
+
+
+def office_of(team, who, floor):
+    """Someone editing an office of a floor, away from where the lift goes."""
     office = next(r for r in team.spaces(floor) if r.name == "OFFICE")
-    assert team(who, "POST", f"objects/{office.id}", {"correction": {"name": f"{who}'s"}})[0] == 200
+    assert team(who, "POST", f"objects/{office.id}", {"correction": {"name": f"{who}'s office"}})[0] == 200
 
 
-def test_a_lift_is_not_drawn_on_a_floor_someone_else_is_editing(team):
-    hold(team, "khalid", team.hq0)
+def test_a_lift_is_not_drawn_where_someone_else_is_editing(team):
+    there = hold(team, "khalid", team.hq0)
     status, refused = team("sara", "POST", f"floors/{team.hq0}/vertical", {"type": "elevator", "space": CORNER})
-    assert status == 423 and refused["locked"]["who"]["username"] == "khalid"
-    assert refused["error"].startswith("Khalid Engineer is editing this floor")
+    assert status == 423 and refused["locked"]["who"]["username"] == "khalid" and refused["locked"]["room"] == there
+    assert refused["error"].startswith("Khalid Engineer is editing ")
     assert team.studio.workspace(team.code).floor(team.hq0).edits.spaces == []  # nothing drawn
+    office_of(team, "sara", team.hq0)  # sara edits elsewhere on the floor: no matter to the lift
     lift = drawn_by(team, "khalid", team.hq0)  # his to draw on
     assert team.studio.workspace(team.code).overrides[lift].type == "elevator"
-    # what it serves says who edits the other floors (not oneself)
-    hold(team, "sara", f"{team.hq}-F02")
+    # what it serves says who edits where it would go on the other floors (not oneself)
+    f2 = f"{team.hq}-F02"
+    above = hold(team, "sara", f2)
+    office_of(team, "sara", team.hq1)
     status, info = team("khalid", "GET", f"objects/{lift}/stack")
     assert status == 200
     locked = {f["id"]: f["locked"] for f in info["floors"]}
-    assert locked[f"{team.hq}-F02"]["who"]["name"] == "Sara Ahmed"
+    assert locked[f2]["who"]["name"] == "Sara Ahmed" and locked[f2]["room"] == above
     assert locked[team.hq0] is None and locked[team.hq1] is None
 
 
@@ -241,7 +254,7 @@ def test_added_on_floors_the_one_someone_else_edits_is_left_out_and_named(team):
     assert list(result["spaces"]) == [team.hq1] and not result["missed"]
     (refused,) = result["refused"]
     assert refused["floor"] == f2 and refused["holder"]["who"]["name"] == "Sara Ahmed"
-    assert "Sara Ahmed is editing this floor" in refused["error"]
+    assert refused["error"].startswith("Sara Ahmed is editing ")
     ws = team.studio.workspace(team.code)
     assert ws.floor(f2).edits.spaces == [] and ws.overrides[result["spaces"][team.hq1]].stack == lift
     # every floor asked for taken by someone else: refused as a change is (423), nothing drawn

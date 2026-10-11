@@ -77,28 +77,37 @@ function renderCursor(p) {
   $("sb-cursor").textContent = p && view3d.mode === "2d" ? `${p[0].toFixed(2)}, ${p[1].toFixed(2)} m${long}` : "";
 }
 
+const rooms = (n) => `${n} room${n === 1 ? "" : "s"}`;
+
+/** Who is editing the floor shown, one a room: the person (how many rooms, Done editing),
+ * the others (theirs, an admin may take them over), and who else is looking at it. */
 function renderLock() {
   const box = $("sb-lock");
-  const { lock, mine, viewing } = presence();
+  const { editing, mine, viewing, me } = presence();
   box.className = "sb-item sb-lock";
   const parts = [];
   if (!state.floor) return box.replaceChildren();
   if (!editableByAccess()) {
     parts.push(icon("eye", { size: 13 }), el("span", {}, "View only"));
   } else if (mine) {
-    const done = el("button", { type: "button", "data-tip": "Let others edit it: your next change takes it again" }, "Done editing");
+    const done = el("button", { type: "button", "data-tip": "Let others edit the rooms you are editing: your next change takes the rooms it touches again" }, "Done editing");
     done.addEventListener("click", doneEditing);
-    parts.push(el("span", { class: "dot", "aria-hidden": "true" }), el("span", {}, "You're editing"), done);
-  } else if (lock) {
+    parts.push(el("span", { class: "dot", "aria-hidden": "true" }), el("span", {}, `You're editing ${rooms(mine)}`), done);
+  }
+  if (editing.length) {
     box.classList.add("other");
-    parts.push(el("span", { class: "dot", "aria-hidden": "true" }), el("span", {}, `${lock.who.name || "Someone"} is editing`));
-    if (presence().me?.role === "admin" || presence().me?.local) {
-      const take = el("button", { type: "button", "data-tip": "Edit it yourself: they can no longer save changes to it" }, "Take over");
-      take.addEventListener("click", takeOver);
+    const at = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const names = editing.map((e) => `${(e.who.name || "Someone").split(" ")[0]} (${e.rooms.length})`);
+    parts.push(el("span", { class: "dot", "aria-hidden": "true" }),
+      el("span", { "data-tip": editing.map((e) => `${e.who.name || "Someone"}: ${rooms(e.rooms.length)}, since ${at(e.since)}`).join(" · ") },
+        `${names.slice(0, 2).join(", ")}${names.length > 2 ? ` +${names.length - 2}` : ""} editing`));
+    if (editableByAccess() && (me?.role === "admin" || me?.local)) {
+      const take = el("button", { type: "button", "data-tip": "Edit the rooms they are editing yourself: they can no longer save changes to them" }, "Take over");
+      take.addEventListener("click", () => takeOver());
       parts.push(take);
     }
   }
-  const others = viewing.filter((p) => p.id !== lock?.who?.id);
+  const others = viewing.filter((p) => !editing.some((e) => e.who.id === p.id));
   if (others.length) parts.push(el("span", { class: "muted" }, `· ${others.slice(0, 2).map((p) => (p.name || p.username).split(" ")[0]).join(", ")}${others.length > 2 ? ` +${others.length - 2}` : ""} viewing`));
   box.replaceChildren(...parts);
 }

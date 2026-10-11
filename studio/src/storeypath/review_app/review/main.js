@@ -20,6 +20,7 @@ import { backCorner, clearPreview, preview, setupDrawing, snapWall, toolClick } 
 import * as finish from "./finish.js";
 import { openFloor, start } from "./floor.js";
 import { setupFloorStack } from "./floorstack.js";
+import { setupHeld } from "./held.js";
 import { setupInspector } from "./inspector.js";
 import { setupItems } from "./items.js";
 import { allBindings, effectiveMap, keyConflicts } from "./keys.js";
@@ -87,6 +88,7 @@ setupOtherSections();
 setupInspector();
 setupFloorStack();
 setupStatusbar();
+setupHeld();
 
 // for the console, and the browser tests
 window.storeypathReview = { state, view3d, sel, run, commands: allCommands, tools: allTools, keys: allBindings, keyConflicts, keyMap, keysNow,

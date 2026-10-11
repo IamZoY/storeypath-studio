@@ -90,7 +90,18 @@ backup (a .tar.gz of its data folder) is restored by bringing that folder in.
 
 As built (Phase D):
 
-- **One editor per floor.** A person's change from a page (Review's corrections,
+- **One editor per room** (since 2026-10-11, in place of one per floor: a floor as large
+  as HQ's ground floor is several people's work). A change takes the lock of each room
+  it touches (`room_locks`: floor, room, who, session, since, last change;
+  `store.rooms_touched`): a space or its correction, a zone's space, the spaces a door
+  joins, the space an item stands in before and after (the item itself in none), the
+  spaces within 30 cm of what was drawn or taken away. Refused 423 naming who, which
+  room, since when. A room is let go when its person is *Done editing* or leaves the
+  floor, or 5 minutes after their last change to it (no heartbeat keeps it); an admin
+  takes over one room or all others' on the floor. A person reading the floor again
+  waits until nobody else holds a room on it. Pages outline others' rooms in their
+  colour (`review/held.js`). What follows is the floor lock it replaced.
+- **One editor per floor** (until 2026-10-11). A person's change from a page (Review's corrections,
   items, drawn edits, a floor read again, an undo) takes the lock of each floor it
   touches, in the change's own transaction (`floor_locks`: floor, who, session, since,
   last seen; the project's row, held by every change, makes lock takers come one at a

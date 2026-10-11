@@ -827,13 +827,13 @@ class Studio:
         """Read floors' drawings again (one, or all). A reading that finds no rooms on a
         floor that has some, or would retire most of them, is held back and the floor
         keeps its rooms (convert.py); ``force`` applies it all the same. ``editor``: a
-        person reading one floor again from a page, who takes its lock first (Locked
-        while another person edits it)."""
+        person reading one floor again from a page, which waits until nobody else holds
+        a room on it (Locked)."""
         if not isinstance(force, bool):
             raise ValueError("force is true or false")
         self._known(code)
         if editor is not None and floor is not None:
-            self.store.take_lock(code, floor, by, editor)
+            self.store.whole_floor(code, floor, by)
 
         def run(job: Job):
             ws = self.workspace(code)
@@ -1224,18 +1224,21 @@ class Studio:
         return {"entries": [history.shown(r, me, undone) for r in rows],
                 **self.review(code).steps(by, floor, visible)}
 
-    def lock_of(self, code: str, floor: str) -> dict | None:
-        """Who is editing a floor ({floor, who: {id, username, name}, since}), None: nobody."""
-        lock = self.store.locks(code, [floor]).get(floor)
-        return {k: v for k, v in lock.items() if k != "session"} if lock else None
+    def editing(self, code: str, floor: str) -> dict:
+        """Who is editing a floor, which rooms: {editors: [{who: {id, username, name},
+        since, rooms}], rooms: {room: {who, since}}} (store.locks), empty when nobody."""
+        return self.store.locks(code, [floor]).get(floor) or {"floor": floor, "editors": [], "rooms": {}}
 
     def release(self, code: str, floor: str, by=None) -> dict:
-        """The person done editing a floor (or gone from it): its lock let go."""
+        """The person done editing a floor (or gone from it): their rooms on it let go."""
         return {"released": self.store.release_lock(code, floor, by)}
 
-    def take_over(self, code: str, floor: str, by=None, editor: Editor | None = None) -> dict:
-        """A floor's lock taken over (an admin): who held it, None when nobody did."""
-        return {"from": self.store.take_over(code, floor, by, editor)}
+    def take_over(self, code: str, floor: str, by=None, editor: Editor | None = None, room: str | None = None) -> dict:
+        """A room another person holds (or all others hold on the floor) taken over by an
+        admin: the people it was taken from."""
+        if room is not None and not isinstance(room, str):
+            raise ValueError("room is a room's ID")
+        return {"from": self.store.take_over(code, floor, by, editor, room)}
 
     # ---- the GPU helpers (vision.py), kept in the database ------------------------------
 
@@ -1697,7 +1700,7 @@ class Gate:
 
     @property
     def session(self) -> str:
-        """The asking session, as floor locks keep it: part of the hash of its token
+        """The asking session, as room locks keep it: part of the hash of its token
         (never the token); "local" on this computer without accounts."""
         import hashlib
 
@@ -1809,10 +1812,10 @@ class Gate:
         return self.floor(code, floor, "view")
 
     def take_over(self, code: str, floor_id: str) -> Sight:
-        """Taking over a floor someone else is editing: an admin (who sees it)."""
+        """Taking over rooms someone else is editing on a floor: an admin (who sees it)."""
         sight = self.floor(code, floor_id, "view")
         if self.user is not LOCAL and self.user.role != "admin":
-            raise Forbidden("only an admin may take over a floor someone is editing")
+            raise Forbidden("only an admin may take over rooms someone is editing")
         return sight
 
     def convert(self, code: str, floor) -> Sight:

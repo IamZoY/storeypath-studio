@@ -161,12 +161,17 @@ floor is shown: the drawing, side by side, labels, colours (by type or by floor
 finish), what was deleted, the 3D view's look and quality, and a light or dark
 interface.
 
-**Many people at once.** One person edits a floor at a time: the first change takes
-it, and everyone else on it sees *Khalid is editing this floor since 10:20: you can
-look* with his changes appearing as he saves them (and who made each), until he is
-*Done editing* (the status bar), leaves the floor, or leaves it alone for 15 minutes
-(an admin may take it over). Review's top bar shows who else is on the floor; a
-project's page, who is on which. *Undo* and *Redo* (⌘Z, ⇧⌘Z) take back your own
+**Many people at once.** Several people edit a floor at once, one a room: a change
+takes the rooms it touches (a name or type, an item placed, a wall or door drawn
+there), and everyone else on the floor sees those rooms outlined in the colour of whoever
+is editing them, with their changes appearing as they save them (and who made each).
+Choose such a room and a banner says *Khalid is editing OFFICE 011 since 10:20: you can
+look, and change it when they are done*; changing it, or placing an item in it, is
+refused and says so. A room is free again once its editor is *Done editing* (the status
+bar, which also says how many rooms you are editing, and who else is editing how many),
+leaves the floor, or makes no change to it for 5 minutes (an admin may take it over).
+Reading the whole floor again waits until nobody else is editing a room on it. Review's
+top bar shows who else is on the floor; a project's page, who is on which. *Undo* and *Redo* (⌘Z, ⇧⌘Z) take back your own
 changes — refused, naming who, when someone else changed the same thing since — and
 *History* lists who changed what on the floor, in words
 ([more](../studio/README.md#many-people-at-once)).

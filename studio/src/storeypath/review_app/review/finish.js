@@ -16,7 +16,7 @@
 //   escape()       Esc: the picker put away.
 //
 // Each change is a room's correction like any other (saved at once, undone and redone,
-// one editor a floor at a time, others see it live); "every <type>" is one change.
+// one editor a room at a time, others see it live); "every <type>" is one change.
 
 import { FINISHES, defaultFinish, finishOf, floorFinish, wallFinish } from "/viewer/src/finishes.js";
 import { Painter } from "/viewer/src/world/finishes.js";

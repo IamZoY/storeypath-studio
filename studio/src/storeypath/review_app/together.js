@@ -1,12 +1,13 @@
 // Many people on one project at once, in Review (Studio's events: web/events.py,
 // web/live.py). The page keeps one stream open on the floor it shows: what others
 // change there comes as it is saved (Review refreshes it in place and says who did
-// what), who is viewing and who is editing the floor (one editor a floor at a time: the
-// first change takes it; Done editing, or leaving the floor, lets it go; an admin may
-// take it over), and the progress of jobs. Each person undoes and redoes their own
+// what), who is viewing the floor and who is editing which of its rooms (many people a
+// floor, one a room: a person's change takes the rooms it touches; Done editing, leaving
+// the floor, or no change to a room for a while lets it go; an admin may take one over),
+// and the progress of jobs. Each person undoes and redoes their own
 // changes (the buttons; ⌘Z and ⇧⌘Z / Ctrl+Z and Ctrl+Y are Review's keys: step()), and
 // the History drawer lists who changed what on the floor, live. Review's top bar shows
-// who is here (presence()), its status bar who is editing, a banner when someone else is.
+// who is here (presence()), its status bar who is editing, its plan whose each room is (held.js).
 
 import { ProjectStream } from "./stream.js";
 
@@ -19,7 +20,9 @@ export const PAGE = (crypto.randomUUID ? crypto.randomUUID() : String(Math.rando
 const live = {
   code: null, base: null, me: null, hooks: null,
   stream: null, floor: null, // the stream (stream.js), on the floor shown
-  lock: null, // who is editing the floor shown: {who: {id, name, username}, since}, or null
+  editing: [], // who is editing the floor shown: [{who: {id, name, username}, since, rooms: [IDs]}]
+  held: new Map(), // whose each room of it is: room -> {who, since} (the person's own too)
+  changedHere: false, // a change of the person's on the floor shown, from this page (theirs to let go)
   viewing: [], // who else has it open
   steps: { undo: null, redo: null },
   historyOpen: false, historyTimer: 0, stepsTimer: 0,
@@ -40,12 +43,17 @@ function el(tag, attrs = {}, ...children) {
 const isMe = (p) => Boolean(p && live.me && p.id === live.me.id);
 const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+/** A person's colour (a hue, 0–360): their mark's, and the rooms they are editing. */
+export function hueOf(p) {
+  let hue = 0;
+  for (const c of p?.id || p?.name || p?.username || "?") hue = (hue * 31 + c.charCodeAt(0)) % 360;
+  return hue;
+}
+
 /** A person as a small round mark with their initial (their name on hover). */
 export function avatar(p, cls = "") {
   const name = p?.name || p?.username || "?";
-  let hue = 0;
-  for (const c of p?.id || name) hue = (hue * 31 + c.charCodeAt(0)) % 360;
-  return el("span", { class: `avatar ${cls}`.trim(), title: name, style: `--hue:${hue}`, "aria-label": name },
+  return el("span", { class: `avatar ${cls}`.trim(), title: name, style: `--hue:${hueOf(p)}`, "aria-label": name },
     name.slice(0, 1).toUpperCase());
 }
 
@@ -63,18 +71,35 @@ export function setupTogether({ code, base, me, hooks }) {
   window.addEventListener("pagehide", () => leave(live.floor));
 }
 
-/** Who is on the floor shown: who is editing it ({who, since}, or null), whether that is
- * the person, and who else is viewing it. */
+/** Who is on the floor shown: who else is editing which of its rooms (``editing``:
+ * [{who, since, rooms}]), how many the person is editing (``mine``), who else is viewing it. */
 export function presence() {
-  return { lock: live.lock, mine: Boolean(live.lock && isMe(live.lock.who)), viewing: live.viewing.slice(), me: live.me };
+  return { editing: live.editing.filter((e) => !isMe(e.who)), mine: live.editing.find((e) => isMe(e.who))?.rooms.length || 0,
+    viewing: live.viewing.slice(), me: live.me };
+}
+
+/** Who else is editing a room of the floor shown ({who, since}), or null: it is theirs to
+ * change until they are done. */
+export function heldByOther(room) {
+  const h = room ? live.held.get(room) : null;
+  return h && !isMe(h.who) ? h : null;
+}
+
+function heldFrom(editing) {
+  live.editing = editing || [];
+  live.held = new Map(live.editing.flatMap((e) => e.rooms.map((r) => [r, { who: e.who, since: e.since }])));
 }
 
 export const historyOpen = () => live.historyOpen;
 
-/** The stream opened on the floor shown (the one before it closed, and let go when ours). */
-export function onFloor(floor, lock) {
-  if (live.floor && live.floor !== floor) leave(live.floor);
-  live.lock = lock || null;
+/** The stream opened on the floor shown (the one before it closed, and the person's rooms
+ * on it let go); ``editing``: who is editing which of its rooms, as the floor was read. */
+export function onFloor(floor, editing) {
+  if (live.floor && live.floor !== floor) {
+    leave(live.floor);
+    live.changedHere = false;
+  }
+  heldFrom(editing?.editors);
   live.viewing = [];
   if (live.floor !== floor || !live.stream) {
     live.stream?.close();
@@ -98,36 +123,41 @@ function heardChange(c) {
   }
   refreshSteps();
   if (live.historyOpen) loadHistorySoon();
-  if (c.page === PAGE) return; // made here: shown already
+  if (c.page === PAGE) { // made here: shown already
+    live.changedHere = true;
+    return;
+  }
   live.hooks.changed(c, isMe(c.who) ? null : `${c.who.name} ${c.line}`);
 }
 
 function heardPresence(p) {
   if (p.floor !== live.floor) return;
-  const was = live.lock?.who?.id;
-  live.lock = p.editing;
+  const was = JSON.stringify(live.editing);
+  heldFrom(p.editing);
   live.viewing = p.viewing.filter((v) => !isMe(v));
   render();
-  if (was !== live.lock?.who?.id) live.hooks.showLock();
+  if (was !== JSON.stringify(live.editing)) live.hooks.showLock();
 }
 
-/** What a change refused told of the floor's editor (423). */
+/** What a change refused told of a room someone else is editing (423): shown so. */
 export function heardLocked(locked) {
-  if (!locked || locked.floor !== live.floor) return;
-  live.lock = { who: locked.who, since: locked.since };
+  if (!locked?.room || locked.floor !== live.floor) return;
+  const editing = live.editing.map((e) => ({ ...e, rooms: e.rooms.filter((r) => r !== locked.room) }));
+  const theirs = editing.find((e) => e.who.id === locked.who.id);
+  if (theirs) theirs.rooms.push(locked.room);
+  else editing.push({ who: locked.who, since: locked.since, rooms: [locked.room] });
+  heldFrom(editing.filter((e) => e.rooms.length));
   render();
   live.hooks.showLock();
 }
 
-/** Whether someone else is editing the floor shown (then it is only looked at). */
-export function lockedByOther() {
-  return Boolean(live.lock && !isMe(live.lock.who));
-}
-
-/** The floor let go: Done editing, or gone from it (keepalive: also as the page closes). */
+/** The person's rooms on a floor let go: Done editing, or gone from it (keepalive: also as
+ * the page closes). */
 function leave(floor, { said = false } = {}) {
-  if (!floor || !(live.lock && isMe(live.lock.who)) || floor !== live.floor) return Promise.resolve();
-  if (!said) live.lock = null;
+  const mine = live.changedHere || live.editing.some((e) => isMe(e.who));
+  if (!floor || !mine || floor !== live.floor) return Promise.resolve();
+  if (!said) heldFrom(live.editing.filter((e) => !isMe(e.who)));
+  live.changedHere = false;
   return fetch(`/api/${live.base}/floors/${encodeURIComponent(floor)}/release`, {
     method: "POST", keepalive: true, body: "{}",
     headers: { "X-StoreyPath": "1", "Content-Type": "application/json", "X-StoreyPath-Page": PAGE },
@@ -137,8 +167,8 @@ function leave(floor, { said = false } = {}) {
 // ---- who is here, who is editing ---------------------------------------------------------
 
 function render() {
-  const editor = live.lock?.who;
-  const others = live.viewing.filter((p) => p.id !== editor?.id);
+  const editors = live.editing.filter((e) => !isMe(e.who));
+  const others = live.viewing.filter((p) => !editors.some((e) => e.who.id === p.id));
   const mark = (p, what, cls = "") => {
     const a = avatar(p, cls);
     a.removeAttribute("title");
@@ -146,45 +176,46 @@ function render() {
     a.setAttribute("aria-label", a.dataset.tip);
     return a;
   };
+  const rooms = (n) => `${n} room${n === 1 ? "" : "s"}`;
+  const shown = [...editors.map((e) => [e.who, `editing ${rooms(e.rooms.length)} since ${clock(e.since)}`, "editing"]),
+    ...others.map((p) => [p, "viewing", ""])];
   $("presence").replaceChildren(...[
-    editor && !isMe(editor) ? mark(editor, `editing since ${clock(live.lock.since)}`, "editing") : null,
-    ...others.slice(0, 4).map((p) => mark(p, "viewing")),
-    others.length > 4 ? el("span", { class: "more", "data-tip": others.slice(4).map((p) => p.name || p.username).join(", ") }, `+${others.length - 4}`) : null,
+    ...shown.slice(0, 5).map(([p, what, cls]) => mark(p, what, cls)),
+    shown.length > 5 ? el("span", { class: "more", "data-tip": shown.slice(5).map(([p]) => p.name || p.username).join(", ") }, `+${shown.length - 5}`) : null,
   ].filter(Boolean));
-
-  const banner = $("lock-banner");
-  if (editor && !isMe(editor) && live.hooks.editableByAccess()) {
-    const take = live.me?.role === "admin" || live.me?.local
-      ? el("button", { type: "button", class: "btn-sm", onclick: takeOver, "data-tip": "Edit it yourself: they can no longer save changes to it" }, "Take over")
-      : null;
-    banner.className = "lock-banner other";
-    banner.replaceChildren(...[avatar(editor, "editing"),
-      el("span", { class: "lb-text" }, el("strong", {}, editor.name), ` is editing this floor since ${clock(live.lock.since)}: you can look, and edit when they are done`),
-      take].filter(Boolean));
-    banner.hidden = false;
-  } else {
-    banner.hidden = true;
-  }
   live.hooks.presence?.();
 }
 
-/** The person done editing the floor: others may edit it (their next change takes it again). */
+/** The person done editing the floor: their rooms on it let go (their next change takes
+ * the rooms it touches again). */
 export async function doneEditing() {
   await leave(live.floor, { said: true });
-  live.lock = null;
+  heldFrom(live.editing.filter((e) => !isMe(e.who)));
   render();
   live.hooks.showLock();
 }
 
-export async function takeOver() {
-  const who = live.lock?.who?.name || "they";
-  if (!confirm(`Take over this floor from ${who}? They can no longer save changes to it, and are told so.`)) return;
+/** A room someone else is editing taken over by an admin (``room``), or every room others
+ * are editing on the floor: theirs no longer, and they are told so. */
+export async function takeOver(room = null) {
+  if (typeof room !== "string") room = null; // (a button's click)
+  const others =live.editing.filter((e) => !isMe(e.who) && (!room || e.rooms.includes(room)));
+  if (!others.length) return;
+  const who = others.map((e) => e.who.name).join(", ");
+  const what = room ? "this room" : others.length === 1 && others[0].rooms.length === 1 ? "the room they are editing"
+    : "the rooms they are editing on this floor";
+  if (!confirm(`Take over ${what} from ${who}? They can no longer save changes to it, and are told so.`)) return;
   try {
-    await live.hooks.request(`${live.base}/floors/${encodeURIComponent(live.floor)}/take-over`, {});
-    live.lock = { who: { id: live.me.id, name: live.me.name || live.me.username }, since: new Date().toISOString() };
+    await live.hooks.request(`${live.base}/floors/${encodeURIComponent(live.floor)}/take-over`, room ? { room } : {});
+    const taken = new Set(room ? [room] : others.flatMap((e) => e.rooms));
+    const editing = live.editing.map((e) => ({ ...e, rooms: e.rooms.filter((r) => !taken.has(r)) })).filter((e) => e.rooms.length);
+    const me = editing.find((e) => isMe(e.who));
+    if (me) me.rooms.push(...taken);
+    else editing.push({ who: { id: live.me.id, name: live.me.name || live.me.username }, since: new Date().toISOString(), rooms: [...taken] });
+    heldFrom(editing);
     render();
     live.hooks.showLock();
-    live.hooks.toast(`You are editing this floor now (taken over from ${who})`);
+    live.hooks.toast(`You are editing ${what === "this room" ? "the room" : "them"} now (taken over from ${who})`);
   } catch (e) {
     live.hooks.toast(`Not taken over: ${e.message}`, true);
   }
@@ -238,7 +269,6 @@ let stepping = false;
 export async function step(redo) {
   if (stepping || !live.floor) return;
   if (!live.hooks.editableByAccess()) return live.hooks.toast("View only: you may look at this floor, not change it", true);
-  if (lockedByOther()) return live.hooks.toast(`${live.lock.who.name} is editing this floor: you can edit when they are done`, true);
   stepping = true;
   try {
     const done = await live.hooks.request(`${live.base}/${redo ? "redo" : "undo"}`, { floor: live.floor });

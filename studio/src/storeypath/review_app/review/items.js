@@ -9,7 +9,7 @@
 // view and whatever the tool: R turns it 90° (Shift: back), , and . by 15°, Del deletes it;
 // the arrows move it (Shift: further), but walking, where they walk (drag it instead).
 
-import { editable, viewOnly, whyNotEditable } from "./access.js";
+import { editable, roomTaken, viewOnly, whyNotEditable } from "./access.js";
 import { request } from "./api.js";
 import { emit } from "./bus.js";
 import { command } from "./commands.js";
@@ -95,6 +95,13 @@ export function placing(at, type, exceptId = null, rot = 0, reach = Math.max(0.1
 
 export const roomName = (room) => (room ? [room.name, room.number].filter(Boolean).join(" ") || "this room" : "this room");
 
+/** The room an item stands in (its ID), as it is placed; the item itself when it stands in
+ * none: whose it is to change now (Studio's room locks). */
+export const itemRoom = (a) => roomAt([a.x, a.y], (state.floor?.spaces || []).filter(visible))?.id || a.id;
+
+/** True (and says so) when someone else is editing the room an item stands in. */
+export const itemTaken = (a) => roomTaken(itemRoom(a));
+
 /** The magnet's guides: what the item was drawn to, while it is placed or dragged. */
 export function drawGuides(lines = []) {
   $("guides").replaceChildren(...lines.map(([a, b]) => svg("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1] })));
@@ -103,6 +110,7 @@ export function drawGuides(lines = []) {
 export async function placeAsset(type, p, free = state.alt, reach = undefined) {
   if (!type || viewOnly()) return;
   const ctx = placing(p, type, null, 0, reach);
+  if (ctx.room && roomTaken(ctx.room.id)) return;
   const got = settle({ want: { at: p, rot: 0 }, last: null, ...ctx, free });
   drawGuides();
   if (!got) {
@@ -147,7 +155,7 @@ export const chosenAsset = () => (state.floor?.items || []).find((x) => x.id ===
 
 /** The chosen item moved by ``dx``, ``dy`` metres, held in its room (the magnet off). */
 export function nudgeAsset(a, dx, dy) {
-  if (viewOnly()) return;
+  if (viewOnly() || itemTaken(a)) return;
   const want = { at: [a.x + dx, a.y + dy], rot: a.rotation || 0 };
   const ctx = placing([a.x, a.y], a.type, a.id, a.rotation || 0);
   const got = settle({ want, last: { at: [a.x, a.y], rot: want.rot }, ...ctx, magnet: false });
@@ -158,7 +166,7 @@ export function nudgeAsset(a, dx, dy) {
 /** An item turned where it stands, kept in its room (moved the least it takes, a
  * metre at most). */
 export function turnAsset(a, rot) {
-  if (viewOnly()) return;
+  if (viewOnly() || itemTaken(a)) return;
   rot = ((rot % 360) + 360) % 360;
   const ctx = placing([a.x, a.y], a.type, a.id, a.rotation || 0);
   const got = settle({ want: { at: [a.x, a.y], rot }, last: { at: [a.x, a.y], rot: a.rotation || 0 }, ...ctx, magnet: false });

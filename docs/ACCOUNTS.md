@@ -16,10 +16,12 @@ what is shared with them.
   that building only. A person who may see only some floors sees those alone: on the
   project page, in Review (read only with *view*: no tools, a *View only* badge), in
   3D, and in the drawing (only their floor's part of a sheet).
-- **One editor a floor at a time.** The first change a person makes to a floor takes it;
-  everyone else on it sees who is editing, and their changes as they are saved, until
-  they are done, leave the floor, or leave it alone for 15 minutes (an admin may take it
-  over). *Undo* and *Redo* take back a person's own changes; *History* lists who changed
+- **Many people a floor, one a room.** A person's change takes the rooms it touches (a
+  room renamed or retyped, an item placed in it, a wall or door drawn on it); everyone
+  else on the floor sees those rooms outlined in that person's colour, and their changes
+  as they are saved, and goes on editing the other rooms. A room is free again when its
+  person is done editing, leaves the floor, or makes no change to it for 5 minutes (an
+  admin may take it over). *Undo* and *Redo* take back a person's own changes; *History* lists who changed
   what ([Many people at once](../studio/README.md#many-people-at-once)).
 - **First start.** With no users, Studio makes the first admin: `admin`, password
   `admin` (or `STOREYPATH_ADMIN_PASSWORD` when that is set). Anyone changes their own
