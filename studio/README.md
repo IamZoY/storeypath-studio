@@ -214,7 +214,7 @@ log).
 | `GET catalogue/models` (what each type's 3D model is), `catalogue/models/<code>.glb`, `catalogue/models/<code>.svg?view=front\|top\|side` | logged in |
 | `PUT catalogue/types/<code>/model?name=&turn=` (a `.glb`, FBX, OBJ, Collada… or a `.zip` of one with its textures: [model_files.py](src/storeypath/model_files.py)), `POST …/model/turn` `{turn}`, `POST …/model/fit` `{turn, units, up}` (any of them: made again from its file), `POST …/model/delete` | admin, or `catalogue` |
 | `POST projects` | admin or engineer, who owns it |
-| `PUT open` | a new project: admin or engineer, who owns it (when nothing is kept of who a project of its code was shared with; else an admin opens it, and that stays). A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin. The file is read once, and every part of it that names its project must name the same one: the project checked is the one written. A new project never takes the place of a folder that is not its own. Someone who may not see the project here is answered as for a new project, never told its name |
+| `PUT open` (an encrypted file: its password URI-encoded in `X-StoreyPath-Password`; a 400 with `"password": true` when it is missing or wrong; `PUT catalogue/types-in` likewise) | a new project: admin or engineer, who owns it (when nothing is kept of who a project of its code was shared with; else an admin opens it, and that stays). A package into a project here: edit on each building it brings (on the project for a new one) and on each floor an item it holds comes from. A project file in place of one here: its owner or an admin. The file is read once, and every part of it that names its project must name the same one: the project checked is the one written. A new project never takes the place of a folder that is not its own. Someone who may not see the project here is answered as for a new project, never told its name |
 | `GET projects/<code>`, `…/review` | any access; cut to what they see |
 | `GET projects/<code>/events[?floor=<id>]` | any access (on a floor: view on it): a stream (Server-Sent Events) of what happens in the project that they may see: each change of a floor they see (who made it, what it was in words), who is viewing and who is editing each floor they see, jobs' progress (as `GET jobs/<id>`), a heartbeat; it ends when they may no longer see the project. A stream on a floor keeps its person's lock of it |
 | `GET …/history[?floor=<id>&n=]` | any access (of a floor: view on it): the latest changes, newest first, of the floors they may see (a building's, view on it whole; the project's, view on the project): who, when, what in words, whether undone; and what they would undo and redo there |
@@ -230,9 +230,9 @@ log).
 | `POST …/locations/<id>/arrange`, `…/placement` | edit on the project |
 | `GET …/buildings/<id>/navigation[?from&to&accessible]` | view on the whole building: its walking network, or the way between two places ([Navigation](#navigation)) |
 | `POST …/export {building}` | edit on that building |
-| `GET …/exports/<file>` | view on the building it holds (on the project, for one no export entered) |
+| `GET …/exports/<file>`; `POST …/exports/<file>` `{password}` (the package encrypted with it: [SEALED-FILES.md](../docs/SEALED-FILES.md)) | view on the building it holds (on the project, for one no export entered) |
 | `GET …/preview.storeypath[?building]` | any access: built with their floors alone |
-| `GET …/project.storeypath-project` | view on the project |
+| `GET …/project.storeypath-project`; `POST …/project.storeypath-project` `{password}` (encrypted) | view on the project |
 | `GET …/floors/<id>`, `…/drawing`, `…/print`, `…/print.png` | view on the floor; its drawing and print as above |
 | `POST …/floors/<id>/sample/preview {area, keep?, remove?}`, `POST …/floors/<id>/sample {area, note?, keep?, remove?}` | view on the floor, as its drawing: an area sample's preview, and the sample itself (`<id>.spsample`, recorded in the audit log) ([area samples](../docs/AREA-SAMPLES.md)) |
 | `POST …/floors/<id>/edits`, `…/items`, `POST …/objects/<id>` | edit on the floor, and the rooms the change touches (it takes their locks; 423 while someone else holds one) |
@@ -247,7 +247,7 @@ log).
 | `GET jobs/<id>` | an admin, or view (now) on what it works on: its project, building or floor (who started it too, while they still may) |
 | `GET …/jobs` | any access: the project's jobs they may see (as `GET jobs/<id>`): to run, running, or ended in the last 30 minutes, the latest first, each with its kind, what it is about, the floors it reads, who started it, its last lines and (ended) what it gave. A page opened again (a refresh, another tab) shows them and follows those still going: a floor being read is marked so, plans found a moment ago are offered again |
 | `GET …/incoming` | edit on the project: the drawings they sent (an admin: anyone's) that wait for them to choose what to keep of what was found private in them, as the job that found it gave it; kept until chosen or cancelled (not across a restart of Studio) |
-| `GET backup` | admin, or `backup` |
+| `GET backup`; `POST backup` `{password}` (encrypted as it is written) | admin, or `backup` |
 | `GET admin/helpers`, `POST admin/helpers {helpers}`, `POST admin/helpers/test {url, key?}` | admin: the GPU helpers ([Looking at the plans](#looking-at-the-plans-vision)) |
 
 ## Many people at once
@@ -318,8 +318,9 @@ what they may see.
 | `serve` | run the web app, over HTTPS: `--data`, `--host`, `--port`, `--open`, `--allowed-host`; `--cert`, `--key` (your certificate), `--http` (plain HTTP), `--secure-cookies`, `--trusted-proxy` (also `STOREYPATH_TRUSTED_PROXIES`) |
 | `users add USERNAME` | add a user: `--role admin\|engineer\|user`, `--name`, `--capability backup\|catalogue`, `--password-stdin`, `--permanent` (not to be changed at the first login); `--data` |
 | `users list` · `passwd` · `disable` · `enable` · `role` | list the users; set a password (their sessions end); disable or enable one; change a role |
-| `backup` | the whole database as one `.sql.gz` (`--out`) |
-| `restore FILE` | put a backup into an empty database (an older Studio's `.tar.gz`: its data folder brought in) |
+| `backup` | the whole database as one `.sql.gz` (`--out`); `--seal`: encrypted with a password (asked for; `--password-stdin`) |
+| `restore FILE` | put a backup into an empty database (an older Studio's `.tar.gz`: its data folder brought in); an encrypted one asks for its password |
+| `seal FILE`, `unseal FILE.enc` | encrypt any file with a password, or open one ([SEALED-FILES.md](../docs/SEALED-FILES.md)) |
 | `db url` · `db migrate` · `db import --data DIR` | where Studio's database is; bring its schema up to date; bring an older Studio's data folder in (projects, drawings, packages, item types, studio.db), once |
 | `export FILE -o OUT` | write one building's package (`--building`, by its ID or code; may be left out when the project has one), entered as an export only when valid |
 | `validate PACKAGE…` | check a package against the format; several, together too (the same item ID in packages of two projects is refused) |

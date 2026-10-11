@@ -26,6 +26,7 @@ from ..cad import DrawingError
 from ..errors import Conflict, Locked
 from ..llm import ModelUnavailable
 from ..review import Busy, NotFound
+from ..sealed import SealError
 from ..server import Studio
 from . import account, events, floors, navigation, pages, projects
 from .calls import Web, as_json
@@ -103,6 +104,10 @@ async def _bad(request: Request, e: Exception):
     return as_json({"error": str(e).strip("'\"")}, 400)
 
 
+async def _sealed(request: Request, e: SealError):  # a file sealed with a password: the page asks for it
+    return as_json({"error": str(e), "password": e.needs_password}, 400)
+
+
 async def _invalid(request: Request, e: RequestValidationError):
     return as_json({"error": "the request is not what this call takes"}, 400)
 
@@ -125,7 +130,7 @@ async def _failed(request: Request, e: Exception):
 
 
 ANSWERS = {
-    Refused: _refused, NotFound: _not_found, ProjectExists: _exists, Busy: _busy, Locked: _locked, Conflict: _conflict,
+    SealError: _sealed, Refused: _refused, NotFound: _not_found, ProjectExists: _exists, Busy: _busy, Locked: _locked, Conflict: _conflict,
     DrawingError: _bad, ValueError: _bad, KeyError: _bad, ModelUnavailable: _bad,
     RequestValidationError: _invalid, StarletteHTTPException: _no_call, ClientDisconnect: _cut_short,
     Exception: _failed,

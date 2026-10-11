@@ -9,6 +9,7 @@
 import { sentAway } from "./account.js";
 import { SHAPES, shapeOf } from "./fit.js";
 import { assetShape, symbolBox } from "./itemshape.js";
+import { putFile } from "./seal.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const CATEGORIES = [["furniture", "Furniture"], ["equipment", "Equipment"], ["appliance", "Appliances"]];
@@ -522,7 +523,7 @@ export async function itemTypesPage(page, me, toast) {
       dialog.close();
       dialog.remove();
     };
-    const pick = el("input", { type: "file", accept: ".json,.storeypath,.storeypath-project,application/json", hidden: true,
+    const pick = el("input", { type: "file", accept: ".json,.storeypath,.storeypath-project,.enc,application/json", hidden: true,
       onchange: () => pick.files[0] && read(pick.files[0]) });
     const drop = el("label", { class: "drop", tabindex: "0", onkeydown: (e) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -544,7 +545,8 @@ export async function itemTypesPage(page, me, toast) {
     async function read(file) {
       body.replaceChildren(el("p", { class: "muted" }, `Reading ${file.name}…`));
       try {
-        const got = await api("catalogue/types-in", undefined, { raw: file });
+        const got = await putFile("catalogue/types-in", file);
+        if (got === null) return body.replaceChildren(drop); // (its password not given)
         await load();
         offer(file.name, got);
       } catch (err) {

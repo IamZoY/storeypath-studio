@@ -8,6 +8,7 @@ import { accountMenu, sentAway, whoami } from "./account.js";
 import { setCrumbs, setupChrome } from "./chrome.js";
 import { helpersPage } from "./helpers.js";
 import { itemTypesPage } from "./itemtypes.js";
+import { downloadSealed, putFile } from "./seal.js";
 import { openShare } from "./share.js";
 import { ProjectStream } from "./stream.js";
 import { avatar } from "./together.js";
@@ -1125,14 +1126,15 @@ function placementForm(code, b) {
  * .storeypath (a building's package, rebuilt from it with the same IDs, its floors
  * without their drawing until one is added; into its project when that is here). */
 function openCard() {
-  const input = el("input", { type: "file", accept: ".storeypath,.storeypath-project", hidden: true });
+  const input = el("input", { type: "file", accept: ".storeypath,.storeypath-project,.enc", hidden: true });
   const drop = el("label", { class: "drop" }, input,
     el("strong", {}, "Open a project or a building's package"), el("br"),
-    "Drop a file here, or click to choose it: a project sent from another Studio (.storeypath-project), or a building's package (.storeypath).");
+    "Drop a file here, or click to choose it: a project sent from another Studio (.storeypath-project), or a building's package (.storeypath); encrypted (.enc), its password is asked for.");
   const open = async (file, replace = null) => {
     try {
       toast(`Opening ${file.name}…`);
-      const r = await api(`open${replace !== null ? `?replace=${encodeURIComponent(replace)}` : ""}`, undefined, { raw: file });
+      const r = await putFile(`open${replace !== null ? `?replace=${encodeURIComponent(replace)}` : ""}`, file);
+      if (r === null) return; // (its password not given)
       const floors = `${r.floors} floor${r.floors === 1 ? "" : "s"}`;
       // item types the file brings that this Studio lacks are added only by who may change them
       const left = (r.item_types_not_added || []).length
@@ -1163,6 +1165,15 @@ function openCard() {
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); e.dataTransfer.files[0] && open(e.dataTransfer.files[0]); });
   return el("section", { class: "card" }, drop);
+}
+
+/** A file downloaded encrypted with a password asked for (seal.js). */
+async function sealed(url, name) {
+  try {
+    if (await downloadSealed(url, name)) toast(`${name}.enc: downloading it. Whoever opens it needs the password`, false, 8000);
+  } catch (e) {
+    toast(e.message, true);
+  }
 }
 
 function exportCard(code, p) {
@@ -1196,8 +1207,13 @@ function exportCard(code, p) {
     download: `${code}.storeypath-project`,
     title: "One file for another Studio to continue this project: its drawings, corrections and edits (not a package: other systems read a building's)" },
   "Download project");
+  const sendSealed = el("button", { type: "button", "data-testid": "project-sealed",
+    title: "The project file encrypted with a password you choose (AES-256): to send where others could read it",
+    onclick: () => sealed(`/api/projects/${encodeURIComponent(code)}/project.storeypath-project`, `${code}.storeypath-project`) },
+  "Encrypted…");
   return el("section", { class: "card" },
     el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), onProject(p, "view") ? send : null,
+      onProject(p, "view") ? sendSealed : null,
       buildings.length > 1 ? what : null, buildings.length ? types : null, buildings.length ? button : null),
     el("p", { class: "muted small" }, "A package (.storeypath) holds one building: its floors, spaces, doors and items with their IDs, ready for the viewer and for any other system, which leaves the project's other buildings as they are. Every export lists what changed in that building since it was last exported; moving a building on the map changes nothing in it. It carries the item types its items use, each once (or every item type of this Studio), so another system knows them and may take them into its own. Download project gives one file (.storeypath-project) to send to someone who continues the project in their Studio: they open it on their Projects page."),
     p.exports.length ? el("p", { class: "muted small" }, ...(p.exports_folder // (where the server keeps them: told to admins)
@@ -1206,6 +1222,8 @@ function exportCard(code, p) {
       const url = `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(f)}`;
       return el("li", {}, el("code", { class: "grow" }, f),
         el("a", { href: url, download: f }, "Download"),
+        el("a", { href: "#", "data-testid": "export-sealed", title: "Encrypted with a password you choose (AES-256): to send where others could read it",
+          onclick: (e) => { e.preventDefault(); sealed(url, f); } }, "Encrypted…"),
         planPage ? el("a", { href: `/viewer/svg/example/index.html?package=${encodeURIComponent(url)}`, target: "_blank",
           title: "Each floor as a plan: walls, doors with their swings, windows, rooms coloured by type" }, "2D plan") : null,
         el("a", { href: `/world.html?pkg=${encodeURIComponent(url)}`, target: "_blank",

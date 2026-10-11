@@ -87,6 +87,11 @@ export function accountMenu(me) {
       title: "The GPU helpers that serve the vision model: their addresses, keys, and how each is" }, "GPU helpers") : null,
     can("backup") ? node("a", { role: "menuitem", href: "/api/backup", download: "",
       title: "Studio's whole database as one .sql.gz: projects, item types, users (with their passwords' hashes), sharing and the audit log; keep it safe" }, "Download a backup") : null,
+    can("backup") ? node("button", { type: "button", role: "menuitem", "data-testid": "backup-sealed",
+      title: "The backup encrypted with a password you choose (AES-256): `storeypath restore` asks for it",
+      onclick: () => import("./seal.js") // (when asked for: this menu is on every page)
+        .then(({ downloadSealed }) => downloadSealed("/api/backup", "storeypath-backup.sql.gz", { title: "Encrypt the backup" }))
+        .catch((e) => alert(`The backup was not made: ${e.message}`)) }, "Download an encrypted backup…") : null,
     node("button", { type: "button", role: "menuitem", onclick: logout }, "Log out"),
   ];
   const list = node("div", { class: "account-menu", role: "menu", hidden: true }, items);

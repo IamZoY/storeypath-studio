@@ -919,20 +919,46 @@ def users_role(username: str, role: Annotated[str, typer.Argument(help="admin, e
     typer.echo(f"{user.username} is now {role}")
 
 
+def _file_password(password_stdin: bool, confirm: bool) -> str:
+    """A password to seal a file with (or open one), asked for (twice, to seal), or one
+    line of standard input."""
+    from .sealed import check_password
+
+    if password_stdin:
+        import sys
+
+        password = sys.stdin.readline().rstrip("\r\n")
+    else:
+        password = typer.prompt("The file's password", hide_input=True, confirmation_prompt=confirm)
+    if not confirm:
+        return password
+    try:
+        return check_password(password)
+    except ValueError as e:
+        _fail(str(e))
+
+
+PasswordStdin = Annotated[bool, typer.Option("--password-stdin", help="the password: a line of standard input (not asked for)")]
+
+
 @app.command()
 def backup(
     data: DataOption = Path("."),
     out: Annotated[Optional[Path], typer.Option(help="the file (default: storeypath-backup-<UTC time>.sql.gz here)")] = None,
+    seal: Annotated[bool, typer.Option("--seal", help="sealed with a password (asked for): a .sql.gz.enc")] = False,
+    password_stdin: PasswordStdin = False,
 ):
     """Write Studio's whole database (projects with their drawings and packages, item
     types, users with their passwords' hashes, sharing, audit log, history; no session,
     no certificate) as one .sql.gz, as Studio's Backup does: one moment's, while Studio
-    goes on working."""
+    goes on working. With --seal, sealed with a password (docs/SEALED-FILES.md)."""
     from .accounts import Accounts
     from .backup import backup_name, write_backup
+    from .sealed import Sealer, sealed_name
 
     database = _database(data)
-    out = out or Path(backup_name())
+    password = _file_password(password_stdin, confirm=True) if seal else None
+    out = out or Path(sealed_name(backup_name()) if seal else backup_name())
     if out.exists():
         _fail(f"{out} exists already")
     if data.is_dir() and out.resolve().is_relative_to(data.resolve()):
@@ -943,7 +969,12 @@ def backup(
         fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as f:
-            counts = write_backup(database, f)
+            if password is None:
+                counts = write_backup(database, f)
+            else:
+                sealer = Sealer(f, password)
+                counts = write_backup(database, sealer)
+                sealer.close()
         part.replace(out)
     except BaseException:
         part.unlink(missing_ok=True)
@@ -955,30 +986,112 @@ def backup(
 
 @app.command()
 def restore(
-    archive: Annotated[Path, typer.Argument(help="a backup (.sql.gz; or an older Studio's .tar.gz)")],
+    archive: Annotated[Path, typer.Argument(help="a backup (.sql.gz, or one sealed with a password; or an older Studio's .tar.gz)")],
     data: Annotated[Path, typer.Option(help="the data folder of the Studio whose database it goes into "
                                             "(STOREYPATH_DATABASE_URL): an empty database")] = Path("."),
+    password_stdin: PasswordStdin = False,
 ):
     """Put a backup into an empty database: its projects, item types, users, sharing and
     history. Nobody is logged in to it, and Studio makes a new certificate when it
-    starts. An older Studio's backup (its data folder) is brought in as the folder."""
+    starts. An older Studio's backup (its data folder) is brought in as the folder. One
+    sealed with a password is opened with it (asked for)."""
+    import tempfile
+
     from . import db as databases
     from .backup import restore as restore_backup
+    from .sealed import SealError, is_sealed, unseal_stream
 
     if not archive.is_file():
         _fail(f"{archive} is not a file")
     url = databases.default_url(data)
+    with open(archive, "rb") as f:
+        sealed = is_sealed(f.read(16))
+    opened = None
+    if sealed:  # opened beside it first, its owner's alone (every password's hash is in it)
+        password = _file_password(password_stdin, confirm=False)
+        fd, name = tempfile.mkstemp(prefix=".storeypath-restore-", suffix=".sql.gz", dir=archive.resolve().parent)
+        opened = Path(name)
+        try:
+            with open(archive, "rb") as src, os.fdopen(fd, "wb") as out:
+                unseal_stream(src, out, password)
+        except SealError as e:
+            opened.unlink(missing_ok=True)
+            _fail(str(e))
+        archive = opened
     try:
         counts = restore_backup(archive, url)
     except (ValueError, OSError, databases.DatabaseError) as e:
         _fail(str(e))
     except Exception as e:  # a damaged file
         _fail(f"not a StoreyPath backup: {e}")
+    finally:
+        if opened is not None:
+            opened.unlink(missing_ok=True)
     if "rows" in counts:
         typer.echo(f"restored {counts['rows']} rows into {databases.shown(url)}")
     else:
         typer.echo(f"restored {counts['projects']} projects and {counts['users']} users ({counts['from']}) "
                    f"into {databases.shown(url)}")
+
+
+@app.command("seal")
+def seal_file(
+    file: Annotated[Path, typer.Argument(help="any file: a package, a project file, a backup")],
+    out: Annotated[Optional[Path], typer.Option(help="the sealed file (default: FILE.enc beside it)")] = None,
+    password_stdin: PasswordStdin = False,
+):
+    """Seal a file with a password (asked for, twice): AES-256-GCM, its key made from the
+    password (docs/SEALED-FILES.md). Studio opens it with the password; `storeypath
+    unseal` does too."""
+    from .sealed import Sealer, sealed_name
+
+    out = out or file.with_name(sealed_name(file.name))
+    if not file.is_file():
+        _fail(f"{file} is not a file")
+    if out.exists():
+        _fail(f"{out} exists already")
+    password = _file_password(password_stdin, confirm=True)
+    part = out.with_name(out.name + ".part")
+    try:
+        with open(file, "rb") as src, open(part, "wb") as f:
+            sealer = Sealer(f, password)
+            while chunk := src.read(1 << 20):
+                sealer.write(chunk)
+            sealer.close()
+        part.replace(out)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    typer.echo(f"{out}: sealed")
+
+
+@app.command("unseal")
+def unseal_file(
+    file: Annotated[Path, typer.Argument(help="a file sealed with a password (.enc)")],
+    out: Annotated[Optional[Path], typer.Option(help="the file opened (default: FILE without .enc beside it)")] = None,
+    password_stdin: PasswordStdin = False,
+):
+    """Open a file sealed with a password (asked for)."""
+    from .sealed import SealError, opened_name, unseal_stream
+
+    out = out or file.with_name(opened_name(file.name) if file.name.lower().endswith(".enc") else file.name + ".opened")
+    if not file.is_file():
+        _fail(f"{file} is not a file")
+    if out.exists():
+        _fail(f"{out} exists already")
+    password = _file_password(password_stdin, confirm=False)
+    part = out.with_name(out.name + ".part")
+    try:
+        with open(file, "rb") as src, open(part, "wb") as f:
+            unseal_stream(src, f, password)
+        part.replace(out)
+    except SealError as e:
+        part.unlink(missing_ok=True)
+        _fail(str(e))
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    typer.echo(f"{out}: opened")
 
 
 db_app = typer.Typer(no_args_is_help=True, help="Studio's database (STOREYPATH_DATABASE_URL).")

@@ -320,6 +320,16 @@ item types. Another Studio opens it on its Projects page (*Open a project or a
 building's package*) and continues the project where it was (the item types it brings
 are added there when an admin, or someone who may change the item types, opens it;
 anyone may later take them on the *Item types* page).
+
+**Encrypted with a password.** Beside *Download project*, and beside each package in the
+list, *Encrypted…* asks for a password (twice) and downloads the file encrypted with it
+(AES-256), as `<file>.enc`, for sending where others could read it; *Download an
+encrypted backup…* in the person menu does the same for a backup. Opening one (a project
+or package on the Projects page, item types from a file, `storeypath restore`), Studio
+asks for its password, and says so when it is not the file's. Studio cannot find a
+forgotten password: keep it safe, and send it apart from the file. `storeypath seal` and
+`storeypath unseal` encrypt and open any file; [SEALED-FILES.md](SEALED-FILES.md) has the
+format, for another program to read.
 It is not a package: other systems read a building's package.
 
 A building's **package** opens the same way: its building is rebuilt with the same

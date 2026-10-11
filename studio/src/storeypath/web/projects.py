@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from fastapi import Request
 
-from .calls import Body, Calls, May, Query, Sent, TheStudio, answer, web_of
+from .calls import Body, Calls, May, Query, Sent, TheStudio, answer, unsealed, web_of
 
 calls = Calls()
 P = "/api/projects/{code}"
@@ -26,8 +26,10 @@ def create(request: Request, may: May, studio: TheStudio, body: Body):
 
 @calls.put("/api/open")
 def open_file(request: Request, may: May, studio: TheStudio, sent: Sent, query: Query):
+    """A project file or a package opened (sealed with a password: X-StoreyPath-Password)."""
     allow = may.opening()
-    return answer(request, may.opened(studio.open(sent.read(), (query.get("replace") or [None])[0], allow,
+    data = unsealed(request, sent.read())
+    return answer(request, may.opened(studio.open(data, (query.get("replace") or [None])[0], allow,
                                                   learn_types=may.user.can("catalogue"), by=may.user)))
 
 
@@ -205,6 +207,22 @@ def export_file(code: str, name: str, request: Request, may: May, studio: TheStu
     return answer(request, studio.export_file(code, name))
 
 
+@calls.post(P + "/exports/{name}")
+def export_file_sealed(code: str, name: str, request: Request, may: May, studio: TheStudio, body: Body):
+    """A package, sealed with the password sent ({password}: sealed.py), to send where
+    others could read it."""
+    may.export_file(code, name)
+    return answer(request, _sealed(studio.export_file(code, name), body))
+
+
+def _sealed(download, body: dict):
+    from ..sealed import check_password, seal, sealed_name
+    from ..server import Download
+
+    password = check_password(body.get("password"))
+    return Download(seal(download.data, password), sealed_name(download.name))
+
+
 @calls.get(P + "/preview.storeypath")
 def preview(code: str, request: Request, may: May, studio: TheStudio, query: Query):
     sight = may.preview(code, (query.get("building") or [None])[0])
@@ -216,3 +234,13 @@ def preview(code: str, request: Request, may: May, studio: TheStudio, query: Que
 def project_file(code: str, request: Request, may: May, studio: TheStudio):
     may.project(code, "view")
     return answer(request, studio.project_file(code))
+
+
+@calls.post(P + "/project.storeypath-project")
+def project_file_sealed(code: str, request: Request, may: May, studio: TheStudio, body: Body):
+    """The project file, sealed with the password sent ({password})."""
+    may.project(code, "view")
+    from ..sealed import check_password
+
+    check_password(body.get("password"))  # (before the file is made)
+    return answer(request, _sealed(studio.project_file(code), body))

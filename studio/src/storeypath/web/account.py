@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from fastapi import Request
 
-from .calls import Body, Calls, May, Query, Sent, TheStudio, answer
+from .calls import Body, Calls, May, Query, Sent, TheStudio, answer, unsealed
 
 calls = Calls()
 
@@ -124,7 +124,7 @@ def types_in(request: Request, may: May, studio: TheStudio, sent: Sent):
     """The item types a file brings (a catalogue .json, a package, a project file), read
     for who may change the item types to choose which to take: nothing is changed."""
     may.capability("catalogue")
-    return answer(request, studio.types_in(sent.read()))
+    return answer(request, studio.types_in(unsealed(request, sent.read())))
 
 
 @calls.get("/api/users")
@@ -169,6 +169,15 @@ def audit(request: Request, may: May, query: Query):
 def backup(request: Request, may: May):
     may.capability("backup")
     return answer(request, may.backup())
+
+
+@calls.post("/api/backup")
+def backup_sealed(request: Request, may: May, body: Body):
+    """A backup sealed with the password sent ({password}: sealed.py), as it is written."""
+    may.capability("backup")
+    from ..sealed import check_password
+
+    return answer(request, may.backup(password=check_password(body.get("password"))))
 
 
 # ---- the GPU helpers (admins): the vision model's servers ---------------------------------

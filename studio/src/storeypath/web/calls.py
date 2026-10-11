@@ -162,6 +162,18 @@ async def upload_of(request: Request) -> Upload:
     return Upload(request)
 
 
+def unsealed(request: Request, data: bytes) -> bytes:
+    """A file sent, opened with the password its sender gave (X-StoreyPath-Password,
+    URI-encoded) when it is sealed (sealed.py); as it came when it is not."""
+    from urllib.parse import unquote
+
+    from ..sealed import is_sealed, unseal
+
+    if not is_sealed(data):
+        return data
+    return unseal(data, unquote(request.headers.get("x-storeypath-password", "")))
+
+
 async def query_of(request: Request) -> dict[str, list[str]]:
     """The query, as parse_qs reads it (each name a list; blank values left out)."""
     from urllib.parse import parse_qs

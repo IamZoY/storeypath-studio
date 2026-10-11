@@ -296,6 +296,61 @@ test("a project's packages: their item types, those its items use or every one",
   truly(options.join() === "used,all", `the choice: ${options}`);
 });
 
+test("the project file downloaded encrypted: its password asked for twice; taken from on Item types, asked for, the wrong one said so", async () => {
+  // (a download: caught, not saved)
+  await R(() => {
+    window.__saved = [];
+    const click = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      if (this.download && this.href.startsWith("blob:")) return window.__saved.push({ name: this.download, href: this.href });
+      return click.call(this);
+    };
+  });
+  const type = (testid, value) => R(([t, v]) => {
+    const i = document.querySelector(`dialog.seal [data-testid="${t}"]`);
+    i.value = v;
+    i.dispatchEvent(new Event("input", { bubbles: true }));
+  }, [testid, value]);
+  await click('[data-testid="project-sealed"]');
+  await until(() => document.querySelector("dialog.seal[open] [data-testid=seal-password-again]"), "a password, twice");
+  await type("seal-password", "correct horse battery");
+  await type("seal-password-again", "correct horse batterY");
+  await click('dialog.seal [data-testid="seal-ok"]');
+  await until(() => /not the same/.test(document.querySelector("dialog.seal .seal-said")?.textContent || ""), "said: not the same");
+  await type("seal-password-again", "correct horse battery");
+  await click('dialog.seal [data-testid="seal-ok"]');
+  const saved = await until(() => window.__saved?.[0], "downloaded", 30000);
+  const head = await R(async (href) => {
+    const blob = await (await fetch(href)).blob();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let bin = "";
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return { magic: bin.slice(0, 8), b64: btoa(bin) };
+  }, saved.href);
+  truly(saved.name === `${code}.storeypath-project.enc` && head.magic === "SPSEALED", `downloaded: ${saved.name} ${head.magic}`);
+  const file = join(folder, saved.name);
+  writeFileSync(file, Buffer.from(head.b64, "base64"));
+
+  // the item types it brings, from the file: its password asked for
+  await R(() => (location.hash = "#/item-types"));
+  await until(() => document.querySelector('[data-testid="it-import"]'), "Item types");
+  await click('[data-testid="it-import"]');
+  await until(() => document.querySelector("dialog.it-import[open] input[type=file]"), "the dialog");
+  const { root } = await page.send("DOM.getDocument", { depth: -1 });
+  const { nodeId } = await page.send("DOM.querySelector", { nodeId: root.nodeId, selector: "dialog.it-import input[type=file]" });
+  await page.send("DOM.setFileInputFiles", { nodeId, files: [file] });
+  await until(() => document.querySelector("dialog.seal[open] [data-testid=seal-password]")
+    && !document.querySelector("dialog.seal [data-testid=seal-password-again]"), "its password asked for, once", 20000);
+  await type("seal-password", "wrong horse battery");
+  await click('dialog.seal [data-testid="seal-ok"]');
+  await until(() => /not this file's/.test(document.querySelector("dialog.seal[open] .seal-said")?.textContent || ""), "the wrong one said so", 20000);
+  await type("seal-password", "correct horse battery");
+  await click('dialog.seal [data-testid="seal-ok"]');
+  await until(() => document.querySelector(".it-import-table tbody tr"), "what the file brings", 20000);
+  await click('dialog.it-import button[aria-label="Close"]');
+  page.errors.length = 0; // (the 400s that asked for its password, as the console tells them)
+});
+
 let failed = 0;
 try {
   for (const { name, fn } of tests) {

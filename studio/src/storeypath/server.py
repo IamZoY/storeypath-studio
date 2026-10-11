@@ -110,6 +110,7 @@ from .vision import VisionModel
 from .privacy import words
 from .errors import Busy
 from .review import File, NotFound, Review
+from .sealed import sealed_name
 from .types import SpaceType
 from .workspace import Placement, SourceDrawing, Workspace
 
@@ -2489,15 +2490,27 @@ class Gate:
 
     # ---- the whole data folder -------------------------------------------------------
 
-    def backup(self) -> Stream:
+    def backup(self, password: str | None = None) -> Stream:
         """Studio's database, every project and account in it as one moment saw them
-        (backup.py), written as it is sent."""
+        (backup.py), written as it is sent; sealed with ``password`` when given
+        (sealed.py: a piece at a time, as it is written)."""
         name = backup_name()
 
         def done(outcome: str) -> None:
             self.audit("backup", name, outcome)
 
-        return Stream(name, "application/gzip", lambda out: write_backup(self.studio.db, out), done)
+        if password is None:
+            return Stream(name, "application/gzip", lambda out: write_backup(self.studio.db, out), done)
+
+        def sealed(out) -> None:
+            from .sealed import Sealer
+
+            sealer = Sealer(out, password)
+            write_backup(self.studio.db, sealer)
+            sealer.close()
+
+        name = sealed_name(name)
+        return Stream(name, "application/octet-stream", sealed, done)
 
 
 CAPABILITY_NAMES = ("backup", "catalogue")

@@ -11,6 +11,7 @@ import { $, el } from "./dom.js";
 import { keysOf, keyText, MAC } from "./keys.js";
 import { closeMenu, menuItem, placeMenu } from "./menu.js";
 import { toast } from "./notify.js";
+import { downloadSealed } from "../seal.js";
 import { BASE, buildingOf, CODE, state, view3d } from "./state.js";
 
 const floorOf = (id) => state.project?.floors.find((f) => f.id === id) || null;
@@ -85,6 +86,7 @@ function shareMenu() {
     el("div", { class: "menu-section" }, "Send"),
     item("share.export", `Export a package of ${f ? f.building : "the building"}`, "package"),
     item("share.project", "Download the project file", "download"),
+    item("share.project_sealed", "Download the project file, encrypted…", "lock"),
     item("tool.share", "Share an area of this floor…", "square-dashed-mouse-pointer"),
     el("hr"),
     el("div", { class: "menu-section" }, "Open"),
@@ -176,6 +178,17 @@ export function setupTopbar({ openFloor, request, followJob, say }) {
       document.body.append(a);
       a.click();
       a.remove();
+    } });
+  command({ id: "share.project_sealed", title: "Download the project file, encrypted with a password", group: "Share", icon: "lock",
+    words: "storeypath-project send another studio password encrypt aes secure",
+    run: async () => {
+      try {
+        if (await downloadSealed(`/api/${BASE}/project.storeypath-project`, `${CODE}.storeypath-project`)) {
+          toast(`${CODE}.storeypath-project.enc: downloading it. Whoever opens it needs the password`);
+        }
+      } catch (e) {
+        toast(e.message, true);
+      }
     } });
   command({ id: "share.print", title: "Open the print, full size", group: "Share", icon: "printer", words: "drawing png image",
     when: () => Boolean(state.floor?.source), why: () => "This floor has no drawing",

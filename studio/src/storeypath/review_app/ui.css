@@ -221,6 +221,17 @@ dialog.dialog {
   box-shadow: var(--shadow-lg); max-width: calc(100vw - 32px); max-height: calc(100vh - 32px);
 }
 dialog.dialog::backdrop { background: var(--scrim); }
+/* a password asked for: a file sealed with it, or one to open (seal.js) */
+dialog.seal { width: min(420px, calc(100vw - 32px)); padding: var(--sp-4); border: 1px solid var(--border-strong);
+  border-radius: var(--r-xl); background: var(--overlay); color: var(--text); box-shadow: var(--shadow-lg); }
+dialog.seal::backdrop { background: var(--scrim); }
+.seal-form { display: flex; flex-direction: column; gap: var(--sp-3); }
+.seal-form h2 { margin: 0; font-size: var(--fs-lg); }
+.seal-form p { margin: 0; }
+.seal-form .field { display: flex; flex-direction: column; gap: 4px; }
+.seal-said { color: var(--danger-text); }
+.seal-said:empty { display: none; }
+.seal-actions { justify-content: flex-end; gap: var(--sp-2); }
 
 /* ---- the top bar: the same on every page ----------------------------------------------------
    <header class="topbar"> with .tb-start (.tb-home, the mark and a way to the projects; .crumbs:
