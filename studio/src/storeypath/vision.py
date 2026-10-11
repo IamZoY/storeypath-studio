@@ -44,6 +44,7 @@ import json
 import math
 import os
 import re
+import shutil
 import ssl
 import threading
 import time
@@ -52,6 +53,7 @@ import urllib.request
 from collections import OrderedDict
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from shapely import wkt
 from shapely.affinity import scale as scale_geom
@@ -684,20 +686,41 @@ class FloorPrint:
     as a person reads a printed sheet: each room's view is cut out of a tile and
     its outline drawn on it, instead of drawing the plan again for every room.
     Views wider than the tiles' overlap are drawn on their own. Only the last few
-    tiles are kept (each is some 90 MB): rooms are best looked at tile by tile (see
-    ``tile_of``)."""
+    tiles are kept in memory (each is some 90 MB): rooms are best looked at tile by
+    tile (see ``tile_of``). With ``keep`` (a folder) and the drawing's ``sha``, each tile
+    is kept on disk too, and the floor read again (a wall drawn in review: a tile shows
+    the drawing alone) takes it from there instead of printing it again (seconds each).
+    The tiles of the KEEP_DRAWINGS drawings last read are kept."""
 
     PX_PER_M = CROP_PX / CROP_MIN_M  # the smallest view keeps its full detail
     STRIDE_M = 30.0
     OVERLAP_M = 12.0
     KEEP_TILES = 4
+    KEEP_DRAWINGS = 20
+    TILE_VERSION = 1  # raised when _print draws a tile differently: those kept are printed again
 
-    def __init__(self, doc, scale: float):
+    def __init__(self, doc, scale: float, keep: Path | str | None = None, sha: str | None = None):
         self.doc, self.scale = doc, scale
         self.stride = self.STRIDE_M / scale  # drawing units
         self.overlap = self.OVERLAP_M / scale
         self.tile_px = round((self.STRIDE_M + self.OVERLAP_M) * self.PX_PER_M)
         self._tiles: OrderedDict[tuple[int, int], object] = OrderedDict()
+        self.kept = None
+        if keep is not None and sha:
+            self.kept = Path(keep) / sha / f"v{self.TILE_VERSION}-{scale:.9g}-{self.tile_px}"
+            self._keep_few(Path(keep), sha)
+
+    def _keep_few(self, keep: Path, sha: str) -> None:
+        """The tiles of the drawings read longest ago let go, all but KEEP_DRAWINGS."""
+        try:
+            here = keep / sha
+            here.mkdir(parents=True, exist_ok=True)
+            os.utime(here)
+            drawings = sorted((d for d in keep.iterdir() if d.is_dir()), key=lambda d: d.stat().st_mtime, reverse=True)
+            for old in drawings[self.KEEP_DRAWINGS:]:
+                shutil.rmtree(old, ignore_errors=True)
+        except OSError:
+            self.kept = None  # (a cache: printed each time instead)
 
     def tile_of(self, bbox) -> tuple[int, int]:
         """The tile a view of ``bbox`` (drawing units) is cut from."""
@@ -709,14 +732,40 @@ class FloorPrint:
         else:
             from PIL import Image
 
-            x0, y0 = i * self.stride, j * self.stride
-            side = self.stride + self.overlap
-            fig = _print(self.doc, (x0, y0, x0 + side, y0 + side), self.tile_px, pad=self.overlap / 2)
-            fig.canvas.draw()
-            self._tiles[(i, j)] = Image.frombuffer("RGBA", fig.canvas.get_width_height(), fig.canvas.buffer_rgba()).convert("RGB")
+            tile = self._kept_tile(i, j)
+            if tile is None:
+                x0, y0 = i * self.stride, j * self.stride
+                side = self.stride + self.overlap
+                fig = _print(self.doc, (x0, y0, x0 + side, y0 + side), self.tile_px, pad=self.overlap / 2)
+                fig.canvas.draw()
+                tile = Image.frombuffer("RGBA", fig.canvas.get_width_height(), fig.canvas.buffer_rgba()).convert("RGB")
+                self._keep_tile(i, j, tile)
+            self._tiles[(i, j)] = tile
             while len(self._tiles) > self.KEEP_TILES:
                 self._tiles.popitem(last=False)
         return self._tiles[(i, j)]
+
+    def _kept_tile(self, i: int, j: int):
+        if self.kept is None:
+            return None
+        from PIL import Image
+
+        try:
+            with Image.open(self.kept / f"{i}_{j}.png") as kept:
+                return kept.convert("RGB")
+        except (OSError, ValueError):
+            return None  # not kept yet (or not whole): printed
+
+    def _keep_tile(self, i: int, j: int, tile) -> None:
+        if self.kept is None:
+            return
+        try:
+            self.kept.mkdir(parents=True, exist_ok=True)
+            part = self.kept / f"{i}_{j}.{os.getpid()}.part"
+            tile.save(part, format="PNG", compress_level=1)
+            part.replace(self.kept / f"{i}_{j}.png")  # whole, or not there
+        except OSError:
+            pass
 
     def view(self, bbox, highlight, px: int = CROP_PX, marks=(), letters=()) -> bytes:
         with _DRAWING:

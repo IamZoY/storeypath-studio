@@ -231,6 +231,7 @@ def _message(e: Exception) -> str:
 
 CACHE = "cache"  # in the data folder: what is made again when gone (prints of floors)
 WORK = "work"  # in the cache: drawings read from the database for a step, removed after it
+TILES = "tiles"  # in the cache: drawings printed for the vision model, kept for a floor read again
 
 
 class Studio:
@@ -950,7 +951,7 @@ class Studio:
                     try:
                         report = convert_floor(ws, fid, folder, self.model, self.symbols,
                                                self.vision if self.vision.available() else None,
-                                               say=lambda m: job.say("  " + m), force=force)
+                                               say=lambda m: job.say("  " + m), force=force, tiles=self.cache / TILES)
                     except Exception as e:  # this floor stays as it was; the others are converted
                         traceback.print_exc()
                         job.say(f"  {fid}: not converted: {_message(e)}")

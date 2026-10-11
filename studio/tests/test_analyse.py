@@ -231,6 +231,21 @@ def test_answers_to_an_older_question_are_asked_again():
     reader.learn(["SALAH"])
     assert model.asked == ["SALAH"]  # once per question
 
+def test_a_text_labelling_a_room_is_asked_again_once_knowing_so():
+    # RM-0112 read as no room name; it then turns out to label a room: asked again,
+    # knowing so (rooms_only), and that answer stands at every read after
+    ws = Workspace.new("P")
+    model = FakeModel({})
+    reader = TextReader(ws, RULES, model)
+    reader.learn(["RM-0112"])
+    reader.learn(["RM-0112"], rooms_only=True)
+    assert model.asked == ["RM-0112", "RM-0112"]
+    for _ in range(3):  # the floor read again, and again
+        TextReader(ws, RULES, model).learn(["RM-0112"], rooms_only=True)
+    assert model.asked == ["RM-0112", "RM-0112"]
+    assert ws.readings["RM-0112"].rooms_only and ws.readings["RM-0112"].type is None
+
+
 def test_conversion_types_rooms_with_the_model(workspace):
     ws, d, f_id, _, cells = workspace
     from storeypath.convert import convert_floor

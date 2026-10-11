@@ -65,13 +65,15 @@ class ConversionReport:
 def convert_floor(
     ws: Workspace, floor_id: str, workspace_dir: str | Path = ".", model: LocalModel | None = None,
     symbols: SymbolSpotter | None = None, vision: VisionModel | None = None, say=None, force: bool = False,
+    tiles: str | Path | None = None,
 ) -> ConversionReport:
     """Read a floor's drawing and register what it holds. With the "auto" profile the
     layers are read from what is drawn on them; ``model`` (a local language model)
     reads the texts the rules do not know; ``symbols`` spots the fixtures drawn in
     rooms that have no name; ``vision`` looks at every room as drawn (vision.py).
     A read that would retire most of the floor is held back unless ``force`` (see
-    apply_extraction): the floor is then left as it was."""
+    apply_extraction): the floor is then left as it was. ``tiles``: a folder where the
+    drawing's prints for the vision model are kept, for the floor read again (FloorPrint)."""
     floor = ws.floor(floor_id)
     if floor.source is None:
         raise ValueError(f"floor {floor_id} has no source drawing")
@@ -99,7 +101,7 @@ def convert_floor(
     type_rooms(extraction.units(), spotted)
     add_lift_doors(extraction)
     if vision is not None or ws.vision:
-        sheet = FloorPrint(doc, extraction.scale)
+        sheet = FloorPrint(doc, extraction.scale, keep=tiles, sha=sha)
         units = extraction.units()
         merged = look_at_rooms(units, doc, src, extraction.scale, sha, vision, ws.vision, say, sheet=sheet)
         if zones := split_merged(extraction, units, doc, src, sha, vision, ws.vision, merged, say, sheet):

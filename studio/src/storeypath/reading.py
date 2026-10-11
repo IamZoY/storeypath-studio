@@ -88,8 +88,9 @@ class TextReader:
         if NOT_A_ROOM.match(text) or self.profile.classify(text, [], "")[0] != SpaceType.UNSPECIFIED:
             return False
         r = self._reading(text)
-        # A "not a room" answer is asked again when the text turns out to label a room.
-        return r is None or (rooms_only and r.type is None)
+        # A "not a room" answer is asked again when the text turns out to label a room:
+        # once (asked so, its answer stands; a room's number, RM-0112, is no name)
+        return r is None or (rooms_only and r.type is None and not r.rooms_only)
 
     # ---- room types -----------------------------------------------------------
 
