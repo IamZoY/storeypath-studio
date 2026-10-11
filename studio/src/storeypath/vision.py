@@ -55,7 +55,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from shapely import wkt
+from shapely import STRtree, wkt
 from shapely.affinity import scale as scale_geom
 from shapely.affinity import translate
 from shapely.geometry import LineString, box
@@ -824,6 +824,42 @@ def room_key(model: str, sha: str, src, polygon) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()
 
 
+def drawing_key(sha: str, src) -> str:
+    """The drawing (and its part, as placed) an answer about a room is of, and the
+    question it answers: answers about rooms of another drawing or question are not
+    alike, however alike the rooms."""
+    return hashlib.sha1(f"{QUESTION_VERSION}|{sha}|{src.region}|{src.offset}".encode()).hexdigest()[:16]
+
+
+# A room this alike to one answered as exactly one room (the area they share, of the
+# area of both) keeps that answer: one that lost a corner to stairs drawn in it, or that
+# a wall drawn against it gave one more corner, is the room it was. A room answered as
+# merged, part of one or none is asked again: what was drawn may be what put it right.
+NEAR_SAME = 0.8
+ONE_ROOM = OUTLINES[0]
+
+
+class _Alike:
+    """The rooms of a drawing answered as exactly one room (by ``model``; by any, when
+    None), for the room most like one no answer is kept for."""
+
+    def __init__(self, answers: dict[str, dict], drawing: str, model: str | None):
+        self.kept = [(wkt.loads(a["shape"]), a) for a in answers.values()
+                     if a.get("drawing") == drawing and a.get("outline") == ONE_ROOM and "shape" in a
+                     and (model is None or a.get("model") == model)]
+        self.tree = STRtree([shape for shape, _ in self.kept]) if self.kept else None
+
+    def to(self, polygon) -> dict | None:
+        best = None
+        for i in self.tree.query(polygon) if self.tree is not None else ():
+            shape, answer = self.kept[i]
+            both = polygon.union(shape).area
+            share = polygon.intersection(shape).area / both if both else 0.0
+            if share >= NEAR_SAME and (best is None or share > best[0]):
+                best = (share, answer)
+        return best[1] if best else None
+
+
 PROGRESS_S = 15.0  # how often a long look at a floor says how far it has got
 
 
@@ -881,11 +917,12 @@ def _ask_each(todo: list, draw, ask, keep, model: VisionModel, say=None, what: s
 
 
 def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | None, answers: dict[str, dict],
-         sheet: FloorPrint | None = None, say=None) -> tuple[list[RoomView | None], int]:
+         sheet: FloorPrint | None = None, say=None) -> tuple[list[RoomView | None], int, int]:
     """What vision sees each area as (the room question, the area outlined in red),
-    with how many questions were asked. Answers are kept in ``answers`` and reused
-    while an area's shape is unchanged; without the model, any model's answer about
-    the shape is used."""
+    with how many questions were asked and how many areas kept the answer about one
+    alike (NEAR_SAME). Answers are kept in ``answers`` and reused while an area's shape
+    is unchanged, or barely; without the model, any model's answer about the shape is
+    used."""
     usable = model is not None and model.available()
     name = model.name if usable else None  # the model's own name is known once it has answered
     ox, oy = src.offset or (0.0, 0.0)
@@ -894,11 +931,18 @@ def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | 
         return translate(scale_geom(polygon, 1 / scale, 1 / scale, origin=(0, 0)), ox, oy)
 
     by_shape = {a["shape"]: a for a in answers.values() if "shape" in a} if not usable else {}
+    drawing = drawing_key(sha, src)
+    alike = None  # (made at the first room no answer is kept for)
     views: list[RoomView | None] = [None] * len(polygons)
     todo = []
+    near = 0
     for n, polygon in enumerate(polygons):
         key = room_key(name, sha, src, polygon) if name else None
         kept = answers.get(key) if key else by_shape.get(wkt.dumps(polygon, rounding_precision=2))
+        if not kept:
+            alike = alike or _Alike(answers, drawing, name)
+            kept = alike.to(polygon)
+            near += kept is not None
         if kept:
             views[n] = RoomView(kept["outline"], kept["type"])
         elif usable:
@@ -931,12 +975,12 @@ def _see(polygons: list, doc, src, scale: float, sha: str, model: VisionModel | 
             n, key, got = result
             if got and "outline" in got and "type" in got:
                 answers[key] = {"outline": got["outline"], "type": got["type"], "model": name,
-                                "shape": wkt.dumps(polygons[n], rounding_precision=2)}
+                                "shape": wkt.dumps(polygons[n], rounding_precision=2), "drawing": drawing}
                 views[n] = RoomView(got["outline"], got["type"])
                 asked += 1
 
         _ask_each(todo, draw, one, keep, model, say, "rooms")
-    return views, asked
+    return views, asked, near
 
 
 def look_at_rooms(spaces: list[ExtractedSpace], doc, src, scale: float, sha: str, model: VisionModel | None,
@@ -946,15 +990,17 @@ def look_at_rooms(spaces: list[ExtractedSpace], doc, src, scale: float, sha: str
     in ``answers``, reused when a room's shape is unchanged) and apply what it says.
     Returns the rooms it saw as several rooms merged."""
     chosen = [k for k in range(len(spaces)) if only is None or k in only]
-    seen, asked = _see([spaces[k].polygon for k in chosen], doc, src, scale, sha, model, answers, sheet, say)
+    seen, asked, near = _see([spaces[k].polygon for k in chosen], doc, src, scale, sha, model, answers, sheet, say)
     if say is not None and asked:
         say(f"vision: asked about {asked} of {len(chosen)} rooms")
+    if say is not None and near:
+        say(f"vision: {near} room(s) barely changed kept what it saw")
     merged = []
     for k, view in zip(chosen, seen):
         if view is None:
             continue
         apply_view(spaces[k], view, wraps=_wraps_the_rest(k, spaces))
-        if view.outline == MERGED and not spaces[k].ignored:
+        if view.outline == MERGED and not spaces[k].ignored and not _drawn(spaces[k]):
             merged.append(k)
     return merged
 
@@ -1005,16 +1051,26 @@ def _wraps_the_rest(k: int, spaces: list[ExtractedSpace]) -> bool:
     return total > 0 and sum(p.area for p in others if hull.contains(p.representative_point())) >= WRAPS_SHARE * total
 
 
+def _drawn(space) -> bool:
+    """A space a person drew in Review (convert.py's drawn spaces)."""
+    return getattr(space, "layer", None) == "drawn"
+
+
 def apply_view(space: ExtractedSpace, view: RoomView, wraps: bool = False) -> None:
     """What the model saw, applied to a room: an area that is not a room is set
     aside (ignored, for a person to restore) when it has no name, or when it also
     wraps round the other rooms (a yard named after the steps or landing in it);
     one that looks like several rooms, or part of one, gets a note; an untyped room
-    gets the type it looks like."""
+    gets the type it looks like. A space a person drew is a room as they drew it
+    (stairs drawn where the drawing shows none look like no room): only its type is
+    taken, when it has none."""
     seen_type = ROOM_TYPES.get(view.type)
     not_a_room = view.outline == NOT_A_ROOM or view.type == "not a room"
+    drawn = _drawn(space)
     if not_a_room:
-        if not space.name:
+        if drawn:
+            pass
+        elif not space.name:
             space.ignored = True
             space.issues.append("vision: not a room (outside, a frame or a gap); set aside")
         elif wraps:
@@ -1023,7 +1079,9 @@ def apply_view(space: ExtractedSpace, view: RoomView, wraps: bool = False) -> No
         else:
             space.issues.append("vision: does not look like a room; check it")
         return
-    if view.outline == MERGED:
+    if drawn:
+        pass
+    elif view.outline == MERGED:
         space.issues.append("vision: looks like two or more rooms merged; split it")
     elif view.outline == "only part of a room":
         space.issues.append("vision: looks like only part of a room; check its outline")
@@ -1233,7 +1291,7 @@ def _checked(pieces: list, cuts: list, doc, src, scale, sha, model, answers, she
     again. Returns the pieces, the cuts kept and how many questions were asked."""
     pieces, cuts, asked = list(pieces), list(cuts), 0
     while cuts:
-        views, n = _see(pieces, doc, src, scale, sha, model, answers, sheet)
+        views, n, _ = _see(pieces, doc, src, scale, sha, model, answers, sheet)
         asked += n
         for cut in cuts:
             middle = cut.interpolate(0.5, normalized=True)

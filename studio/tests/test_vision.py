@@ -96,6 +96,62 @@ def test_what_vision_saw_is_kept_and_not_asked_again(workspace):
     assert all(r.type != "unspecified" for r in ws.floor_objects(f_id) if r.kind == "space")
 
 
+def _stairs_in(room: Polygon, share: float = 0.1) -> list:
+    """A square of about ``share`` of a room's area, in a corner of it (against its
+    walls, as stairs are: the room keeps its middle)."""
+    x0, y0, x1, y1 = room.bounds
+    side = (share * room.area) ** 0.5
+    while side > 0.1:
+        for cx, cy, sx, sy in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x1, y1, -1, -1), (x0, y1, 1, -1)):
+            a, b = (cx + sx * 0.01, cy + sy * 0.01), (cx + sx * (side + 0.01), cy + sy * (side + 0.01))
+            square = box(min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1]))
+            if room.contains(square):
+                return [list(p) for p in square.exterior.coords[:-1]]
+        side *= 0.8
+    raise AssertionError("no corner of the room takes a square")
+
+
+def test_a_room_barely_changed_keeps_what_vision_saw_and_a_space_drawn_is_never_set_aside(workspace):
+    ws, d, f_id, _, _ = workspace
+    convert_floor(ws, f_id, d)
+    big = max((r for r in ws.floor_objects(f_id) if r.kind == "space"), key=lambda r: _at(r).area)
+    ring = _stairs_in(_at(big))
+    stairs = Polygon(ring)
+    asked = []
+
+    def sees(p):  # stairs drawn where the drawing shows none: no room, to the model
+        asked.append(p)
+        return {"outline": NOT_A_ROOM, "type": "not a room"} if stairs.contains(p) else {"outline": "exactly one room", "type": "office"}
+
+    model = FakeVision(sees)
+    convert_floor(ws, f_id, d, vision=model)
+    asked.clear()
+    ws.floor(f_id).edits.spaces.append(ring)  # cut out of the big room
+    convert_floor(ws, f_id, d, vision=model)
+    assert len(asked) == 1 and stairs.contains(asked[0])  # the big room, a corner less, is the room it was
+    drawn = [r for r in ws.floor_objects(f_id) if r.kind == "space" and _at(r).intersection(stairs).area > 0.9 * stairs.area]
+    assert len(drawn) == 1 and not ws.effective(drawn[0])["ignored"]
+    assert not [i for i in drawn[0].issues if i.startswith("vision")]  # (nor a note to check it)
+
+
+def test_a_room_seen_as_merged_is_asked_again_however_little_it_changed(workspace):
+    ws, d, f_id, _, _ = workspace
+    convert_floor(ws, f_id, d)
+    big = _at(max((r for r in ws.floor_objects(f_id) if r.kind == "space"), key=lambda r: _at(r).area))
+    asked = []
+
+    def sees(p):
+        asked.append(p)
+        return {"outline": MERGED if big.contains(p) else "exactly one room", "type": "office"}
+
+    model = FakeVision(sees)
+    convert_floor(ws, f_id, d, vision=model)
+    asked.clear()
+    ws.floor(f_id).edits.spaces.append(_stairs_in(big))  # what was drawn may be what puts it right
+    convert_floor(ws, f_id, d, vision=model)
+    assert any(big.contains(p) and not Polygon(ws.floor(f_id).edits.spaces[0]).contains(p) for p in asked)
+
+
 def test_merged_rooms_are_flagged_and_a_named_room_is_never_set_aside(workspace):
     ws, d, f_id, _, _ = workspace
     convert_floor(ws, f_id, d)

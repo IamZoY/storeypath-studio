@@ -338,6 +338,9 @@ kind of room is it.
   it was cut from). There is no wall along a cut: the pieces are zones of the one
   space.
 - **Only part of a room**: a note for review.
+- **Spaces a person drew** (stairs, a lift, a colonnade): rooms as drawn. Only the
+  type the model sees is taken, when they have none; they are never set aside or
+  noted (stairs drawn where the plan shows none look like no room to it).
 - **Ways through**: an area set aside as no room that doors join to several rooms (a
   corridor round a wing, too winding for one picture; a hall the rooms open onto) is
   kept, as a corridor when narrow, else an open area, with a note to check it.
@@ -347,7 +350,11 @@ kind of room is it.
 
 Every decision is marked `vision` in the review notes. Questions are asked two at a
 time by default (`STOREYPATH_VISION_PARALLEL`). Answers are kept by the room's shape,
-so reading the floor again asks only about rooms that changed.
+so reading the floor again asks only about rooms that changed; a room that barely
+changed (at least 80% of it in common with one answered as exactly one room: it lost
+a corner to stairs drawn in it, or a wall drawn against it gave it one more corner)
+keeps that answer. One answered as merged, part of a room or no room is asked again:
+what was drawn may be what put it right.
 
 ### h. Door and window sizes (`schedule.py`)
 

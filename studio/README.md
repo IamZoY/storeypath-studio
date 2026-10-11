@@ -581,8 +581,10 @@ person makes at a glance ([vision.py](src/storeypath/vision.py)):
   the floor's outline and walls; rooms are never cut.
 
 Each decision is marked `vision` for a person to check. The answers are kept in the
-workspace by room shape, so converting again asks only about rooms that changed, and
-the project converts the same way without the model. Where a vision model runs, it
+workspace by room shape, so converting again asks only about rooms that changed (or
+barely: at least 80% the room answered as exactly one room), and the project converts
+the same way without the model. A space a person drew is a room as drawn: only its type
+is taken from what the model sees. Where a vision model runs, it
 also reads, in words, the rows of door and window schedules and the private texts in
 drawings, in place of the language model.
 
