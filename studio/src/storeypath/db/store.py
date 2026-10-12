@@ -1285,6 +1285,13 @@ class ProjectStore:
                                 [(t.code, i, _j(t.model_dump(mode="json", exclude={"model"})))
                                  for i, t in enumerate(cat.types)])
 
+    def catalogue_version(self):
+        """The catalogue's version: it moves on with every change to the item types or
+        their models (_catalogue_changed). None before the catalogue was first read."""
+        with self.db.connection() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key = 'catalogue'").fetchone()
+        return row[0] if row else None
+
     def _catalogue_changed(self, conn) -> None:
         """The catalogue's version moved on (in ``conn``'s transaction): every Studio on the
         database reads it again."""

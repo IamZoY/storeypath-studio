@@ -270,3 +270,20 @@ def test_a_floor_outline_with_a_hole_of_no_size_still_exports(converted):
     r = lambda v: round(v, 7)  # noqa: E731
     assert _rounded(holed) == {"type": "Polygon", "coordinates": [[[x, y], [r(x + 0.001), y], [r(x + 0.001), r(y + 0.001)],
                                                                    [x, r(y + 0.001)], [x, y]]]}
+
+
+def test_a_preview_of_one_building_holds_it_as_a_preview_of_them_all_does(tmp_path):
+    # worked out from its building alone (a small building's 3D does not wait for a big one's)
+    from storeypath.export import preview_package
+    from storeypath.samples import build_demo
+
+    ws = Workspace.load(build_demo(tmp_path / "demo")[0])
+    hq = f"{ws.id}-DEMO-HQ"
+    preview_package(ws, tmp_path / "hq.storeypath", buildings=[hq])
+    preview_package(ws, tmp_path / "all.storeypath")
+    for name in ("location", "buildings", "floors", "spaces", "zones", "openings", "items"):
+        one = _read(tmp_path / "hq.storeypath", f"{name}.geojson")["features"]
+        ids = {g["id"] for g in one}
+        held = [f for f in _read(tmp_path / "all.storeypath", f"{name}.geojson")["features"]
+                if name in ("location", "buildings") and f["id"] in ids or f["id"].startswith(hq + "-")]
+        assert one == held and (one or name in ("zones", "items")), name  # (the demo has no items)

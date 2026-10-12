@@ -265,6 +265,28 @@ def test_two_plans_as_one_floor_are_refused_before_anything_changes(studio, tmp_
     assert "replace that floor's drawing" in error["error"]
 
 
+def test_a_floor_read_has_its_prints_drawn_before_it_is_first_opened(studio, tmp_path):
+    # drawn in the background as its read ends (with the drawing's texts and without):
+    # a big floor opened in Review waits for neither
+    from storeypath.samples import write_floor_dxf
+
+    base, app = studio
+    code = call(f"{base}/api/projects", {"name": "Offices"})[1]["code"]
+    write_floor_dxf(tmp_path / "level-0.dxf", office_floor(0), origin=(100.0, 50.0), title="LEVEL 0 PLAN")
+    call(f"{base}/api/projects/{code}/drawings/level-0.dxf?private=0", raw=(tmp_path / "level-0.dxf").read_bytes())
+    plan = wait(base, call(f"{base}/api/projects/{code}/drawings/level-0.dxf/plans", {})[1])["plans"][0]
+    wait(base, call(f"{base}/api/projects/{code}/floors", {"drawing": "level-0.dxf", "plans": [
+        {"index": plan["index"], "title": plan["title"], "region": plan["region"],
+         "building": "Offices", "ordinal": 0}]})[1])
+    folder, drawn = app.review(code).source.prints(), []
+    for _ in range(600):
+        drawn = sorted(p.name for p in folder.glob("*.png")) if folder.exists() else []
+        if len(drawn) == 2:
+            break
+        time.sleep(0.1)
+    assert len(drawn) == 2 and sum("~notext" in name for name in drawn) == 1, drawn
+
+
 def test_one_drawing_per_floor_goes_into_the_same_building(studio, tmp_path):
     # A building drawn one floor per file, in the same coordinates: each file's plan
     # is added to the building chosen by its ID, lined up without moving; a revised

@@ -75,13 +75,16 @@ an address, and those given with --allowed-host or STOREYPATH_ALLOWED_HOSTS).
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import math
 import re
 import threading
 import traceback
 import uuid
 import zipfile
+from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -118,6 +121,7 @@ DRAWING_TYPES = (".dwg", ".dxf")
 INCOMING = ".incoming-"  # a drawing as sent, until its private copy is made
 WORDS = ".words.txt"  # beside a drawing: every word and string left in it
 DRAWING_NAME = re.compile(r"drawing-(\d+)\.dxf")
+PREVIEWS_KEPT = 12  # 3D packages kept, made (Studio.preview): a big building's is a few MB
 
 
 # ---- jobs ------------------------------------------------------------------------
@@ -297,6 +301,9 @@ class Studio:
             threading.Thread(target=self.model.warm, daemon=True).start()
         self._reviews: dict[str, Review] = {}
         self._networks: dict[tuple, tuple] = {}  # (code, building, version) -> its walking network, worked out
+        self._previews: OrderedDict[str, bytes] = OrderedDict()  # a preview's tag -> the package (preview_tag)
+        self._started = uuid.uuid4().hex  # (a newer Studio may make previews otherwise: their tags are new)
+        self._warm = warm  # what a step leaves to be done later done now, in the background (prints)
         # One lock per project, held while a job changes it: converting one project
         # (minutes, with vision) never holds up another, and pages only read. It is the
         # database's too (StepLock): another Studio on it waits as this one does.
@@ -1073,6 +1080,7 @@ class Studio:
         if self.vision.available():
             job.say(f"looking at the rooms with {self.vision.name}")
         summaries, held, failed, why = [], [], [], {}
+        read = []  # the floors read and saved
         with self._changing(code):
             ws = self.store.load(code)
             names = {drawing_name(ws.floor(f).source.path) for f in floor_ids if ws.floor(f).source is not None}
@@ -1113,9 +1121,30 @@ class Studio:
                         held.append(fid)
                         why[fid] = report.hold
                     self.store.save_floor(ws, fid, by=by, more={"summary": report.summary(), "held": report.held})
+                    read.append(fid)
+        if read and self._warm:
+            self._print_ahead(code, read)
         if failed:  # the job fails, the floors converted kept
             raise ValueError(f"not converted: {'; '.join(failed)}")
         return {"summaries": summaries, "held": held, "why": why}
+
+    def _print_ahead(self, code: str, floor_ids: list[str]) -> None:
+        """Floors' prints drawn now, in the background, where a read leaves them to be
+        drawn (a drawing new, or the part of it read changed): without the drawing's
+        texts (the one Review shows) and with them. A big floor opened in Review then
+        waits for none (minutes, for a floor of a thousand rooms). One that fails is
+        drawn when the floor is opened, saying why."""
+        from .review import floor_print
+
+        def run():
+            for fid in floor_ids:
+                for text in (False, True):
+                    try:
+                        floor_print(self.review(code), fid, text)
+                    except Exception:
+                        traceback.print_exc()
+
+        threading.Thread(target=run, name=f"prints of {code}", daemon=True).start()
 
     def move(self, code: str, building_id: str, body: dict, by=None) -> dict:
         """A building moved on its location's site plan: ``x``, ``y`` (metres from the
@@ -1331,9 +1360,16 @@ class Studio:
     def preview(self, code: str, building: str | None = None, sight: Sight | None = None) -> bytes:
         """The project as a package, as it is now, for the 3D view: built in memory
         and not entered as an export. With ``building``, that building alone; with
-        ``sight``, only the floors that person may see (Sight.seen)."""
+        ``sight``, only the floors that person may see (Sight.seen). Kept, by its tag
+        (preview_tag): asked for again, it is not made again until what it holds changed."""
         from .export import ExportError, preview_package
 
+        tag = self.preview_tag(code, building, sight)
+        with self._lock:
+            kept = self._previews.get(tag)
+            if kept is not None:
+                self._previews.move_to_end(tag)
+                return kept
         ws = self.store.load(code)
         if sight is not None:
             ws = sight.seen(ws)
@@ -1345,7 +1381,28 @@ class Studio:
                             models=self.store.model_file)
         except ExportError as e:
             raise NotFound(str(e)) from None
-        return buf.getvalue()
+        data = buf.getvalue()
+        with self._lock:  # (one changed while it was made: kept under the tag asked for, and made again next)
+            self._previews[tag] = data
+            while len(self._previews) > PREVIEWS_KEPT:
+                self._previews.popitem(last=False)
+        return data
+
+    def preview_tag(self, code: str, building: str | None = None, sight: Sight | None = None) -> str:
+        """What a preview is made from, as an HTTP ETag: the project's version, what of
+        it the person sees, the catalogue's version (its types and their models) and
+        this Studio. The same tag, the same package: a browser that has the package
+        keeps it (it is answered "not changed", and nothing is sent)."""
+        version = self.store.version(code)
+        if version is None:
+            raise NotFound(f"no project {code}")
+        seen = None
+        if sight is not None and not sight.whole:
+            seen = (sorted(f for f, level in sight.floors.items() if level),
+                    sorted(b for b, level in sight.buildings.items() if level))
+        self.catalogue()  # (read first: Studio's first read of it may add the types it brings, moving its version on)
+        said = json.dumps([code, building, version, seen, self.store.catalogue_version(), self._started], default=str)
+        return '"' + hashlib.sha256(said.encode()).hexdigest()[:32] + '"'
 
     def navigation(self, code: str, building_id: str, start: str | None = None, end: str | None = None,
                    accessible: bool = False) -> dict:

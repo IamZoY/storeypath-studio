@@ -17,6 +17,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import ClientDisconnect
 
 from ..accounts import Accounts, Refused
@@ -31,6 +32,10 @@ from ..server import Studio
 from . import account, events, floors, navigation, pages, projects
 from .calls import Web, as_json
 from .guard import Guard, allowed_hosts as studio_names, trusted_networks
+
+
+GZIP_MIN_BYTES = 1024  # answers smaller than this go uncompressed
+GZIP_LEVEL = 6  # zlib's own default: most of what 9 saves, in a fraction of the time
 
 
 class StudioApp(FastAPI):
@@ -64,6 +69,10 @@ def create_app(studio: Studio, *, accounts: Accounts | None, allowed_hosts=None,
                         pages=Path(str(resources.files("storeypath") / "review_app")).resolve(),
                         viewer=asset_dir("viewer").resolve(), events=events.Events())
     app.state.web.events.attach(studio)  # the database's changes, to the streams (live.py)
+    # answers sent compressed to a browser that takes them so (a big floor's drawing is
+    # several MB of JSON, a tenth of it compressed); what is compressed already (a
+    # package, a print, a backup) and the live streams go as they are
+    app.add_middleware(GZipMiddleware, minimum_size=GZIP_MIN_BYTES, compresslevel=GZIP_LEVEL)
     for part in (account, projects, floors, navigation, events, pages):  # the pages last: any other GET goes there
         part.calls.add_to(app)
     for kind, answer in ANSWERS.items():

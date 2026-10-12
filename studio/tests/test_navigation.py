@@ -336,3 +336,23 @@ def test_a_long_corridor_of_many_doors_is_walked_as_every_line_looked_at_would_a
     t = time.perf_counter()
     navigation.walks(region, terminals)
     assert time.perf_counter() - t < 2
+
+
+def test_a_floors_part_of_the_network_is_worked_out_again_only_when_it_changed(monkeypatch):
+    from storeypath import navigation
+
+    rooms = [("0001", "lobby", (0, 0, 6, 10)), ("0002", "office", (6.2, 0, 12.2, 10))]
+    doors = [("0010", ["0001", "0002"], ((6.1, 4.5), (6.1, 5.5)))]
+    ws, b, fids = floor_of_rooms(rooms, doors, floors=3)
+    worked, real = [], navigation._floor
+    monkeypatch.setattr(navigation, "_floor", lambda ws, f_id, *more: (worked.append(f_id), real(ws, f_id, *more))[1])
+    first = build_network(ws, b)
+    assert sorted(worked) == sorted(fids)
+    worked.clear()
+    assert build_network(ws, b) == first and worked == []  # nothing changed: every floor kept
+    ws.overrides[f"{fids[1]}-0002"] = Override(name="BOARD ROOM")
+    changed = build_network(ws, b)
+    assert worked == [fids[1]]  # the floor changed alone
+    assert any(p["label"] == "BOARD ROOM" for p in changed["places"])
+    navigation._kept_floors.clear()
+    assert build_network(ws, b) == changed  # as worked out afresh

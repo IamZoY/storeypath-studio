@@ -406,3 +406,38 @@ def test_the_app_without_a_server(tmp_path):
             assert (await c.get("/viewer/../../../etc/passwd")).status_code == 404
 
     asyncio.run(run())
+
+
+def test_the_3d_package_is_kept_by_the_browser_until_it_changes_and_answers_go_compressed(tmp_path):
+    data = tmp_path / "data"
+    ws_path, _ = build_demo(data / "demo")
+    ws = Workspace.load(ws_path)
+    code, hq = ws.id, f"{ws.id}-DEMO-HQ"
+    room = next(r.id for r in ws.objects.values() if r.kind == "space" and r.id.startswith(f"{hq}-F00-"))
+    app = create_app(Studio(data, model=NoModel(), warm=False), accounts=None)
+    url = f"/api/projects/{code}/preview.storeypath?building={hq}"
+    changing = {"X-StoreyPath": "1"}
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as c:
+            first = await c.get(url)
+            tag = first.headers["etag"]
+            assert first.status_code == 200 and first.headers["content-type"] == "application/zip"
+            assert first.headers["cache-control"] == "private, no-cache" and "content-encoding" not in first.headers
+            same = await c.get(url, headers={"If-None-Match": tag})
+            assert same.status_code == 304 and same.content == b"" and same.headers["etag"] == tag
+            assert (await c.get(url, headers={"If-None-Match": f"W/{tag}"})).status_code == 304
+            assert (await c.get(f"/api/projects/{code}/preview.storeypath")).headers["etag"] != tag  # every building
+            fixed = await c.post(f"/api/projects/{code}/objects/{room}", json={"correction": {"name": "BOARD ROOM"}},
+                                 headers=changing)
+            assert fixed.status_code == 200
+            after = await c.get(url, headers={"If-None-Match": tag})  # changed: sent again, with its new tag
+            assert after.status_code == 200 and after.headers["etag"] != tag and after.content != first.content
+            # the JSON answers compressed for a browser that takes them so, and only then
+            packed = await c.get(f"/api/projects/{code}", headers={"Accept-Encoding": "gzip"})
+            plain = await c.get(f"/api/projects/{code}", headers={"Accept-Encoding": "identity"})
+            assert packed.headers["content-encoding"] == "gzip" and "content-encoding" not in plain.headers
+            assert packed.json() == plain.json()
+
+    asyncio.run(run())

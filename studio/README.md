@@ -81,6 +81,8 @@ To reach Studio from other machines, serve on all interfaces (`--host 0.0.0.0`).
 It answers only to its own names: localhost, this machine's name and any address;
 give another name it is reached by (a server's, a proxy's) with `--allowed-host`
 (again for more) or `STOREYPATH_ALLOWED_HOSTS`: it goes on the certificate too.
+Its answers go compressed (gzip) to a browser that takes them so: a big floor's
+drawing, several MB of JSON, arrives in a fraction of the time on a slow link.
 
 ### HTTPS
 
@@ -231,7 +233,7 @@ log).
 | `GET …/buildings/<id>/navigation[?from&to&accessible]` | view on the whole building: its walking network, or the way between two places ([Navigation](#navigation)) |
 | `POST …/export {building}` | edit on that building |
 | `GET …/exports/<file>`; `POST …/exports/<file>` `{password}` (the package encrypted with it: [SEALED-FILES.md](../docs/SEALED-FILES.md)) | view on the building it holds (on the project, for one no export entered) |
-| `GET …/preview.storeypath[?building]` | any access: built with their floors alone |
+| `GET …/preview.storeypath[?building]` | any access: built with their floors alone. It comes with an `ETag`, and asked again with it (`If-None-Match`) while nothing it holds changed, it is answered 304 and nothing is sent; Studio keeps the packages it made the same way |
 | `GET …/project.storeypath-project`; `POST …/project.storeypath-project` `{password}` (encrypted) | view on the project |
 | `GET …/floors/<id>`, `…/drawing`, `…/print`, `…/print.png` | view on the floor; its drawing and print as above |
 | `POST …/floors/<id>/sample/preview {area, keep?, remove?}`, `POST …/floors/<id>/sample {area, note?, keep?, remove?}` | view on the floor, as its drawing: an area sample's preview, and the sample itself (`<id>.spsample`, recorded in the audit log) ([area samples](../docs/AREA-SAMPLES.md)) |
@@ -360,7 +362,8 @@ storeypath validate acme.storeypath
 
 `storeypath review` opens the review editor: each floor drawn over its original
 drawing — *as printed* (the drawing rendered as on paper, a pixel a centimetre,
-drawn once and kept beside the workspace until the drawing changes; *Open print*
+drawn once and kept beside the workspace until the drawing changes: in Studio, drawn in
+the background as soon as the floor is read, so a big floor opens without waiting for it; *Open print*
 shows it full size; *Side by side* puts it beside Studio's spaces), or as its lines
 — with the spaces that need a look counted first (*To review*, gone through one by one
 in review mode: N): no type, no name or number, the labels of several rooms in one
@@ -390,7 +393,11 @@ stairs and lifts, Esc frees the mouse for the panels). The floor, what is chosen
 panels (the navigator, the inspector, History) and the plan's view stay as they are
 from one to another. The 3D world is Studio's package of
 the floor's building as it is now (not recorded as an export), built the first time
-and kept: switching is instant, and nothing is drawn while the plan is shown. Walking
+and kept: switching is instant, and nothing is drawn while the plan is shown. A change
+builds again only the floor it changed. Studio makes the package from that building
+alone, works out each floor's walking network again only when that floor changed, and
+keeps the package until something in it changes; the browser keeps it too, and opened
+again, it is downloaded only when it changed. Walking
 starts in the room or before the item chosen, else where the 3D view (or the plan) was
 looking, and shows the room you are in. In 3D and walking *Look* (in the navigator's
 View) draws the floor *Real* (finished by what each room is, soft shadows) or as a white *Model* with

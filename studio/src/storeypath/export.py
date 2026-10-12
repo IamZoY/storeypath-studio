@@ -372,9 +372,14 @@ def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units) -> 
     })
 
 
-def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bool = False) -> dict[str, list[dict]]:
+def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bool = False,
+                   only: set[str] | None = None) -> dict[str, list[dict]]:
     """Every feature of the project, on the map; with ``own_frame``, each building
-    where its own frame is instead (what export compares between exports)."""
+    where its own frame is instead (what export compares between exports). With
+    ``only`` (building IDs), the floors, spaces, zones, openings and items of those
+    buildings alone: every building and the location are as without it (the location's
+    outline is all its buildings'), the rest is not worked out (a small building's
+    preview does not pay for a big one beside it)."""
     placed = placements(ws)
     if own_frame:
         placed = {b: (OWN_FRAME, real) for b, (_, real) in placed.items()}
@@ -386,13 +391,17 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
         for b in loc.buildings:
             b_id = child_id(loc_id, b.code)
             g = Georeferencer(placed[b_id][0])
-            stack = stack_of(ws, b_id)  # each lift's and stairs' key, the same on every floor it serves
+            whole = only is None or b_id in only
+            # each lift's and stairs' key, the same on every floor it serves
+            stack = stack_of(ws, b_id) if whole else {}
             outlines = []
             for f in sorted(b.floors, key=lambda f: f.ordinal):
                 f_id = child_id(b_id, f.code)
                 outline = shape(f.outline) if f.outline else None
                 if outline is not None:
                     outlines.append(outline)
+                if not whole:
+                    continue
                 sky = open_to_the_sky(ws, f_id)
                 spaces = [(shape(r.geometry), r.id in sky) for r in ws.floor_objects(f_id) if r.kind == "space"]
                 walls, parapets = _walls_and_parapets(shape(f.walls) if f.walls else None, spaces, f.wall_thickness)
@@ -459,7 +468,8 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )
-            for f in sorted(b.floors, key=lambda f: f.ordinal):  # the furniture and equipment on each floor
+            # the furniture and equipment on each floor
+            for f in sorted(b.floors, key=lambda f: f.ordinal) if whole else ():
                 f_id = child_id(b_id, f.code)
                 units = floor_units(ws, f_id)
                 for it in sorted(ws.floor_items(f_id), key=lambda i: i.id):
@@ -529,14 +539,16 @@ def in_buildings(buildings: list[str] | None):
     return lambda i: i in buildings or i.startswith(prefixes)
 
 
-def compared(ws: Workspace, cat: Catalogue | None, held=lambda role, f: True) -> dict[str, str]:
+def compared(ws: Workspace, cat: Catalogue | None, held=lambda role, f: True,
+             only: set[str] | None = None) -> dict[str, str]:
     """What is compared between exports, by ID: each feature (``held`` says which) as
     it is in its building's own frame, so moving a building on the map changes none
     of its rooms, doors or items; a building, with its place on the map; a location,
-    by what it says of itself (its outline is its buildings', compared themselves)."""
+    by what it says of itself (its outline is its buildings', compared themselves).
+    ``only``: as build_features."""
     placed = placements(ws)
     out = {}
-    for role, fs in build_features(ws, cat, own_frame=True).items():
+    for role, fs in build_features(ws, cat, own_frame=True, only=only).items():
         for f in fs:
             if not held(role, f):
                 continue
@@ -638,11 +650,12 @@ def preview_package(ws: Workspace, out_path, *, buildings: list[str] | None = No
     if not buildings:
         raise ExportError("no building to show")
     return _package(ws, out_path, buildings, record=False, bake=False, catalogue=catalogue, item_types="all",
-                    models=models)
+                    models=models, alone=True)
 
 
 def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bake: bool, say=None,
-             catalogue: Catalogue | None = None, item_types: str = "used", models=None) -> Manifest:
+             catalogue: Catalogue | None = None, item_types: str = "used", models=None,
+             alone: bool = False) -> Manifest:
     cat = catalogue or default_catalogue()
     buildings = sorted(set(buildings))
     locations = {b.rsplit("-", 1)[0] for b in buildings}
@@ -653,10 +666,13 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
             return f["id"] in locations
         return scoped(f["properties"]["floor_id"] if role == "items" else f["id"])  # an item: where it is
 
-    everything = build_features(ws, cat)
+    # a package is worked out from the whole project (an item that moved to another
+    # building is said to have); a preview, from its buildings ``alone``
+    only = set(buildings) if alone else None
+    everything = build_features(ws, cat, only=only)
     features = {role: [f for f in fs if held(role, f)] for role, fs in everything.items()}
     placed = placements(ws)
-    hashes = compared(ws, cat, held)
+    hashes = compared(ws, cat, held, only=only)
 
     # each building is compared with the last package that held it, whatever packages
     # of the project's other buildings came between

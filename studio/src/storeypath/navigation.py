@@ -31,8 +31,13 @@ takes the same way where two are as short.
 
 from __future__ import annotations
 
+import hashlib
 import heapq
+import json
 import math
+import pickle
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -441,7 +446,7 @@ def build_network(ws, building_id: str, catalogue=None, placement=None) -> dict:
     stack_list = find_stacks(ws, building_id)
     stack_key = {m: s.key for s in stack_list for m in s.members}
     for f_id, _ in floors:
-        _floor(ws, f_id, cat, net, stack_key)
+        _floor_kept(ws, f_id, cat, net, stack_key, placement)
     _vertical(ws, floors, stack_list, net)
     for e in net.edges.values():  # the places walked through, too
         for pid in (e["space_id"], e["zone_id"]):
@@ -457,6 +462,58 @@ def build_network(ws, building_id: str, catalogue=None, placement=None) -> dict:
         "nodes": sorted(net.nodes.values(), key=lambda n: n["id"]),
         "edges": sorted(net.edges.values(), key=lambda e: (e["from"], e["to"])),
     }
+
+
+FLOOR_NETWORKS_KEPT = 32  # floors whose part of the walking network is kept (the latest of each)
+_kept_floors: OrderedDict[str, tuple[str, bytes]] = OrderedDict()  # floor ID -> (what it was worked out from, its part)
+_kept_lock = threading.Lock()
+
+
+def _floor_kept(ws, f_id: str, cat, net: _Network, stack_key: dict, placement) -> None:
+    """_floor, kept: a floor's part of the network is worked out again only when what
+    it is worked out from changed (_floor_said), so a building whose floors hold a
+    thousand rooms each is ready in a second, not half a minute, after a change to one
+    of them (or to none). A floor's part only adds to the network (its nodes are its
+    own), so it is the same worked out alone."""
+    said = _floor_said(ws, f_id, cat, stack_key, placement)
+    with _kept_lock:
+        kept = _kept_floors.get(f_id)
+        if kept is not None:
+            _kept_floors.move_to_end(f_id)
+    if kept is not None and kept[0] == said:
+        nodes, edges, places = pickle.loads(kept[1])  # (a copy: the network it goes into is added to)
+    else:
+        part = _Network(net.georef)
+        _floor(ws, f_id, cat, part, stack_key)
+        nodes, edges, places = part.nodes, part.edges, part.places
+        with _kept_lock:
+            _kept_floors[f_id] = (said, pickle.dumps((nodes, edges, places), protocol=pickle.HIGHEST_PROTOCOL))
+            _kept_floors.move_to_end(f_id)
+            while len(_kept_floors) > FLOOR_NETWORKS_KEPT:
+                _kept_floors.popitem(last=False)
+    net.nodes.update(nodes)
+    net.edges.update(edges)
+    net.places.update(places)
+
+
+def _floor_said(ws, f_id: str, cat, stack_key: dict, placement) -> str:
+    """All a floor's part of the network is worked out from (_floor), hashed: its rooms,
+    zones and openings with their corrections and their lifts' and stairs' keys, its
+    kiosks and their types, and where its building is on the map."""
+    h = hashlib.sha256(placement.model_dump_json().encode())
+    for r in sorted(ws.floor_objects(f_id), key=lambda r: r.id):
+        h.update(r.model_dump_json().encode())
+        h.update(json.dumps([ws.effective(r), stack_key.get(r.id)], sort_keys=True, default=str).encode())
+    for it in sorted(ws.floor_items(f_id), key=lambda i: i.id):
+        if _is_kiosk(it):
+            t = cat.get(it.type)
+            h.update(it.model_dump_json().encode())
+            h.update(t.model_dump_json().encode() if t is not None else b"-")
+    return h.hexdigest()
+
+
+def _is_kiosk(it) -> bool:
+    return it.type == "KIOSK" or it.type.startswith("KIOSK-")
 
 
 def _floor(ws, f_id: str, cat, net: _Network, stack_key: dict) -> None:
@@ -488,7 +545,7 @@ def _floor(ws, f_id: str, cat, net: _Network, stack_key: dict) -> None:
         u.terminals.append((nid, p))
     # kiosks: where people stand before the screen
     for it in sorted(ws.floor_items(f_id), key=lambda i: i.id):
-        if not (it.type == "KIOSK" or it.type.startswith("KIOSK-")):
+        if not _is_kiosk(it):
             continue
         t = cat.get(it.type)
         depth = t.depth if t else 0.45

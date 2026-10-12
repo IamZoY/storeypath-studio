@@ -4,7 +4,7 @@ its floors added and read again, its buildings and sites, and its packages."""
 
 from __future__ import annotations
 
-from fastapi import Request
+from fastapi import Request, Response
 
 from .calls import Body, Calls, May, Query, Sent, TheStudio, answer, unsealed, web_of
 
@@ -233,8 +233,20 @@ def _sealed(download, body: dict):
 
 @calls.get(P + "/preview.storeypath")
 def preview(code: str, request: Request, may: May, studio: TheStudio, query: Query):
+    """The 3D view's package, with its tag: the browser keeps it, and asks again with the
+    tag (If-None-Match), answered 304 and nothing sent while it is the same."""
     sight = may.preview(code, (query.get("building") or [None])[0])
-    return answer(request, studio.preview(code, (query.get("building") or [None])[0], sight))
+    building = (query.get("building") or [None])[0]
+    tag = studio.preview_tag(code, building, sight)
+    kept = {"ETag": tag, "Cache-Control": "private, no-cache"}  # (kept, never shown again without asking)
+    if tag in _tags(request.headers.get("if-none-match")):
+        return Response(status_code=304, headers=kept)
+    return Response(studio.preview(code, building, sight), media_type="application/zip", headers=kept)
+
+
+def _tags(said: str | None) -> set[str]:
+    """The tags an If-None-Match says (a weak one as the same)."""
+    return {t.strip().removeprefix("W/") for t in (said or "").split(",") if t.strip()}
 
 
 # (the project file by its old name too)
