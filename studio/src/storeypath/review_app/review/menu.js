@@ -16,7 +16,7 @@ import { setFlag } from "./rooms.js";
 import { select, selectAsset, selectItem } from "./selection.js";
 import { readable, state, title, typeLabel, typeOf, view3d } from "./state.js";
 import { setTool } from "./tools.js";
-import { drawHere } from "./view3d.js";
+import { drawHere, viewHere } from "./view3d.js";
 
 let opener = null; // what had the keys before the menu opened: given them back when it closes
 
@@ -108,6 +108,9 @@ export function openMenu(cx, cy, p) {
   items.push(menuItem("Divide a space from here", () => startLine("divide", p), { disabled: !readable(), hint: readable() ? key("tool.divide") : "needs its drawing", ico: "square-split-horizontal" }));
   items.push(menuItem("Draw a space from here", () => startSpace(p), { disabled: !readable(), hint: readable() ? key("tool.space") : "needs its drawing", ico: "vector-square" }));
   items.push(menuItem("Place an item here…", () => openInsert((code) => placeAsset(code, p)), { hint: key("tool.place"), ico: "armchair" }));
+  const shown = state.floor?.converted_at ? "" : "the floor is not read yet";
+  items.push(el("hr"), menuItem("Walk here", () => viewHere(p, "walk"), { disabled: Boolean(shown), hint: shown, ico: "footprints" }));
+  items.push(menuItem("See here in 3D", () => viewHere(p, "3d"), { disabled: Boolean(shown), hint: shown, ico: "box" }));
   const drawnSpace = drawnSpaceAt(p);
   if (drawnSpace) {
     items.push(el("hr"), menuItem("Take the drawn space away", () => takeAway("space", p, drawnSpace), { danger: true, ico: "trash-2" }));

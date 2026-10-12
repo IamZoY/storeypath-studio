@@ -85,10 +85,7 @@ export async function setView(mode) {
   const was = view3d.mode;
   if (was === "2d") {
     const { w, h } = viewport();
-    view3d.plan = w && h ? planPoint(w / 2, h / 2) : null; // where the plan looks: where walking starts
-    const [a, b] = w && h ? [planPoint(0, h), planPoint(w, 0)] : [null, null];
-    view3d.planBox = a && b ? [a[0], a[1], b[0], b[1]] : null; // what it shows (plan metres)
-    view3d.lookHere = mode === "3d"; // 3D, once shown, looking at that part of the floor
+    view3d.plan = w && h ? planPoint(w / 2, h / 2) : null; // where the plan looks: where walking first starts
   }
   view3d.from = was;
   view3d.mode = mode;
@@ -103,9 +100,6 @@ export async function setView(mode) {
   showWalk();
   emit("view"); // (a tool that does not work in this view is put down: tools.js)
   if (!view3d.shown) {
-    // back on the plan from walking: no longer walking, so that walking again starts where
-    // the plan looks then (else the walker would be where it was left), and 3D is where it was
-    if (view3d.world?.mode === "walk") view3d.world.setMode("dollhouse", { back: true });
     view3d.world?.pause(); // kept as it is, for the next time
     return;
   }
@@ -238,43 +232,44 @@ function applyMode() {
   const w = view3d.world;
   if (!w || !view3d.shown) return;
   draggable3d();
-  if (view3d.mode === "walk" && w.mode !== "walk") {
-    // the room or item chosen, when the plan shows it: else where the plan looks (on a big
-    // floor one chosen a while ago may be far from what is looked at now)
-    const chosen = [state.selected, state.asset].find((id) => id && (view3d.from !== "2d" || shown(id))) || null;
+  const here = view3d.here;
+  view3d.here = null;
+  if (view3d.mode === "walk" && here) { // "Walk here": from that place on the plan, facing up it
+    const from = facingUp(here);
+    if (from.at) w.walkAt(from.at, { floor: state.floor.id, heading: from.heading });
+  } else if (view3d.mode === "walk" && w.mode !== "walk") {
+    const chosen = state.selected || state.asset;
     w.setMode("walk", { floor: state.floor.id, ...walkFrom() });
     if (chosen) pick3d(chosen, { go: true }); // walked to: in the room, before the item
   } else if (view3d.mode === "3d" && w.mode !== "dollhouse") {
     w.setMode("dollhouse", { back: true });
     if (view3d.allFloors || view3d.together.length) w.setFloors(floors3d());
   }
-  if (view3d.mode === "3d" && view3d.lookHere) { // from the plan: the part of the floor it showed
-    view3d.lookHere = false;
-    const at = view3d.plan && w.worldPoint(view3d.plan), box = view3d.planBox;
-    if (at && "lookAt" in w) {
-      w.lookAt(at, { floor: state.floor.id, size: box ? Math.min(box[2] - box[0], box[3] - box[1]) : 20, animate: false });
-    }
+  if (view3d.mode === "3d" && here) { // "See here in 3D": looking down at that place
+    const at = w.worldPoint(here);
+    if (at) w.lookAt(at, { floor: state.floor.id, size: 16 });
   }
   showWalk();
 }
 
-/** Whether the plan, as it was left, shows a room (some of it) or an item. */
-function shown(id) {
-  const box = view3d.planBox;
-  if (!box) return true;
-  const [x0, y0, x1, y1] = box;
-  const item = (state.floor?.items || []).find((a) => a.id === id);
-  if (item) return item.x >= x0 && item.x <= x1 && item.y >= y0 && item.y <= y1;
-  const b = state.bounds.get(id);
-  return !b || (b[0] <= x1 && b[2] >= x0 && b[1] <= y1 && b[3] >= y0);
+/** The 3D view from a place on the plan (``p``: plan metres): walking there ("walk"),
+ * facing up the plan, or looking down at it ("3d"). The plan's right-click menu. */
+export async function viewHere(p, mode) {
+  view3d.here = p;
+  if (view3d.mode === mode) applyMode();
+  else await setView(mode);
 }
 
 /** Where walking starts when nothing is chosen: where the 3D view looked; from the plan,
  * the middle of its view, facing up the plan. */
 function walkFrom() {
+  if (view3d.from === "3d") return { at: view3d.world.target };
+  return facingUp(view3d.plan);
+}
+
+/** Standing at a place on the plan (plan metres), facing up the plan: { at, heading }. */
+function facingUp(c) {
   const w = view3d.world;
-  if (view3d.from === "3d") return { at: w.target };
-  const c = view3d.plan;
   const p = c && w.worldPoint(c), up = c && w.worldPoint([c[0], c[1] + 1]);
   return p && up ? { at: p, heading: Math.atan2(-(up.x - p.x), -(up.z - p.z)) } : {};
 }

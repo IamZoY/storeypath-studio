@@ -48,7 +48,7 @@ export const state = {
 // hovered: walking, what is under it (the world's hover); look: its look's and quality's
 // controls
 export const view3d = { world: null, building: null, stale: true, shown: false, mode: "2d", busy: null, again: false,
-  picking: false, dirty: new Set(), from: "2d", plan: null, planBox: null, lookHere: false, pointer: null, aim: 0, cross: 0, crossKey: "", soon: 0,
+  picking: false, dirty: new Set(), from: "2d", plan: null, here: null, pointer: null, aim: 0, cross: 0, crossKey: "", soon: 0,
   look: null, hover: 0, hovered: null, painted: null };
 
 function savedMode() {
