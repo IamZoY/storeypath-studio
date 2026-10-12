@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.9.2"
+FORMAT_VERSION = "0.9.3"
 FILE_EXTENSION = ".storeypath"
 # one building per package from 0.7 (before: a whole project, or a part of it)
 ONE_BUILDING_FROM = (0, 7)
@@ -128,6 +128,17 @@ WALL_FINISH = ("what its walls are finished in (format 0.9), on each wall's face
                "shows the default")
 FloorFinish = Annotated[str, Field(pattern=r"^FLOOR(-[A-Z0-9]+)+$", max_length=40)]
 WallFinish = Annotated[str, Field(pattern=r"^WALL(-[A-Z0-9]+)+$", max_length=40)]
+WALL_FINISHES = ("walls of it finished otherwise than the rest, one by one (format 0.9.3): an accent wall. Each a "
+                 "line along the wall's face towards it, in metres of the building's own frame (as an item's "
+                 "`local`), and its finish; a wall's faces along a line, within its thickness, are that finish, the "
+                 "rest `wall_finish`. Null: none. A reader that does not know it shows every wall as `wall_finish`")
+
+
+class WallPaintProp(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    line: list[Annotated[list[float], Field(min_length=2, max_length=2)]] = Field(min_length=2, max_length=2, description=(
+        "from one end of the wall to the other, [x_m, y_m] each, in the building's own frame"))
+    finish: WallFinish
 
 
 class SpaceProps(_Props):
@@ -151,6 +162,7 @@ class SpaceProps(_Props):
         "floor the same one serves (the ID of its space on the lowest of them), no other's; null for any other space"))
     floor_finish: FloorFinish | None = Field(None, description=FLOOR_FINISH)
     wall_finish: WallFinish | None = Field(None, description=WALL_FINISH)
+    wall_finishes: list[WallPaintProp] | None = Field(None, description=WALL_FINISHES)
     hidden: bool = Field(False, description="real, but not shown unless asked for (a shaft, a plant room)")
     ignored: bool = Field(False, description="judged not worth anything by a person (a sliver, a pocket); leave it out")
 

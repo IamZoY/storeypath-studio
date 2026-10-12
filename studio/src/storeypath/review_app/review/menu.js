@@ -18,6 +18,8 @@ import { readable, state, title, typeLabel, typeOf, view3d } from "./state.js";
 import { setTool } from "./tools.js";
 import { drawHere, viewHere } from "./view3d.js";
 
+const WALL_REACH_M = 0.8; // a right-click this near a room's wall on the plan offers that wall
+
 let opener = null; // what had the keys before the menu opened: given them back when it closes
 
 export function closeMenu() {
@@ -94,9 +96,10 @@ export function openMenu(cx, cy, p) {
     select(s.id);
     items.push(...heading(title(s), typeLabel(s.type)));
     if (editable()) {
-      const now = finish.shown(s);
-      items.push(menuItem(`Floor finish: ${finishOf(now.floor)?.name ?? now.floor}…`, () => finish.chooseAt(cx, cy, s, "floor"), { ico: "paint-roller" }));
-      items.push(menuItem(`Wall finish: ${finishOf(now.wall)?.name ?? now.wall}…`, () => finish.chooseAt(cx, cy, s, "wall"), { ico: "paint-roller" }));
+      const now = finish.shown(s), wall = finish.wallAt(s, p, WALL_REACH_M);
+      items.push(menuItem(`Paint the floor: ${finishOf(now.floor)?.name ?? now.floor}…`, () => finish.chooseAt(cx, cy, s, "floor"), { ico: "paint-roller" }));
+      if (wall) items.push(menuItem("Paint this wall…", () => finish.chooseAt(cx, cy, s, "wall", wall), { ico: "paint-roller" }));
+      items.push(menuItem(`Paint all its walls: ${finishOf(now.wall)?.name ?? now.wall}…`, () => finish.chooseAt(cx, cy, s, "wall"), { ico: "paint-roller" }));
     }
     items.push(menuItem(s.ignored ? "Restore this space" : "Delete this space", () => setFlag(s.id, "ignored", !s.ignored),
       { danger: !s.ignored, hint: s.ignored ? "" : key("edit.delete"), ico: s.ignored ? "rotate-cw" : "trash-2" }));
@@ -175,15 +178,18 @@ export function menu3d(cx, cy, p = null) {
   }
   // painted with the brush (the Paint tool's, in use or not), or its finish taken up
   if (may && unit && !asset && !on?.door) {
-    const b = finish.brush(), walls = Boolean(room);
-    const code = walls ? b.wall : b.floor;
+    const walls = Boolean(room), now = finish.shown(walls ? room : unit);
     if (items.length) items.push(el("hr"));
-    items.push(menuItem(walls ? `Paint these walls: ${finishOf(code)?.name ?? code}` : `Paint this floor: ${finishOf(code)?.name ?? code}`,
-      () => finish.paintAt(on), { ico: "paint-roller" }));
+    if (walls) {
+      const wall = here ? finish.wallAt(room, here) : null;
+      if (wall) items.push(menuItem("Paint this wall…", () => finish.chooseAt(cx, cy, room, "wall", wall), { ico: "paint-roller" }));
+      items.push(menuItem(`Paint all the room's walls: ${finishOf(now.wall)?.name ?? now.wall}…`,
+        () => finish.chooseAt(cx, cy, room, "wall"), { ico: "paint-roller" }));
+    } else {
+      items.push(menuItem(`Paint the floor: ${finishOf(now.floor)?.name ?? now.floor}…`, () => finish.chooseAt(cx, cy, unit, "floor"),
+        { ico: "paint-roller" }));
+    }
     items.push(menuItem("Pick up its finish", () => finish.paintAt(on, { takeUp: true }), { ico: "pipette", hint: "Alt-click" }));
-    const now = finish.shown(unit);
-    items.push(menuItem(walls ? `Wall finish: ${finishOf(now.wall)?.name ?? now.wall}…` : `Floor finish: ${finishOf(now.floor)?.name ?? now.floor}…`,
-      () => finish.chooseAt(cx, cy, walls ? room : unit, walls ? "wall" : "floor"), { ico: "paint-roller" }));
   }
   if (may && here) {
     if (items.length) items.push(el("hr"));

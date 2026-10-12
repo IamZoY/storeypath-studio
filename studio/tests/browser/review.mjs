@@ -878,7 +878,7 @@ test("walking: a right-click offers what can be done there: on the floor, choose
   };
   await standAt(door.far, [door.far[0] + door.n[0], door.far[1] + door.n[1]], -0.7);
   const floor = await right(await worldScreen(door.far[0] + door.n[0] * 1.0, 0, door.far[1] + door.n[1] * 1.0));
-  for (const want of ["Select", /^Paint this floor: /, "Pick up its finish", /^Floor finish: .+…$/, "Place an item here…", /^(Draw|Show) here in 2D$/]) {
+  for (const want of ["Select", /^Paint the floor: .+…$/, "Pick up its finish", "Place an item here…", /^(Draw|Show) here in 2D$/]) {
     truly(floor.some((x) => (typeof want === "string" ? x === want : want.test(x))), `the floor's menu: ${JSON.stringify(floor)}, no ${want}`);
   }
   await R(() => [...document.querySelectorAll("#menu .menu-item")].find((b) => b.textContent.includes("Select")).click());

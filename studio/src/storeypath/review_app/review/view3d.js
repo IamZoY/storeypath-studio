@@ -306,10 +306,11 @@ export function sync3dSpace(s) {
   const p = w?.package?.get(s.id)?.properties;
   if (!p) return;
   const now = { name: s.name || null, number: s.number || null, type: s.type, hidden: Boolean(s.hidden), ignored: Boolean(s.ignored),
-    floor_finish: s.floor_finish ?? null, wall_finish: s.wall_finish ?? null };
+    floor_finish: s.floor_finish ?? null, wall_finish: s.wall_finish ?? null, wall_finishes: s.wall_finishes?.length ? s.wall_finishes : null };
   const was = { name: p.name || null, number: p.number || null, type: p.type, hidden: Boolean(p.hidden), ignored: Boolean(p.ignored),
-    floor_finish: p.floor_finish ?? null, wall_finish: p.wall_finish ?? null };
-  if (Object.keys(now).some((k) => now[k] !== was[k])) w.updateSpace(s.id, now);
+    floor_finish: p.floor_finish ?? null, wall_finish: p.wall_finish ?? null, wall_finishes: p.wall_finishes?.length ? p.wall_finishes : null };
+  const differs = (k) => (k === "wall_finishes" ? JSON.stringify(now[k]) !== JSON.stringify(was[k]) : now[k] !== was[k]);
+  if (Object.keys(now).some(differs)) w.updateSpace(s.id, now);
 }
 
 /** Floors whose walls, doors or spaces changed: read again in 3D (they alone), soon when

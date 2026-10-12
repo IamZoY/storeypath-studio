@@ -462,7 +462,8 @@ def _object_row(code: str, r: ObjectRecord) -> tuple:
 
 def _override_row(code: str, object_id: str, o: Override, by) -> tuple:
     return (code, object_id, floor_of(object_id), o.type.value if o.type is not None else None, o.name, o.number,
-            o.hidden, o.ignored, o.capacity, o.stack, o.floor_finish, o.wall_finish, by)
+            o.hidden, o.ignored, o.capacity, o.stack, o.floor_finish, o.wall_finish,
+            _j([w.model_dump() for w in o.wall_finishes]) if o.wall_finishes else None, by)
 
 
 def _item_row(code: str, it: Item, by) -> tuple:
@@ -500,7 +501,8 @@ SELECT p.version, json_build_object(
                        WHERE o.project = p.code AND {{scope_o}}), '{{{{}}}}'),
   'overrides', COALESCE((SELECT json_object_agg(v.object, json_build_object(
       'type', v.type, 'name', v.name, 'number', v.number, 'hidden', v.hidden, 'ignored', v.ignored,
-      'capacity', v.capacity, 'stack', v.stack, 'floor_finish', v.floor_finish, 'wall_finish', v.wall_finish)
+      'capacity', v.capacity, 'stack', v.stack, 'floor_finish', v.floor_finish, 'wall_finish', v.wall_finish,
+      'wall_finishes', v.wall_finishes)
       ORDER BY v.position) FROM overrides v WHERE v.project = p.code AND {{scope_v}}), '{{{{}}}}'),
   'items', COALESCE((SELECT json_object_agg(i.id, json_build_object(
       'id', i.id, 'type', i.type, 'floor_id', i.floor, 'x', i.x, 'y', i.y, 'rotation', i.rotation,
@@ -849,12 +851,13 @@ class ProjectStore:
             if put:
                 cur.executemany(
                     "INSERT INTO overrides (project, object, floor, type, name, number, hidden, ignored, capacity, "
-                    "stack, floor_finish, wall_finish, changed_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                    "%s, %s) ON CONFLICT (project, "
+                    "stack, floor_finish, wall_finish, wall_finishes, changed_by) VALUES (%s, %s, %s, %s, %s, %s, %s, "
+                    "%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (project, "
                     "object) DO UPDATE SET floor = EXCLUDED.floor, type = EXCLUDED.type, name = EXCLUDED.name, "
                     "number = EXCLUDED.number, hidden = EXCLUDED.hidden, ignored = EXCLUDED.ignored, "
                     "capacity = EXCLUDED.capacity, stack = EXCLUDED.stack, floor_finish = EXCLUDED.floor_finish, "
-                    "wall_finish = EXCLUDED.wall_finish, changed_by = EXCLUDED.changed_by, changed_at = now(), "
+                    "wall_finish = EXCLUDED.wall_finish, wall_finishes = EXCLUDED.wall_finishes, "
+                    "changed_by = EXCLUDED.changed_by, changed_at = now(), "
                     "version = overrides.version + 1", put)
             gone = [(code, i) for i, it in ch.items.items() if it is None]
             put = [_item_row(code, it, uid) for it in ch.items.values() if it is not None]

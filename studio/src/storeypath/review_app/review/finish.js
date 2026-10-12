@@ -20,6 +20,7 @@
 
 import { FINISHES, defaultFinish, finishOf, floorFinish, wallFinish } from "/viewer/src/finishes.js";
 import { Painter } from "/viewer/src/world/finishes.js";
+import { rings } from "./state.js";
 
 const $ = (id) => document.getElementById(id);
 let api = null; // review.js's own, as setup() was given it
@@ -150,6 +151,15 @@ export function editor(s) {
   if (s.kind === "space") {
     rows.push(field("Walls", "wall", s.wall_finish, now.wall,
       s.wall_finish ? "chosen here: each wall's face towards it" : "as its type: each wall's face towards it"));
+    const ones = s.wall_finishes || [];
+    if (ones.length) { // walls finished otherwise one by one: said, and made as the rest
+      const all = el("button", { type: "button", class: "btn-sm", title: "Every wall of it as the rest" }, "Make them as the rest");
+      all.disabled = !may;
+      all.addEventListener("click", () => api.saveSpace({ wall_finish: s.wall_finish ?? null }, s.id));
+      rows.push(el("div", { class: "field fin-row" }, el("span", {}, ""),
+        el("span", { class: "meta" }, `${ones.length} wall${ones.length > 1 ? "s" : ""} finished otherwise: ${
+          [...new Set(ones.map((w) => finishOf(w.finish)?.name ?? w.finish))].join(", ")}`), all));
+    }
   } else rows.push(el("div", { class: "meta" }, `Walls: its space's (${finishOf(now.wall)?.name ?? now.wall})`));
   const all = api.units().filter((u) => u.type === s.type && !u.ignored).length;
   if (may && all > 1) {
@@ -328,20 +338,65 @@ export function pick(p) {
   return true;
 }
 
-/** A room's floor's, or walls', finish chosen from the swatches opened at (cx, cy) on the
- * page (the right-click menus), saved as the inspector saves it (a zone's walls are its
- * space's). */
-export function chooseAt(cx, cy, s, applies) {
+/** A room's floor's, or all its walls', finish chosen from the swatches opened at (cx, cy)
+ * on the page (the right-click menus), saved as the inspector saves it (a zone's walls are
+ * its space's); with ``wall`` (a line along one of its walls: wallAt), that wall's alone. */
+export function chooseAt(cx, cy, s, applies, wall = null) {
   const space = spaceOf(s), target = applies === "wall" ? space ?? s : s;
   const anchor = api.el("span", {});
   Object.assign(anchor.style, { position: "fixed", left: `${cx}px`, top: `${cy}px`, width: "1px", height: "1px" });
   document.body.append(anchor);
-  picker(anchor, { applies, current: target[`${applies}_finish`] ?? null,
-    typeDefault: applies === "floor" ? (space ? floorFinish({ type: s.type }, space) : defaultFinish("floor", s.type))
-      : defaultFinish("wall", target.type),
-    defaultLabel: applies === "floor" && space?.floor_finish ? "As its space" : "As its type",
-    onPick: (picked) => api.saveSpace({ [`${applies}_finish`]: picked }, target.id) });
+  const own = wall ? (target.wall_finishes || []).find((w) => sameWall(w.line, wall))?.finish ?? null : target[`${applies}_finish`] ?? null;
+  picker(anchor, { applies, current: own,
+    typeDefault: wall ? shown(target).wall
+      : applies === "floor" ? (space ? floorFinish({ type: s.type }, space) : defaultFinish("floor", s.type))
+        : defaultFinish("wall", target.type),
+    defaultLabel: wall ? "As its other walls" : applies === "floor" && space?.floor_finish ? "As its space" : "As its type",
+    onPick: (picked) => api.saveSpace(wall ? { wall_finish_at: { line: wall, finish: picked } } : { [`${applies}_finish`]: picked },
+      target.id) });
   anchor.remove(); // (the picker is placed by it already)
+}
+
+const SAME_WALL_M = 0.05; // (as Studio's: a wall given again this near is the same wall)
+const sameWall = (a, b) => [b, [b[1], b[0]]].some((c) => Math.hypot(a[0][0] - c[0][0], a[0][1] - c[0][1]) <= SAME_WALL_M
+  && Math.hypot(a[1][0] - c[1][0], a[1][1] - c[1][1]) <= SAME_WALL_M);
+
+const STRAIGHT = Math.sin((3 * Math.PI) / 180); // edges turning less than this go on as one wall
+
+/** The wall of a room nearest a point of the plan (``p``, plan metres), within ``reach``:
+ * the straight run of its outline there, from one corner to the next ([[x, y], [x, y]]),
+ * or null. A zone's walls are its space's. */
+export function wallAt(s, p, reach = Infinity) {
+  const target = spaceOf(s) ?? s;
+  let best = null;
+  for (const ring of rings(target.geometry)) {
+    const pts = ring.length > 1 && ring[0][0] === ring.at(-1)[0] && ring[0][1] === ring.at(-1)[1] ? ring.slice(0, -1) : ring;
+    const n = pts.length;
+    for (let i = 0; i < n; i++) {
+      const a = pts[i], b = pts[(i + 1) % n], d = toSegment(p, a, b);
+      if (d <= reach && (!best || d < best.d)) best = { d, pts, i };
+    }
+  }
+  if (!best) return null;
+  const { pts, i } = best, n = pts.length;
+  const dir = (k) => {
+    const a = pts[(k + n) % n], b = pts[(k + 1 + n) % n], l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    return [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+  };
+  const straight = (k, m) => {
+    const u = dir(k), v = dir(m);
+    return Math.abs(u[0] * v[1] - u[1] * v[0]) <= STRAIGHT && u[0] * v[0] + u[1] * v[1] > 0;
+  };
+  let first = i, last = i;
+  while (last - i < n - 1 && straight(last, last + 1)) last++;
+  while (i - first < n - 1 - (last - i) && straight(first - 1, first)) first--;
+  return [pts[(first + n) % n].slice(0, 2), pts[(last + 1 + n) % n].slice(0, 2)];
+}
+
+function toSegment(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2)) : 0;
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
 }
 
 /** Esc: the picker put away. Whether it was. */

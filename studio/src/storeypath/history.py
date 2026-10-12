@@ -285,7 +285,9 @@ def _finished(e: dict, it: str) -> str:
     def to(code):
         return finish_name(code) if code else "its type's"
 
-    floor, wall = e.get("floor_to"), e.get("wall_to")
+    floor, wall, one = e.get("floor_to"), e.get("wall_to"), e.get("wall_one_to")
+    if one is not None:
+        return f"set a wall of {it} to {to(one)}" if one else f"set a wall of {it} back to as its other walls"
     if floor is not None and wall is not None:
         if not floor and not wall:
             return f"set the floor and walls of {it} back to its type's"

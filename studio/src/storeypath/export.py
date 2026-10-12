@@ -437,6 +437,9 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                                  "stack": stack.get(r.id),
                                  "floor_finish": finishes.known(eff["floor_finish"], "floor"),
                                  "wall_finish": finishes.known(eff["wall_finish"], "wall"),
+                                 # walls finished otherwise one by one (0.9.3): lines in its own frame
+                                 "wall_finishes": [{"line": w["line"], "finish": w["finish"]} for w in eff["wall_finishes"]
+                                                   if finishes.known(w["finish"], "wall")] or None,
                                  "hidden": eff["hidden"], "ignored": eff["ignored"]},
                             )
                         )

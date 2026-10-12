@@ -279,3 +279,60 @@ def test_the_conformance_packages_have_finishes():
     assert got["lobby"] == ("FLOOR-MARBLE-WHITE", "WALL-STONE") and got["restroom"] == ("FLOOR-PORCELAIN-DARK", "WALL-TILE-MOSAIC")
     assert len(got) == 5 and sorted(p["floor_finish"] for p in zones if p["floor_finish"]) == ["FLOOR-TERRAZZO-LIGHT",
                                                                                               "FLOOR-VINYL-GREY"]
+
+
+# ---- one wall otherwise (0.9.3) -------------------------------------------------------
+
+def test_one_wall_of_a_room_is_finished_otherwise_and_all_its_walls_as_one_again(team, tmp_path):
+    from shapely.geometry import shape
+
+    from storeypath import history
+    from storeypath.export import export_package
+    from storeypath.validate import validate_package
+
+    s = rooms(team, team.hq0, "office")[0]
+    x0, y0, x1, y1 = shape(s.geometry).bounds
+    north, east = [[x0, y1], [x1, y1]], [[x1, y0], [x1, y1]]
+    status, room = team("khalid", "POST", f"objects/{s.id}", {"wall_finish_at": {"line": north, "finish": "WALL-WOOD-WALNUT"}})
+    assert status == 200 and room["wall_finishes"] == [{"line": north, "finish": "WALL-WOOD-WALNUT"}]
+    assert room["wall_finish"] is None and room["correction"] is None  # a finish alone is no correction
+    # another wall; the same wall again (its ends either way round), given another finish
+    team("khalid", "POST", f"objects/{s.id}", {"wall_finish_at": {"line": east, "finish": "WALL-STONE"}})
+    room = team("khalid", "POST", f"objects/{s.id}", {"wall_finish_at": {"line": north[::-1], "finish": "WALL-PAPER-LINEN"}})[1]
+    assert sorted((w["finish"], w["line"]) for w in room["wall_finishes"]) == [("WALL-PAPER-LINEN", north[::-1]),
+                                                                              ("WALL-STONE", east)]
+    label = f"{s.name} {s.number}"
+    assert history.describe(team.studio.store.history(team.code, team.hq0, limit=1)[0]) == \
+        f"set a wall of {label} to Wallpaper, linen beige"
+    # the database keeps them; the floor as Review reads it has them
+    assert team.studio.store.load(team.code).overrides[s.id].wall_finishes[1].finish == "WALL-PAPER-LINEN"
+    listed = next(x for x in team("khalid", "GET", f"floors/{team.hq0}")[1]["spaces"] if x["id"] == s.id)
+    assert len(listed["wall_finishes"]) == 2
+    # exported, valid, in the building's own frame
+    out = tmp_path / "hq.storeypath"
+    export_package(team.studio.workspace(team.code), out, building=team.hq, bake=False)
+    assert validate_package(out) == []
+    with zipfile.ZipFile(out) as z:
+        spaces = {f["id"]: f["properties"] for f in json.loads(z.read("spaces.geojson"))["features"]}
+    assert sorted(w["finish"] for w in spaces[s.id]["wall_finishes"]) == ["WALL-PAPER-LINEN", "WALL-STONE"]
+    assert all(p["wall_finishes"] is None for i, p in spaces.items() if i != s.id)
+    # one wall back as the rest; then all its walls as one: none otherwise
+    room = team("khalid", "POST", f"objects/{s.id}", {"wall_finish_at": {"line": east, "finish": None}})[1]
+    assert [w["finish"] for w in room["wall_finishes"]] == ["WALL-PAPER-LINEN"]
+    room = team("khalid", "POST", f"objects/{s.id}", {"wall_finish": "WALL-PAINT-SAND"})[1]
+    assert room["wall_finish"] == "WALL-PAINT-SAND" and room["wall_finishes"] == []
+    # undone: the wall otherwise again
+    team("khalid", "POST", "undo", {"floor": team.hq0})
+    assert [w.finish for w in team.studio.workspace(team.code).overrides[s.id].wall_finishes] == ["WALL-PAPER-LINEN"]
+
+
+def test_one_wall_is_refused_where_it_is_not_a_wall_of_a_space(team):
+    s = rooms(team, team.hq0, "office")[0]
+    for body in ({"wall_finish_at": {"line": [[0, 0], [0, 0]], "finish": "WALL-STONE"}},
+                 {"wall_finish_at": {"line": [[0, 0], [1, 0]], "finish": "FLOOR-CARPET-NAVY"}},
+                 {"wall_finish_at": "the north wall"}):
+        status, said = team("khalid", "POST", f"objects/{s.id}", body)
+        assert status == 400, (body, said)
+    zone = zone_of(team)
+    status, said = team("khalid", "POST", f"objects/{zone.id}", {"wall_finish_at": {"line": [[0, 0], [1, 0]], "finish": "WALL-STONE"}})
+    assert status == 400 and "its space's" in said["error"]

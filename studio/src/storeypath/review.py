@@ -78,7 +78,7 @@ CONTENT_TYPES = {".html": "text/html", ".js": "text/javascript", ".mjs": "text/j
                  ".storeypath": "application/zip"}
 CORRECTABLE = ("type", "name", "number")
 # what a correction keeps of an object besides its type, name and number
-KEPT = {"hidden", "ignored", "capacity", "stack", "floor_finish", "wall_finish"}
+KEPT = {"hidden", "ignored", "capacity", "stack", "floor_finish", "wall_finish", "wall_finishes"}
 FINISHED_AT_ONCE = 5000  # rooms whose finishes one change sets, at most
 REMOVE_REACH_M = 0.5  # removing what was drawn takes the drawn wall or opening this near
 RESIZE_BANDS = {"width": (0.3, 8.0), "sill": (0.0, 3.0), "height": (0.3, 10.0)}  # metres
@@ -242,7 +242,8 @@ def _dump(model) -> dict | None:
 
 # ---- what history keeps to say a change in words (history.describe) ------------------
 
-LINE_KEYS = ("label", "what", "was", "now", "changes", "to_name", "new_label", "list", "floor_to", "wall_to", "rooms")
+LINE_KEYS = ("label", "what", "was", "now", "changes", "to_name", "new_label", "list", "floor_to", "wall_to", "wall_one_to",
+             "rooms")
 
 
 def _type_name(cat, code: str) -> str:
@@ -271,12 +272,40 @@ def _object_lines(r: ObjectRecord, had: Override | None, new: Override | None, k
 
 
 def _finish_lines(body: dict, finish: dict) -> dict:
-    """What a finish's row says of it: the finishes set (a code, or "" for its type's)."""
+    """What a finish's row says of it: the finishes set (a code, or "" for its type's; one
+    wall's, "" for as the rest)."""
     out = {}
     for key, line in (("floor_finish", "floor_to"), ("wall_finish", "wall_to")):
         if key in body:
             out[line] = finish.get(key) or ""
+    if isinstance(body.get("wall_finish_at"), dict):
+        out["wall_one_to"] = body["wall_finish_at"].get("finish") or ""
     return out
+
+
+SAME_WALL_M = 0.05  # a wall finished on its own, given again this near: the same wall
+
+
+def _one_wall(paints: list, at) -> list:
+    """A room's walls finished one by one (Override.wall_finishes) with one more, given
+    another finish, or put back as the rest (``at``: {"line": [[x, y], [x, y]], "finish":
+    a WALL-… code, or null})."""
+    from .workspace import WallPaint
+
+    if not isinstance(at, dict) or "line" not in at:
+        raise ValueError('wall_finish_at is {"line": [[x, y], [x, y]], "finish": a wall finish\'s code, or null}')
+    code = finishes.check(at.get("finish"), "wall")
+    try:
+        line = WallPaint(line=at["line"], finish=code or "WALL-PAINT-WHITE").line
+    except Exception:
+        raise ValueError("wall_finish_at's line is two different points, [x, y] each") from None
+
+    def same(w) -> bool:
+        return all(math.dist(a, b) <= SAME_WALL_M for a, b in zip(w.line, line)) or \
+            all(math.dist(a, b) <= SAME_WALL_M for a, b in zip(w.line, line[::-1]))
+
+    kept = [w for w in paints if not same(w)]
+    return kept + [WallPaint(line=line, finish=code)] if code else kept
 
 
 def _drawn_what(name: str, shapes: list) -> str:
@@ -772,7 +801,7 @@ class Review:
             # a person's correction or check ({}: accepted as it is); not a capacity alone
             "correction": o.model_dump(exclude_none=True, exclude=KEPT) if o and eff["corrected"] else None,
             # what its floor and (a space's) walls are finished in, set here; null: as its type
-            "floor_finish": eff["floor_finish"], "wall_finish": eff["wall_finish"],
+            "floor_finish": eff["floor_finish"], "wall_finish": eff["wall_finish"], "wall_finishes": eff["wall_finishes"],
             "hidden": eff["hidden"], "ignored": eff["ignored"],
             # how many it seats: set here, else its desks'; and who it is laid out for
             "capacity": capacity, "capacity_from": capacity_from, "capacity_set": eff["capacity"],
@@ -794,7 +823,10 @@ class Review:
         desks say). ``{"stack": id}`` links a lift, stairs, escalator or ramp to one on
         another floor of its building (stacks.py), ``""`` to none, null: as found.
         ``{"floor_finish": code}`` and (a space's) ``{"wall_finish": code}`` set what its floor
-        and walls are finished in (finishes.py; null: as its type).
+        and walls are finished in (finishes.py; null: as its type); ``wall_finish`` sets all
+        its walls, those finished one by one too. ``{"wall_finish_at": {"line": [[x, y], [x,
+        y]], "finish": code}}`` one wall (its face towards the room, building metres; null:
+        as the rest).
         ``{"reset": true}`` removes the correction (the flags, capacity, link and finishes stay)."""
 
         def fn(ws: Workspace):
@@ -804,12 +836,19 @@ class Review:
             if r.kind == "opening" and set(body) - {"ignored"}:
                 raise ValueError("an opening can only be deleted or restored")
             current = ws.overrides.get(object_id) or Override()
-            finish = {"floor_finish": current.floor_finish, "wall_finish": current.wall_finish}
+            finish = {"floor_finish": current.floor_finish, "wall_finish": current.wall_finish,
+                      "wall_finishes": current.wall_finishes}
             for key, applies in (("floor_finish", "floor"), ("wall_finish", "wall")):
                 if key in body:
                     if applies == "wall" and r.kind != "space":
                         raise ValueError("a zone has no walls of its own: set its space's wall_finish")
                     finish[key] = finishes.check(body[key], applies)
+            if "wall_finish" in body:  # all its walls: none finished otherwise any more
+                finish["wall_finishes"] = None
+            if "wall_finish_at" in body:  # one wall
+                if r.kind != "space":
+                    raise ValueError("a zone has no walls of its own: set its space's wall_finish_at")
+                finish["wall_finishes"] = _one_wall(finish["wall_finishes"] or [], body["wall_finish_at"]) or None
             capacity = current.capacity
             if "capacity" in body:
                 capacity = body["capacity"]
@@ -835,7 +874,8 @@ class Review:
                 values = {k: v.strip() if isinstance(v, str) else v for k, v in c.items() if v is not None}
                 if "type" in values:
                     values["type"] = SpaceType(values["type"])
-            elif any(f in body for f in flags) or set(body) & {"capacity", "stack", "floor_finish", "wall_finish"}:
+            elif any(f in body for f in flags) or set(body) & {"capacity", "stack", "floor_finish", "wall_finish",
+                                                              "wall_finish_at"}:
                 values = current.model_dump(exclude_none=True, exclude=KEPT)
             else:
                 raise ValueError("nothing to change")
@@ -859,7 +899,7 @@ class Review:
                 ("delete" if body["ignored"] else "restore") if "ignored" in body else \
                 ("hide" if body["hidden"] else "show") if "hidden" in body else \
                 ("link" if stack else "unlink" if stack == NOT_LINKED else "as found") if "stack" in body else \
-                "finish" if "floor_finish" in body or "wall_finish" in body else "capacity"
+                "finish" if {"floor_finish", "wall_finish", "wall_finish_at"} & set(body) else "capacity"
             ch = Changes(part="object", kind=kind, targets=[object_id], floors={floor_of(object_id)},
                          before={"override": _dump(had)}, after={"override": _dump(new)},
                          more={**_object_lines(r, had, new, kind), **_finish_lines(body, finish)})
@@ -915,6 +955,7 @@ class Review:
                     update["floor_finish"] = floor_code
                 if "wall_finish" in body and r.kind == "space":
                     update["wall_finish"] = wall_code
+                    update["wall_finishes"] = None  # all its walls: none finished otherwise any more
                 new = current.model_copy(update=update)
                 checked = had is not None and ws.effective(r)["corrected"] and not (current.hidden or current.ignored)
                 if checked and new.type is None and new.name is None and new.number is None and new.hidden is None:

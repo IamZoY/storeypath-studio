@@ -9,6 +9,8 @@ Geometry is stored in local drawing coordinates, scaled to meters.
 
 from __future__ import annotations
 
+import math
+
 import json
 import os
 import threading
@@ -16,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .ids import (
     child_id,
@@ -187,6 +189,22 @@ class ObjectRecord(BaseModel):
     retired_at: datetime | None = None
 
 
+class WallPaint(BaseModel):
+    """One wall of a room finished otherwise than the rest (format 0.9.3): ``line`` along
+    the wall's face towards the room, two points in metres of the building's own frame
+    (as an item's place), and the ``finish`` it is in (a WALL-… code)."""
+
+    line: list[list[float]] = Field(min_length=2, max_length=2)
+    finish: str = Field(max_length=40)
+
+    @field_validator("line")
+    @classmethod
+    def _line(cls, v):
+        if any(len(p) != 2 or not all(math.isfinite(c) for c in p) for p in v) or v[0] == v[1]:
+            raise ValueError("a wall's line is two different points, [x, y] each")
+        return [[round(float(c), 4) for c in p] for p in v]
+
+
 class Override(BaseModel):
     """A correction made during review. Survives every re-conversion. One with no
     values set records that a person checked the object and accepted it."""
@@ -208,6 +226,8 @@ class Override(BaseModel):
     # spec/finishes.json (finishes.py); None: its type's default
     floor_finish: str | None = Field(None, max_length=40)
     wall_finish: str | None = Field(None, max_length=40)
+    # (a space's) walls finished otherwise than the rest, one by one (format 0.9.3); None: none
+    wall_finishes: list[WallPaint] | None = Field(None, max_length=200)
 
 
 class Reading(BaseModel):
@@ -490,13 +510,17 @@ class Workspace(BaseModel):
             # room seats says nothing of what it is; nor a lift's link alone, nor finishes.
             "corrected": o is not None and (o.type is not None or o.name is not None or o.number is not None
                                             or (o.capacity is None and o.stack is None and o.floor_finish is None
-                                                and o.wall_finish is None) or o.hidden is False),
+                                                and o.wall_finish is None and not o.wall_finishes)
+                                            or o.hidden is False),
             "hidden": bool(o and o.hidden),
             "ignored": o.ignored if o is not None and o.ignored is not None else record.detected_ignored,
             "capacity": o.capacity if o is not None else None,
             # what its floor and walls are finished in, set by a person (format 0.9); None: as its type
             "floor_finish": o.floor_finish if o is not None else None,
             "wall_finish": o.wall_finish if o is not None and record.kind == "space" else None,
+            # its walls finished otherwise one by one (format 0.9.3): [{line, finish}]; [] none
+            "wall_finishes": [w.model_dump() for w in o.wall_finishes or []]
+            if o is not None and record.kind == "space" else [],
         }
 
     def review_reasons(self, record: ObjectRecord) -> list[str]:
