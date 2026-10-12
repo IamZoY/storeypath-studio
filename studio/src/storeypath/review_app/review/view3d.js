@@ -86,6 +86,9 @@ export async function setView(mode) {
   if (was === "2d") {
     const { w, h } = viewport();
     view3d.plan = w && h ? planPoint(w / 2, h / 2) : null; // where the plan looks: where walking starts
+    const [a, b] = w && h ? [planPoint(0, h), planPoint(w, 0)] : [null, null];
+    view3d.planBox = a && b ? [a[0], a[1], b[0], b[1]] : null; // what it shows (plan metres)
+    view3d.lookHere = mode === "3d"; // 3D, once shown, looking at that part of the floor
   }
   view3d.from = was;
   view3d.mode = mode;
@@ -233,14 +236,34 @@ function applyMode() {
   if (!w || !view3d.shown) return;
   draggable3d();
   if (view3d.mode === "walk" && w.mode !== "walk") {
-    const chosen = state.selected || state.asset;
+    // the room or item chosen, when the plan shows it: else where the plan looks (on a big
+    // floor one chosen a while ago may be far from what is looked at now)
+    const chosen = [state.selected, state.asset].find((id) => id && (view3d.from !== "2d" || shown(id))) || null;
     w.setMode("walk", { floor: state.floor.id, ...walkFrom() });
     if (chosen) pick3d(chosen, { go: true }); // walked to: in the room, before the item
   } else if (view3d.mode === "3d" && w.mode !== "dollhouse") {
     w.setMode("dollhouse", { back: true });
     if (view3d.allFloors || view3d.together.length) w.setFloors(floors3d());
   }
+  if (view3d.mode === "3d" && view3d.lookHere) { // from the plan: the part of the floor it showed
+    view3d.lookHere = false;
+    const at = view3d.plan && w.worldPoint(view3d.plan), box = view3d.planBox;
+    if (at && "lookAt" in w) {
+      w.lookAt(at, { floor: state.floor.id, size: box ? Math.min(box[2] - box[0], box[3] - box[1]) : 20, animate: false });
+    }
+  }
   showWalk();
+}
+
+/** Whether the plan, as it was left, shows a room (some of it) or an item. */
+function shown(id) {
+  const box = view3d.planBox;
+  if (!box) return true;
+  const [x0, y0, x1, y1] = box;
+  const item = (state.floor?.items || []).find((a) => a.id === id);
+  if (item) return item.x >= x0 && item.x <= x1 && item.y >= y0 && item.y <= y1;
+  const b = state.bounds.get(id);
+  return !b || (b[0] <= x1 && b[2] >= x0 && b[1] <= y1 && b[3] >= y0);
 }
 
 /** Where walking starts when nothing is chosen: where the 3D view looked; from the plan,
