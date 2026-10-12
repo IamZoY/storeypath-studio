@@ -672,50 +672,54 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     everything = build_features(ws, cat, only=only)
     features = {role: [f for f in fs if held(role, f)] for role, fs in everything.items()}
     placed = placements(ws)
-    hashes = compared(ws, cat, held, only=only)
-
-    # each building is compared with the last package that held it, whatever packages
-    # of the project's other buildings came between
-    held_before, known = last_packages(ws)
     sequence = (ws.exports[-1].sequence + 1) if ws.exports else 1
-    last = {b: held_before[b] for b in buildings if b in held_before}
-    prev_hashes: dict[str, str] = {}
-    for p in last.values():
-        prev_hashes.update(p.objects)
-    places = {f["id"]: f["properties"]["building_id"] for f in everything["items"]}  # every item in use, now
-    here = {f["id"] for f in features["items"]}
-    gone = sorted(i for i in prev_hashes if i not in hashes)
-    moved_away = [MovedAway(id=i, building_id=places[i]) for i in gone if i in places]
+    if alone:  # a preview lists no changes against the packages sent: nothing that shows it reads them
+        changes = Changes(sequence=sequence, previous_sequence=None, added=[], changed=[], retired=[],
+                          all_retired=[], moved_away=[])
+    else:
+        hashes = compared(ws, cat, held, only=only)
 
-    def item(i: str) -> bool:  # an item's ID: one the project has, or a package of it held (of any format)
-        return i in ws.items or i in known or is_item_id(i)
+        # each building is compared with the last package that held it, whatever packages
+        # of the project's other buildings came between
+        held_before, known = last_packages(ws)
+        last = {b: held_before[b] for b in buildings if b in held_before}
+        prev_hashes: dict[str, str] = {}
+        for p in last.values():
+            prev_hashes.update(p.objects)
+        places = {f["id"]: f["properties"]["building_id"] for f in everything["items"]}  # every item in use, now
+        here = {f["id"] for f in features["items"]}
+        gone = sorted(i for i in prev_hashes if i not in hashes)
+        moved_away = [MovedAway(id=i, building_id=places[i]) for i in gone if i in places]
 
-    def taken_away(i: str) -> bool:  # an object of the building, or an item retired (wherever it was then)
-        if item(i):
-            return i not in ws.items or ws.items[i].status == "retired"
-        return scoped(i)  # a location stays
+        def item(i: str) -> bool:  # an item's ID: one the project has, or a package of it held (of any format)
+            return i in ws.items or i in known or is_item_id(i)
 
-    def active(i: str) -> bool:
-        r = ws.items.get(i) if item(i) else ws.objects.get(i)
-        return r is not None and r.status == "active"
+        def taken_away(i: str) -> bool:  # an object of the building, or an item retired (wherever it was then)
+            if item(i):
+                return i not in ws.items or ws.items[i].status == "retired"
+            return scoped(i)  # a location stays
 
-    retired = [i for i in gone if taken_away(i)]
-    # every ID the building has retired: those it listed before, and those retired since,
-    # with an item none of the project's packages held taken away while it stood here
-    ever = set(retired).union(*(p.retired for p in last.values()))
-    ever |= {i for i, r in ws.objects.items() if r.status == "retired" and scoped(i)}
-    ever |= {i for i, it in ws.items.items() if it.status == "retired" and scoped(it.floor_id) and i not in known}
-    all_retired = sorted(i for i in ever if i not in hashes and not active(i))  # an item brought back is not
-    changes = Changes(
-        sequence=sequence,
-        previous_sequence=max((p.sequence for p in last.values()), default=None),
-        # an item a package of the project held before, carried into the building, is not new
-        added=sorted(i for i in hashes if i not in prev_hashes and i not in known),
-        changed=sorted(i for i in hashes if (prev_hashes[i] != hashes[i] if i in prev_hashes else i in known)),
-        retired=retired,
-        all_retired=all_retired,
-        moved_away=moved_away,
-    )
+        def active(i: str) -> bool:
+            r = ws.items.get(i) if item(i) else ws.objects.get(i)
+            return r is not None and r.status == "active"
+
+        retired = [i for i in gone if taken_away(i)]
+        # every ID the building has retired: those it listed before, and those retired since,
+        # with an item none of the project's packages held taken away while it stood here
+        ever = set(retired).union(*(p.retired for p in last.values()))
+        ever |= {i for i, r in ws.objects.items() if r.status == "retired" and scoped(i)}
+        ever |= {i for i, it in ws.items.items() if it.status == "retired" and scoped(it.floor_id) and i not in known}
+        all_retired = sorted(i for i in ever if i not in hashes and not active(i))  # an item brought back is not
+        changes = Changes(
+            sequence=sequence,
+            previous_sequence=max((p.sequence for p in last.values()), default=None),
+            # an item a package of the project held before, carried into the building, is not new
+            added=sorted(i for i in hashes if i not in prev_hashes and i not in known),
+            changed=sorted(i for i in hashes if (prev_hashes[i] != hashes[i] if i in prev_hashes else i in known)),
+            retired=retired,
+            all_retired=all_retired,
+            moved_away=moved_away,
+        )
 
     now = utcnow()
     manifest = Manifest(
