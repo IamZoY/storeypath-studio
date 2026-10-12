@@ -50,7 +50,6 @@ function escape(e) {
   if (menuOpen()) return closeMenu();
   if (paletteOpen()) return;
   if (finish.escape()) return; // the finish picker (or the dropper)
-  if (document.querySelector(".type-picker")) return document.querySelector(".type-chooser")?.click();
   if (historyOpen()) return showHistory(false);
   if (escapeTool()) return;
   if (reviewing()) return stopReview();

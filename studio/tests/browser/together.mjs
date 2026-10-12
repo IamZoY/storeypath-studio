@@ -34,6 +34,24 @@ async function until(fn, what, ms = 15000, ...args) {
   throw new Error(`${what} (waited ${ms} ms; last: ${JSON.stringify(last)})`);
 }
 
+/** The box to find what to place (Review's palette, opened to insert): opened if it is
+ * not (by the Place tool's chooser), ``word`` typed, the first type found matching
+ * ``like`` chosen. */
+async function chooseType(word, like) {
+  await R(() => { if (!document.querySelector("dialog.palette[open]")) document.querySelector(".type-chooser")?.click(); });
+  await until(() => Boolean(document.querySelector("dialog.palette[open] #palette-list")), "the box to find what to place opens");
+  await R((w) => {
+    const input = document.getElementById("palette-input");
+    input.value = w;
+    input.dispatchEvent(new Event("input"));
+  }, word);
+  await until((src) => {
+    const found = [...document.querySelectorAll("#palette-list .pl-item")].find((li) => new RegExp(src, "i").test(li.textContent));
+    found?.click();
+    return Boolean(found);
+  }, `a type like ${like} found`, 5000, like.source);
+}
+
 /** A call of Khalid's, as his own page makes it: [status, answer]. */
 async function asKhalid(method, path, body) {
   const res = await fetch(`${base}/api/projects/${code}/${path}`, {
@@ -87,8 +105,7 @@ try {
   await page.click(...await onScreen(mine.at));
   await until(() => document.getElementById("lock-banner").hidden, "her own room chosen: no banner");
   await page.key("i", "KeyI", 73);
-  await until(() => document.querySelector(".type-picker"), "the types to place open");
-  await R(() => [...document.querySelectorAll(".type-tile")].find((b) => /sofa/i.test(b.textContent)).click());
+  await chooseType("sofa", /sofa/);
   const before = await R(() => window.storeypathReview.state.floor.items.length);
   await page.click(...await onScreen(his.at));
   const said = await until(toastNow, "placing in his room says why not");

@@ -1,7 +1,9 @@
 // The command palette (⌘K, Ctrl+K or /): one box to find anything. Rooms (by name, number,
 // type or ID), items (by tag, typed loosely: any case, with or without hyphens; a tag on
 // another floor is found too), floors, and every command (commands.js) with its key.
-// Arrows move, Enter runs, Esc closes.
+// Arrows move, Enter runs, Esc closes. Opened to insert (openInsert: the Place tool, I,
+// "Place an item here…"), the same box finds an item type to place: by its name in
+// English or Arabic, its code or its category; the types placed lately first.
 
 import { canRun, allCommands, getCommand, whyNot, worksNow } from "./commands.js";
 import { $, el, icon, save, saved } from "./dom.js";
@@ -29,6 +31,47 @@ let dialog = null;
 let results = [];
 let active = 0;
 let returnTo = null;
+let mode = "find"; // "find" (⌘K) or "insert" (openInsert): what the box finds
+let place = null; // (insert) what choosing a type does: place(code)
+
+const CATEGORY_NAMES = { furniture: "Furniture", equipment: "Equipment", appliance: "Appliances" };
+const categoryName = (c) => CATEGORY_NAMES[c] || c.replaceAll("_", " ").replace(/^./, (x) => x.toUpperCase());
+const placedLately = () => {
+  try {
+    return JSON.parse(saved("storeypath.review.placed") || "[]");
+  } catch {
+    return [];
+  }
+};
+const rememberPlaced = (code) => save("storeypath.review.placed", JSON.stringify([code, ...placedLately().filter((c) => c !== code)].slice(0, 8)));
+
+/** (insert) The item types to place: with nothing typed, those placed lately, then each
+ * category (chosen: its types); else the types that match, best first. */
+function typeResults(q) {
+  const live = (state.catalogue || []).filter((t) => !t.retired);
+  const row = (t, group, sc) => ({ group, score: sc, swatch: t.color || "#8a8a8a", title: t.name_en,
+    sub: [t.name_ar, categoryName(t.category), `${t.width} × ${t.depth} m`, t.mount && t.mount !== "floor" ? `on the ${t.mount}` : null]
+      .filter(Boolean).join(" · "),
+    run: () => {
+      rememberPlaced(t.code);
+      place(t.code);
+    } });
+  if (!q) {
+    const lately = placedLately().map((c) => live.find((t) => t.code === c)).filter(Boolean);
+    const counts = new Map();
+    for (const t of live) counts.set(t.category, (counts.get(t.category) || 0) + 1);
+    return [...lately.map((t) => row(t, "Placed lately", 1)),
+      ...[...counts].map(([c, n]) => ({ group: "Categories", score: 0, icon: "layers", title: categoryName(c), sub: `${n} types`, keep: true,
+        run: () => {
+          const input = $("palette-input");
+          input.value = `${categoryName(c)} `;
+          active = 0;
+          render(input.value);
+        } }))];
+  }
+  return live.map((t) => [score(q, `${t.name_en} ${t.name_ar || ""} ${t.code} ${categoryName(t.category)} ${t.shape || ""}`), t])
+    .filter(([sc]) => sc > 0).sort((a, b) => b[0] - a[0]).slice(0, 14).map(([sc, t]) => row(t, "Item types", sc));
+}
 
 /** How well ``q`` matches ``text``: its words found at the start of words score most, in
  * order more than anywhere; 0: not at all. */
@@ -104,10 +147,12 @@ const ORDER = ["Rooms", "Items", "Commands", "Floors"];
 
 function render(q) {
   const list = $("palette-list");
-  const found = sources(q.trim());
+  const found = mode === "insert" ? [] : sources(q.trim());
   // without words: the commands, by group; with: the best of each kind, the best kind first
   let shown;
-  if (!q.trim()) {
+  if (mode === "insert") {
+    shown = typeResults(q.trim());
+  } else if (!q.trim()) {
     const byId = new Map(found.filter((r) => r.group === "Commands" && !r.disabled).map((r) => [r.id, r]));
     const last = recent().map((id) => byId.get(id)).filter(Boolean).map((r) => ({ ...r, group: "Recent" }));
     const picked = new Set(last.map((r) => r.id));
@@ -161,7 +206,7 @@ function mark() {
 function choose(i) {
   const r = results[i];
   if (!r || r.disabled) return;
-  close();
+  if (!r.keep) close();
   r.run();
 }
 
@@ -173,6 +218,18 @@ export function close() {
 }
 
 export function openPalette() {
+  open("find");
+}
+
+/** The box opened to find an item type to place: ``pick(code)`` when one is chosen. */
+export function openInsert(pick) {
+  place = pick;
+  open("insert");
+}
+
+function open(what) {
+  if (dialog?.open) close();
+  mode = what;
   if (!dialog) {
     const input = el("input", { id: "palette-input", type: "text", role: "combobox", "aria-expanded": "true", "aria-controls": "palette-list",
       "aria-autocomplete": "list", autocomplete: "off", spellcheck: "false", placeholder: "Find a room, an item's tag, a floor or a command…" });
@@ -180,7 +237,7 @@ export function openPalette() {
       el("div", { class: "pl-search" }, icon("search", { size: 16 }), input, el("kbd", {}, "Esc")),
       el("ul", { id: "palette-list", class: "pl-list", role: "listbox", "aria-label": "Found" }),
       el("div", { class: "pl-foot" }, el("span", {}, kbd("arrowup"), kbd("arrowdown"), " move"), el("span", {}, kbd("enter"), " choose"),
-        el("span", {}, "Rooms by name, number, type or ID · items by tag")));
+        el("span", { class: "pl-hint" }, "Rooms by name, number, type or ID · items by tag")));
     document.body.append(dialog);
     input.addEventListener("input", () => {
       active = 0;
@@ -207,9 +264,13 @@ export function openPalette() {
     });
     dialog.addEventListener("click", (e) => { if (e.target === dialog) close(); }); // the backdrop
   }
-  if (dialog.open) return;
   returnTo = document.activeElement;
   const input = $("palette-input");
+  input.placeholder = mode === "insert" ? "Find what to place: its name, in English or Arabic, or its kind…"
+    : "Find a room, an item's tag, a floor or a command…";
+  dialog.setAttribute("aria-label", mode === "insert" ? "Place an item" : "Search and commands");
+  dialog.querySelector(".pl-hint").textContent = mode === "insert" ? "Furniture and equipment by name, code or kind"
+    : "Rooms by name, number, type or ID · items by tag";
   input.value = "";
   active = 0;
   render("");

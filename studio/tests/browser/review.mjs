@@ -34,6 +34,24 @@ async function until(fn, what, ms = 15000, ...args) {
   throw new Error(`${what} (waited ${ms} ms; last: ${JSON.stringify(last)})`);
 }
 
+/** The box to find what to place (Review's palette, opened to insert): opened if it is
+ * not (by the Place tool's chooser), ``word`` typed, the first type found matching
+ * ``like`` chosen. */
+async function chooseType(word, like) {
+  await R(() => { if (!document.querySelector("dialog.palette[open]")) document.querySelector(".type-chooser")?.click(); });
+  await until(() => Boolean(document.querySelector("dialog.palette[open] #palette-list")), "the box to find what to place opens");
+  await R((w) => {
+    const input = document.getElementById("palette-input");
+    input.value = w;
+    input.dispatchEvent(new Event("input"));
+  }, word);
+  await until((src) => {
+    const found = [...document.querySelectorAll("#palette-list .pl-item")].find((li) => new RegExp(src, "i").test(li.textContent));
+    found?.click();
+    return Boolean(found);
+  }, `a type like ${like} found`, 5000, like.source);
+}
+
 let MOD = 4; // ⌘ on a Mac, Ctrl elsewhere (as keys.js has it)
 const KEYS = { Escape: 27, Enter: 13, Backspace: 8, Delete: 46, PageUp: 33, PageDown: 34, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, F10: 121 };
 
@@ -191,8 +209,7 @@ test("Measure: two points clicked, the distance between them", async () => {
 
 test("an item placed with the Place tool, chosen, turned with R, deleted with Del, its tag found by search", async () => {
   await press("i");
-  await until(() => document.querySelector(".type-picker"), "the types to place open");
-  await R(() => [...document.querySelectorAll(".type-tile")].find((b) => /junior/i.test(b.textContent)).click());
+  await chooseType("junior", /junior/);
   const before = await R(() => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length);
   await page.click(...await roomAt((await officeNamed("002")).id));
   await until((n) => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length === n + 1, "the item placed", 8000, before);
@@ -531,9 +548,7 @@ async function aDesk() {
   await steady();
   await press("i");
   await sleep(100);
-  await R(() => { if (!document.querySelector(".type-picker")) document.querySelector(".type-chooser")?.click(); }); // (a type chosen before: not opened by itself)
-  await until(() => Boolean(document.querySelector(".type-picker")), "the types to place open");
-  await R(() => [...document.querySelectorAll(".type-tile")].find((b) => /junior/i.test(b.textContent)).click());
+  await chooseType("junior", /junior/); // (a type chosen before: the box not opened by itself)
   const before = await R(() => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length);
   const office = (await rooms()).find((x) => x.name === "OFFICE" && !x.ignored);
   // at its label, else (something there, a click that missed) the middle of its box
@@ -836,12 +851,7 @@ test("walking: Paint marks the floor and the walls under the pointer and paints 
   // Place: a type, its ghost under the pointer, a click places it there
   await press("i");
   await sleep(100);
-  await R(() => { if (!document.querySelector(".type-picker")) document.querySelector(".type-chooser")?.click(); }); // (a type chosen before)
-  await until(() => Boolean(document.querySelector(".type-picker .type-tile")), "the types to place", 5000);
-  await R(() => {
-    const tiles = [...document.querySelectorAll(".type-picker .type-tile")];
-    (tiles.find((t) => /chair|sofa|plant|bin/i.test(t.textContent)) ?? tiles[0]).click();
-  });
+  await chooseType("sofa", /sofa/); // (a type chosen before: the box not opened by itself)
   await standAt(door.far, [door.far[0] + door.n[0], door.far[1] + door.n[1]], -0.6);
   const pl = await worldScreen(door.far[0] + door.n[0] * 1.2, 0, door.far[1] + door.n[1] * 1.2);
   await page.mouse("mouseMoved", pl[0] - 20, pl[1]);

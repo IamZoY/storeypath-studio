@@ -194,12 +194,6 @@
 /* ---- the Place tool's type picker; the review bar -------------------------------------------- */
 .type-chooser { gap: var(--sp-2); min-width: 200px; justify-content: flex-start; }
 .type-chooser > span:nth-child(2) { flex: 1; text-align: left; }
-.type-picker { width: 380px; max-height: min(520px, calc(100vh - 120px)); overflow-y: auto; padding: var(--sp-1) var(--sp-2) var(--sp-2); }
-.type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.type-tile { justify-content: flex-start; gap: var(--sp-2); min-height: 32px; padding: 0 var(--sp-2); font-weight: 400; background: transparent; border-color: transparent; }
-.type-tile:hover:not(:disabled) { background: var(--surface-3); border-color: transparent; }
-.type-tile.chosen { background: var(--accent-soft); color: var(--accent-text); }
-.type-name { overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .to-value.too-big { color: var(--danger-text); }
 
 .review-bar { border-color: color-mix(in srgb, var(--warning) 50%, var(--border-strong)); }

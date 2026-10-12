@@ -16,6 +16,7 @@ import { command } from "./commands.js";
 import { $, el, icon, svg } from "./dom.js";
 import { openFloor } from "./floor.js";
 import { toast } from "./notify.js";
+import { openInsert } from "./palette.js";
 import { centerOn, floorBounds, scaleFor } from "./plan.js";
 import { fits, inRings, itemBox, ringsOf, roomAt, settle } from "../fit.js";
 import { assetShape } from "../itemshape.js";
@@ -215,52 +216,6 @@ export async function copyId(id) {
 
 // ---- the Place tool ----------------------------------------------------------------------
 
-let typesOpen = null; // the type picker, while it is open
-
-function closeTypes() {
-  typesOpen?.remove();
-  typesOpen = null;
-}
-
-/** The types to place, by category, in a popover under ``anchor``; ``pick(code)``. */
-export function typePicker(anchor, pick) {
-  closeTypes();
-  const tile = (t) => {
-    const b = el("button", { type: "button", class: `type-tile${state.placeType === t.code ? " chosen" : ""}`, role: "option",
-      "aria-selected": String(state.placeType === t.code), "data-tip": `${t.name_en}${t.name_ar ? ` · ${t.name_ar}` : ""} · ${t.width} × ${t.depth} m${t.mount && t.mount !== "floor" ? ` · on the ${t.mount}` : ""}` },
-    el("span", { class: "swatch", style: `background:${t.color || "#8a8a8a"}` }), el("span", { class: "type-name" }, t.name_en));
-    b.addEventListener("click", () => {
-      closeTypes();
-      pick(t.code);
-    });
-    return b;
-  };
-  const box = el("div", { class: "popover type-picker", role: "listbox", "aria-label": "What to place" },
-    ...categories().map(([category, types]) => [el("div", { class: "menu-section" }, category[0].toUpperCase() + category.slice(1)),
-      el("div", { class: "type-grid" }, ...types.map(tile))]));
-  box.addEventListener("keydown", (e) => {
-    const tiles = [...box.querySelectorAll(".type-tile")];
-    const i = tiles.indexOf(document.activeElement);
-    const step = { ArrowRight: 1, ArrowDown: 2, ArrowLeft: -1, ArrowUp: -2 }[e.key];
-    if (step) {
-      tiles[Math.max(0, Math.min(tiles.length - 1, i + step))]?.focus();
-      e.preventDefault();
-    } else if (e.key === "Escape") {
-      closeTypes();
-      anchor.focus();
-      e.preventDefault();
-      e.stopPropagation();
-    }
-  });
-  document.body.append(box);
-  const r = anchor.getBoundingClientRect();
-  box.style.left = `${Math.max(8, Math.min(r.left, innerWidth - box.offsetWidth - 8))}px`;
-  box.style.top = `${Math.min(r.bottom + 6, innerHeight - box.offsetHeight - 8)}px`;
-  typesOpen = box;
-  (box.querySelector(".type-tile.chosen") || box.querySelector(".type-tile"))?.focus();
-}
-
-/** What is placed: a type chosen (the Place tool taken when it is not in use). */
 export function placeType(code) {
   state.placeType = code;
   if (state.tool !== "place") setTool("place");
@@ -274,7 +229,7 @@ function placeOptions() {
   const chooser = el("button", { type: "button", class: "type-chooser", "aria-haspopup": "listbox", "data-tip": "What to place" },
     t ? el("span", { class: "swatch", style: `background:${t.color || "#8a8a8a"}` }) : null,
     el("span", {}, t ? t.name_en : "Choose what to place…"), icon("chevron-down", { size: 14 }));
-  chooser.addEventListener("click", () => (typesOpen ? closeTypes() : typePicker(chooser, placeType)));
+  chooser.addEventListener("click", () => openInsert(placeType));
   return [chooser, t ? el("span", { class: "to-note" }, `${t.width} × ${t.depth} m · Alt: anywhere, as it is`) : null];
 }
 
@@ -299,10 +254,9 @@ export function setupItems() {
     },
     options: placeOptions,
     start: () => {
-      if (!state.placeType) requestAnimationFrame(() => document.querySelector(".type-chooser")?.click());
+      if (!state.placeType) requestAnimationFrame(() => openInsert(placeType));
     },
     stop: () => {
-      closeTypes();
       drawGuides();
       for (const id of ["preview", "preview-print"]) $(id).replaceChildren();
       view3d.world?.ghost(null);
@@ -331,7 +285,4 @@ export function setupItems() {
     itemCommand(`item.move-${key.slice(5)}`, `Move the item ${key.slice(5)}`, [key], (a) => nudgeAsset(a, dx * 0.1, dy * 0.1), true);
     itemCommand(`item.move-${key.slice(5)}-far`, `Move the item ${key.slice(5)} 1 m`, [`shift+${key}`], (a) => nudgeAsset(a, dx, dy), true);
   }
-  document.addEventListener("pointerdown", (e) => {
-    if (typesOpen && !e.target.closest?.(".type-picker, .type-chooser")) closeTypes();
-  }, true);
 }

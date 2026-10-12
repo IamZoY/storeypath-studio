@@ -8,6 +8,7 @@ import { addOpening, deleteItem, drawnNear, drawnSpaceAt, openingAt, openingMeta
   sizeForm, startLine, startSpace, takeAway } from "./drawing.js";
 import * as finish from "./finish.js";
 import { assetAt, changeAsset, placeAsset, turnAsset } from "./items.js";
+import { openInsert } from "./palette.js";
 import { keyNow, keyText } from "./keys.js";
 import { finishOf } from "/viewer/src/finishes.js";
 import { spaceAt } from "./plan.js";
@@ -106,7 +107,7 @@ export function openMenu(cx, cy, p) {
   items.push(menuItem("Draw a wall from here", () => startLine("wall", p), { disabled: !readable(), hint: readable() ? key("tool.wall") : "needs its drawing", ico: "brick-wall" }));
   items.push(menuItem("Divide a space from here", () => startLine("divide", p), { disabled: !readable(), hint: readable() ? key("tool.divide") : "needs its drawing", ico: "square-split-horizontal" }));
   items.push(menuItem("Draw a space from here", () => startSpace(p), { disabled: !readable(), hint: readable() ? key("tool.space") : "needs its drawing", ico: "vector-square" }));
-  items.push(menuItem("Place an item here…", () => placeItemMenu(cx, cy, p), { hint: key("tool.place"), ico: "armchair" }));
+  items.push(menuItem("Place an item here…", () => openInsert((code) => placeAsset(code, p)), { hint: key("tool.place"), ico: "armchair" }));
   const drawnSpace = drawnSpaceAt(p);
   if (drawnSpace) {
     items.push(el("hr"), menuItem("Take the drawn space away", () => takeAway("space", p, drawnSpace), { danger: true, ico: "trash-2" }));
@@ -128,18 +129,6 @@ function sizeMenu(cx, cy, d) {
   placeMenu(cx, cy);
   form.elements.width.focus();
   form.elements.width.select();
-}
-
-export function placeItemMenu(cx, cy, p) {
-  const items = [el("div", { class: "menu-heading" }, "Place an item here")];
-  for (const t of state.catalogue) {
-    const b = menuItem(t.name_en, () => placeAsset(t.code, p));
-    b.firstChild.replaceWith(el("span", { class: "swatch", style: `background:${t.color || "#8a8a8a"}` }));
-    items.push(b);
-  }
-  $("menu").replaceChildren(...items.filter(Boolean));
-  placeMenu(cx, cy);
-  $("menu").querySelector("button")?.focus();
 }
 
 /** A right-click on the 3D view or walking (``p``: what the world says is there, with the
@@ -187,7 +176,7 @@ export function menu3d(cx, cy, p = null) {
   }
   if (may && here) {
     if (items.length) items.push(el("hr"));
-    items.push(menuItem("Place an item here…", () => placeItemMenu(cx, cy, here), { hint: key("tool.place"), ico: "armchair" }));
+    items.push(menuItem("Place an item here…", () => openInsert((code) => placeAsset(code, here)), { hint: key("tool.place"), ico: "armchair" }));
   }
   if (items.length) items.push(el("hr"));
   items.push(menuItem(may ? "Draw here in 2D" : "Show here in 2D", () => drawHere(here), { disabled: !here, hint: key("view.here-2d"), ico: "map" }));
