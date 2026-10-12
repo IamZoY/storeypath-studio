@@ -434,7 +434,8 @@ plan: the rooms' locks, undo and history as for any change):
 | place an item (the *Place* tool, I: choose its type) | click the floor: its ghost follows the pointer | aim the cross at the floor and click: its ghost follows the cross |
 | move an item | drag it across the floor | — |
 | turn it, delete it | R (90°), , and . (15°), Del | the same |
-| paint floors and walls (*Paint finishes*, P) | click a floor or a wall; Alt-click takes up its finish | the same, at the cross |
+| paint floors and walls (*Paint floors and walls*, P) | click a floor or a wall; Alt-click takes up its finish | the same, at the cross |
+| paint one wall alone (*Paint one wall*, Shift-P; or right-click it: *Paint this wall…*) | click the wall | the same, at the cross |
 | draw walls, doors, dividers, spaces | right-click (or 2): *Draw here in 2D*, the plan centred there; W, R, D, O, L there with that tool | right-click (or 2) at the cross |
 
 An item placed or carried in 3D settles as on the plan (`fit.js`): its room's walls hold

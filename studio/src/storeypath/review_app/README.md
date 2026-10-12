@@ -58,7 +58,7 @@ in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`
 | `review/items.js` | furniture and equipment, the Place tool, an item's keys |
 | `fit.js`, `itemshape.js` | where an item may stand and the magnet; how a type is drawn (`shapeOf`) and its symbol on a plan (the Item types page draws the same) |
 | `review/measure.js` | the Measure tool |
-| `review/vertical.js`, `finish.js`, `sample.js` | Stairs and lifts, Paint finishes, Share an area: each its own tool and parts |
+| `review/vertical.js`, `finish.js`, `sample.js` | Stairs and lifts, the paint tools, Share an area: each its own tool (or tools) and parts |
 | `review/view3d.js` | 3D and walking (StoreyPath's world, `/viewer/src/world/world.js`): the pointer, what a click would do marked under it, the ghost, items carried, the HUD |
 | `review/menu.js` | the right-click menu, on the plan and in 3D and walking (`menu3d`) |
 | `review/rooms.js` | a room's corrections, saved; capacity and grade |
@@ -84,6 +84,7 @@ import { tool } from "./tools.js";
 tool({
   id: "column", label: "Column", icon: "circle-dot", key: "k",   // its key must be free: keys.js says if not
   group: "draw",                    // the rail's group: navigate, draw, place, measure, share
+  family: "columns",                // tools sharing one place on the rail (left out: a place of its own)
   views: ["2d"],                    // where it works; elsewhere its button is dimmed and says why
   wrongView: () => "Columns are drawn on the plan",
   edits: true, drawing: true,       // only for who may change the floor; only with its drawing
@@ -102,7 +103,10 @@ world's `pick` event (a click where the pointer is) is the tool's (see Place and
 `view3d.js`). Its key where it does not work (a 2D tool in 3D or walking) changes nothing
 and says why in the status bar: a letter never switches the view. Call
 `emit("tool-options")` when its options change and `emit("tool-progress")` when its hint
-does.
+does. Tools of one `family` share a place on the rail, as a drawing program's do (the
+paint tools: `finish.js`): the one used last shows there, and holding it, right-clicking
+it, its corner mark, or a click on it while in use opens the others beside it (the
+keyboard: ↓ or → on it); each keeps its own key.
 
 ## Adding a command
 
@@ -180,7 +184,8 @@ ahead).
 | `O` | Door, window, opening tool | — (says why) | — (says why) |
 | `L` | Stairs and lifts tool | — (says why) | — (says why) |
 | `I` | Place an item tool | Place an item tool | Place an item tool |
-| `P` | Paint finishes tool | Paint finishes tool | Paint finishes tool |
+| `P` | Paint floors and walls tool | Paint floors and walls tool | Paint floors and walls tool |
+| `Shift+P` | Paint one wall tool | Paint one wall tool | Paint one wall tool |
 | `M` | Measure tool | — (says why) | — (says why) |
 | `A` | Share an area tool | — (says why) | Walk (the walker's) |
 | `N` | Next room to review | Next room to review | Next room to review |

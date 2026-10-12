@@ -3,7 +3,9 @@
 // Its own file, joined to the page by:
 //
 //   setup(api)     once, with what of the page it uses (its state, its requests…): the
-//                  Paint tool (P), its brushes in the tool's options;
+//                  paint tools, one place on the rail: Paint floors and walls (P), Paint
+//                  one wall (Shift-P), Take up finishes (the dropper, or Alt-click); the
+//                  brushes in their options;
 //   editor(space)  the inspector's Floor and Walls of a room, each a picker of swatches
 //                  (its type's first), and "Apply to every <type> on this floor";
 //   many(spaces)   the inspector's Floor and Walls of several rooms at once (one change);
@@ -12,7 +14,9 @@
 //   pick(detail)   the 3D view's click while painting: a floor painted with the floor
 //                  brush, a wall (the room on the side clicked) with the walls' brush;
 //                  Alt-click, or the dropper, takes up the finishes there instead; on the
-//                  plan, a click paints a room's floor, a Shift-click its walls;
+//                  plan, a click paints a room's floor, a Shift-click its walls; painting
+//                  one wall, the wall clicked (on the plan, the room's wall nearest);
+//   target(detail) what a click in 3D would paint there, to mark it;
 //   escape()       Esc: the picker put away.
 //
 // Each change is a room's correction like any other (saved at once, undone and redone,
@@ -20,6 +24,7 @@
 
 import { FINISHES, defaultFinish, finishOf, floorFinish, wallFinish } from "/viewer/src/finishes.js";
 import { Painter } from "/viewer/src/world/finishes.js";
+import { svg } from "./dom.js";
 import { rings } from "./state.js";
 
 const $ = (id) => document.getElementById(id);
@@ -27,7 +32,10 @@ let api = null; // review.js's own, as setup() was given it
 let painter = null; // paints the swatches, off the page's thread (made the first time one is shown)
 const pictures = new Map(); // code → its swatch as a data URL, once painted
 const waiting = new Map(); // code → the elements to show it in when it is
-const paint = { on: false, floor: "FLOOR-CARPET-NAVY", wall: "WALL-PAINT-WHITE", dropper: false };
+const paint = { on: false, floor: "FLOOR-CARPET-NAVY", wall: "WALL-PAINT-WHITE", back: "paint" }; // back: the paint tool after the dropper
+const PAINTS = new Set(["paint", "paint-wall", "dropper"]); // the paint tools (one family on the rail)
+const dropping = () => api.state.tool === "dropper";
+const oneWall = () => api.state.tool === "paint-wall";
 let colourBy = "type";
 
 /** How the plan colours the rooms: "type" or "finish" (their floor's). */
@@ -247,8 +255,8 @@ export function groups(rooms) {
 
 // ---- the paint tool: in 3D and walking, and on the plan ----------------------------------
 
-/** The brushes, in the tool's options: the floor's and the walls' finish (a click chooses
- * another), and the dropper. */
+/** The brushes, in the tool's options: the floor's (not painting one wall) and the walls'
+ * finish (a click chooses another), and the dropper. */
 function brushes() {
   const el = api.el;
   const brush = (applies) => {
@@ -261,14 +269,10 @@ function brushes() {
     } }));
     return b;
   };
-  const dropper = el("button", { type: "button", class: `fin-dropper btn-icon${paint.dropper ? " active" : ""}`, "aria-pressed": String(paint.dropper),
+  const dropper = el("button", { type: "button", class: `fin-dropper btn-icon${dropping() ? " active" : ""}`, "aria-pressed": String(dropping()),
     "aria-label": "Dropper", "data-tip": "Take up the finishes of what you click next (or Alt-click)" }, api.icon("pipette", { size: 16 }));
-  dropper.addEventListener("click", () => {
-    paint.dropper = !paint.dropper;
-    api.emit("tool-options");
-    api.emit("tool-progress");
-  });
-  return [brush("floor"), brush("wall"), dropper];
+  dropper.addEventListener("click", () => api.setTool(dropping() ? paint.back : "dropper"));
+  return [oneWall() ? null : brush("floor"), brush("wall"), dropper];
 }
 
 /** The paint tool on or off (in 3D, walking and on the plan, for who may change the floor). */
@@ -276,7 +280,9 @@ export function setPaint(on) {
   api.setTool(on ? "paint" : null);
 }
 
-export const painting = () => api.state.tool === "paint";
+/** Whether one of the paint tools is in use (painting floors and walls, one wall, or the
+ * dropper). */
+export const painting = () => PAINTS.has(api.state.tool);
 
 /** The brushes: the finish floors and walls are painted in now ({ floor, wall }, codes). */
 export const brush = () => ({ floor: paint.floor, wall: paint.wall });
@@ -295,12 +301,33 @@ export function paintAt(p, { takeUp = false } = {}) {
 }
 
 /** The plan's click while painting: a room's floor (Shift: its walls; a zone's are its
- * space's), or its finishes taken up (Alt, or the dropper). */
+ * space's), or its finishes taken up (Alt, or the dropper); painting one wall, the room's
+ * wall nearest the click. */
 function paintOnPlan(p, e) {
   const unit = api.spaceAt(...p);
-  if (!unit) return api.toast("Click a room to paint its floor", true);
+  if (!unit) return api.toast(oneWall() ? "Click in a room, near the wall to paint" : "Click a room to paint its floor", true);
   pick({ floor: api.state.floor.id, space: unit.id, room: unit.kind === "zone" ? unit.space_id : unit.id,
-    wall: e.shiftKey, altKey: e.altKey });
+    wall: e.shiftKey || oneWall(), altKey: e.altKey, local: p });
+}
+
+/** Painting one wall: the wall a click there would paint, drawn on the plan. */
+function wallOnPlan(p) {
+  const unit = api.spaceAt(...p), line = unit ? wallAt(unit, p) : null;
+  for (const id of ["preview", "preview-print"]) {
+    $(id)?.replaceChildren(...(line ? [svg("line", { x1: line[0][0], y1: line[0][1], x2: line[1][0], y2: line[1][1], class: "paint-wall" })] : []));
+  }
+}
+
+/** What a click in 3D (``p``, the world's pick) would paint there, to mark it (the world's
+ * mark): the walls of the room on a wall's side, else the floor's room; painting one wall,
+ * that wall alone (and no floor); null: nothing. */
+export function target(p) {
+  if (oneWall() && !p?.altKey) {
+    const room = p?.wall && p.room ? api.state.byId.get(p.room) : null;
+    const line = room && p.local ? wallAt(room, p.local) : null;
+    return line ? { walls: p.room, line } : null;
+  }
+  return p?.wall && p.room ? { walls: p.room } : p?.space ? { floor: p.space } : null;
 }
 
 /** The 3D view's click while painting (the world's pick): painted, or taken up. Whether it was. */
@@ -317,17 +344,31 @@ export function pick(p) {
     api.toast(p.wall ? "That side of the wall faces outside: paint it from a room" : "That is outside every room", true);
     return true;
   }
-  if (p.altKey || paint.dropper) { // taken up
-    const now = shown(unit);
+  if (p.altKey || dropping()) { // taken up (the wall's own, painting one wall)
+    const now = shown(unit), space = room?.kind === "space" ? room : spaceOf(unit) ?? unit;
+    const line = oneWall() && p.wall && p.local ? wallAt(space, p.local) : null;
     paint.floor = now.floor;
-    paint.wall = now.wall;
-    paint.dropper = false;
-    api.emit("tool-options");
-    api.toast(`Took up ${finishOf(now.floor)?.name} and ${finishOf(now.wall)?.name}`);
+    paint.wall = (line && (space.wall_finishes || []).find((w) => sameWall(w.line, line))?.finish) || now.wall;
+    if (dropping()) api.setTool(paint.back);
+    else api.emit("tool-options");
+    api.toast(`Took up ${finishOf(paint.floor)?.name} and ${finishOf(paint.wall)?.name}`);
     return true;
   }
   // already so: nothing to change, and said (else a click seems to do nothing)
   const already = (what, code) => api.toast(`${what} ${finishOf(code)?.name ?? code} already: choose another finish in the brushes above`);
+  if (oneWall()) {
+    if (!p.wall) {
+      api.toast("Click a wall to paint it (floors: Paint floors and walls)", true);
+      return true;
+    }
+    const space = room?.kind === "space" ? room : spaceOf(unit) ?? unit;
+    const line = p.local ? wallAt(space, p.local) : null;
+    if (!line) return true;
+    const now = (space.wall_finishes || []).find((w) => sameWall(w.line, line))?.finish ?? shown(space).wall;
+    if (now === paint.wall) already("That wall is", paint.wall);
+    else api.saveSpace({ wall_finish_at: { line, finish: paint.wall } }, space.id);
+    return true;
+  }
   if (p.wall) {
     const target = room?.kind === "space" ? room : unit.kind === "zone" ? st.byId.get(unit.space_id) : unit;
     if (!target) return true;
@@ -399,48 +440,67 @@ function toSegment(p, a, b) {
   return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
 }
 
+/** A paint tool taken: the plan coloured by floor finish while painting (as it was when
+ * painting stops), nothing dragged in 3D. From one paint tool to another, as it is. */
+function startPainting() {
+  if (api.state.tool !== "dropper") paint.back = api.state.tool;
+  api.showWalk();
+  if (paint.on) return;
+  paint.on = true;
+  paint.colouredBefore = colourBy; // the plan shows what is painted: by floor finish, while painting
+  if (colourBy !== "finish") colourRoomsBy("finish");
+  $("map")?.classList.add("painting");
+  api.stopTools();
+}
+
+function stopPainting() {
+  closePicker();
+  for (const id of ["preview", "preview-print"]) $(id)?.replaceChildren();
+  queueMicrotask(() => { // (the tool taken next is known by then: another paint tool goes on painting)
+    if (painting()) return;
+    paint.on = false;
+    if (paint.colouredBefore && paint.colouredBefore !== colourBy) colourRoomsBy(paint.colouredBefore);
+    paint.colouredBefore = null;
+    $("map")?.classList.remove("painting");
+    api.showWalk();
+  });
+}
+
 /** Esc: the picker put away. Whether it was. */
 export function escape() {
   if (popover) {
     closePicker();
     return true;
   }
-  if (paint.dropper && painting()) {
-    paint.dropper = false;
-    api.emit("tool-options");
+  if (dropping()) {
+    api.setTool(paint.back);
     return true;
   }
   return false;
 }
 
-/** Once, before the page starts: the Paint tool. */
+/** Once, before the page starts: the paint tools. */
 export function setup(given) {
   api = given;
-  api.tool({
-    id: "paint", label: "Paint finishes", icon: "paint-roller", key: "p", group: "place", views: ["2d", "3d", "walk"],
-    edits: true, keepsSelection: true, words: "finish floor wall carpet tiles paint colour",
-    hint: (view) => (paint.dropper ? "Click a room (or in 3D a floor or a wall) to take up its finishes"
-      : view === "2d" ? `Click a room: its floor gets ${finishOf(paint.floor)?.name} · Shift-click: its walls get ${finishOf(paint.wall)?.name} · Alt-click takes up its finishes`
-        : view === "walk" ? "Click a floor or a wall to paint it (marked under the pointer) · Alt-click takes up a finish · drag to look"
-          : "Click a floor, or a wall (its side towards you), to paint it · Alt-click takes up a finish"),
-    options: brushes,
-    start: () => {
-      paint.on = true;
-      paint.colouredBefore = colourBy; // the plan shows what is painted: by floor finish, while painting
-      if (colourBy !== "finish") colourRoomsBy("finish");
-      $("map")?.classList.add("painting");
-      api.stopTools();
-      api.showWalk();
-    },
-    stop: () => {
-      paint.on = false;
-      paint.dropper = false;
-      if (paint.colouredBefore && paint.colouredBefore !== colourBy) colourRoomsBy(paint.colouredBefore);
-      paint.colouredBefore = null;
-      closePicker();
-      $("map")?.classList.remove("painting");
-      api.showWalk();
-    },
+  const painter = (spec) => api.tool({ group: "place", family: "paint", views: ["2d", "3d", "walk"], edits: true, keepsSelection: true,
+    options: brushes, start: startPainting, stop: stopPainting, ...spec });
+  const takeUp = "Alt-click takes up a finish";
+  painter({
+    id: "paint", label: "Paint floors and walls", icon: "paint-roller", key: "p", words: "finish floor wall carpet tiles paint colour",
+    hint: (view) => (view === "2d" ? `Click a room: its floor gets ${finishOf(paint.floor)?.name} · Shift-click: its walls get ${finishOf(paint.wall)?.name} · ${takeUp}`
+      : view === "walk" ? `Click a floor or a wall to paint it, a wall's whole room (marked under the pointer) · ${takeUp} · drag to look`
+        : `Click a floor, or a wall (its side towards you): all its room's walls · ${takeUp}`),
+    plan: { click: paintOnPlan },
+  });
+  painter({
+    id: "paint-wall", label: "Paint one wall", icon: "paintbrush-vertical", key: "shift+p", words: "finish wall accent feature single paint colour",
+    hint: (view) => (view === "2d" ? `Click in a room near a wall: that wall gets ${finishOf(paint.wall)?.name} · ${takeUp}`
+      : `Click a wall (its side towards you): that wall alone gets ${finishOf(paint.wall)?.name} · ${takeUp}${view === "walk" ? " · drag to look" : ""}`),
+    plan: { hover: wallOnPlan, click: paintOnPlan },
+  });
+  painter({
+    id: "dropper", label: "Take up finishes", icon: "pipette", words: "dropper eyedropper pick finish colour",
+    hint: () => "Click a room (or in 3D a floor or a wall): its finishes become the brushes · Esc: back to painting",
     plan: { click: paintOnPlan },
   });
   document.addEventListener("pointerdown", (e) => {

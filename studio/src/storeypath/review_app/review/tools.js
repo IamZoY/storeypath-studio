@@ -2,11 +2,15 @@
 // what the person must be allowed (to change the floor; the floor's drawing), what the
 // status bar says while it is in use, its options (shown over the canvas while it is in
 // use), and what it does with the pointer. The rail on the left is drawn from it; each
-// tool is a command too (commands.js), so the palette and the keys find it.
+// tool is a command too (commands.js), so the palette and the keys find it. Tools of one
+// family share a place on the rail (as a drawing program's do): the one used last shows,
+// and holding it, right-clicking it, its corner mark or a click on it in use opens the
+// family's other tools beside it.
 //
 //   tool({
 //     id: "wall", label: "Wall", icon: "brick-wall", key: "w",
 //     group: "draw",                    the rail's group (navigate, draw, place, measure, share)
+//     family: "lines",                  tools sharing its place on the rail (none: its own)
 //     views: ["2d"],                    where it works ("2d", "3d", "walk")
 //     edits: true,                      only for who may change the floor
 //     drawing: true,                    only on a floor with its drawing
@@ -26,11 +30,15 @@ import { command } from "./commands.js";
 import { $, el, icon } from "./dom.js";
 import { bind, keyNow, keyText } from "./keys.js";
 import { readable, state, view3d } from "./state.js";
+import { hideTooltip } from "./tooltip.js";
 
 const tools = new Map();
 const VIEW_NAMES = { "2d": "2D", "3d": "3D", walk: "Walk" };
 const GROUPS = ["navigate", "draw", "place", "measure", "share"];
 let starting = false;
+const HOLD_MS = 320; // a press held this long on a family's place opens its tools
+const shownOf = new Map(); // a family → the tool of it its place on the rail shows (the one used last)
+let flyout = null; // a family's tools, opened beside its place: { el, family, button }
 
 export function tool(spec) {
   const t = { group: "draw", views: ["2d"], edits: false, drawing: false, keepsSelection: false, ...spec };
@@ -110,6 +118,10 @@ export function setTool(id) {
   try {
     if (state.tool !== id) was?.stop?.();
     state.tool = id;
+    if (next?.family && shownOf.get(next.family) !== id) {
+      shownOf.set(next.family, id);
+      showFace(next.family);
+    }
     state.wallStart = null;
     state.corners = [];
     $("map").classList.toggle("drawing-tool", Boolean(next) && next.cursor !== "default" && id !== "pan");
@@ -133,25 +145,88 @@ export function escapeTool() {
 
 // ---- the rail ----------------------------------------------------------------------------
 
-function railButton(t) {
-  const b = el("button", { type: "button", "data-tool": t.id, "aria-label": t.label, "data-tip": t.label,
-    "data-key": t.key || "", "aria-pressed": t.action ? null : "false" }, icon(t.icon, { size: 19 }));
-  if (t.key) b.append(el("span", { class: "rail-key", "aria-hidden": "true" }, keyText(t.key)));
+const family = (name) => allTools().filter((t) => t.family === name);
+const face = (name) => tools.get(shownOf.get(name)) || family(name)[0];
+
+function railButton(t, kin = null) {
+  const b = el("button", { type: "button", "aria-label": t.label, "aria-pressed": t.action ? null : "false" });
+  dress(b, t, kin);
+  let held = 0;
   b.addEventListener("click", (e) => {
+    if (b.dataset.opened === "1") { // (held open: the press's click is not the tool's)
+      delete b.dataset.opened;
+      return;
+    }
+    if (kin && (e.target.closest(".rail-more") || activeId() === b.dataset.tool || b.getAttribute("aria-disabled") === "true")) {
+      return flyout?.button === b ? closeFlyout() : openFlyout(b, kin);
+    }
     if (b.getAttribute("aria-disabled") === "true") return;
-    useTool(t.id, e);
+    useTool(b.dataset.tool, e);
   });
+  if (kin) {
+    b.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      clearTimeout(held);
+      held = setTimeout(() => {
+        b.dataset.opened = "1";
+        openFlyout(b, kin);
+      }, HOLD_MS);
+    });
+    for (const ended of ["pointerup", "pointerleave", "pointercancel"]) b.addEventListener(ended, () => clearTimeout(held));
+    b.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      openFlyout(b, kin);
+    });
+    b.addEventListener("keydown", (e) => { // the keyboard's way in: ↓ or → opens it
+      if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+        e.preventDefault();
+        openFlyout(b, kin, { focus: true });
+      }
+    });
+  }
   return b;
+}
+
+/** A rail button as tool ``t`` (its family's place: ``kin``). */
+function dress(b, t, kin) {
+  const more = kin ? family(kin).filter((o) => o !== t) : [];
+  b.dataset.tool = t.id;
+  b.setAttribute("aria-label", t.label);
+  b.dataset.tip = more.length ? `${t.label} · hold for ${more.map((o) => o.label.toLowerCase()).join(", ")}` : t.label;
+  b.dataset.key = t.key || "";
+  if (kin) {
+    b.dataset.family = kin;
+    b.setAttribute("aria-haspopup", "menu");
+    b.setAttribute("aria-expanded", String(flyout?.button === b));
+  }
+  b.replaceChildren(icon(t.icon, { size: 19 }), t.key ? el("span", { class: "rail-key", "aria-hidden": "true" }, keyText(t.key)) : null,
+    more.length ? el("span", { class: "rail-more", "aria-hidden": "true" }) : null);
+}
+
+/** A family's place on the rail as the tool of it used last. */
+function showFace(kin) {
+  const b = document.querySelector(`#rail [data-family="${kin}"]`);
+  if (!b) return;
+  dress(b, face(kin), kin);
+  markRail();
 }
 
 export function renderRail() {
   const rail = $("rail");
+  closeFlyout();
   const parts = [];
   for (const group of GROUPS) {
     const list = allTools().filter((t) => t.group === group);
     if (!list.length) continue;
     if (parts.length) parts.push(el("div", { class: "rail-sep", role: "separator" }));
-    parts.push(...list.map(railButton));
+    const placed = new Set();
+    for (const t of list) {
+      if (!t.family) parts.push(railButton(t));
+      else if (!placed.has(t.family)) {
+        placed.add(t.family);
+        parts.push(railButton(face(t.family), t.family));
+      }
+    }
   }
   parts.push(el("div", { class: "rail-spacer" }));
   const help = el("button", { type: "button", id: "keys-help", "aria-label": "Keyboard shortcuts", "data-tip": "Keyboard shortcuts", "data-key": "?" },
@@ -161,6 +236,64 @@ export function renderRail() {
   rail.replaceChildren(...parts);
   markRail();
 }
+
+/** A family's tools, beside its place on the rail: each with its key, the one in use
+ * ticked, those that cannot be used now dimmed and saying why. A choice takes the tool
+ * (and the place shows it); Esc, a click elsewhere or the place again puts it away. */
+function openFlyout(b, kin, { focus = false } = {}) {
+  closeFlyout();
+  hideTooltip();
+  const list = el("div", { class: "menu rail-flyout", role: "menu", "aria-label": `${face(kin).label} and others like it` });
+  for (const t of family(kin)) {
+    const why = blocked(t);
+    const item = el("button", { type: "button", role: "menuitemradio", class: "menu-item", "aria-checked": String(activeId() === t.id),
+      "data-tool": t.id }, icon(t.icon, { size: 15 }), el("span", { class: "label" }, t.label),
+    why ? el("span", { class: "why" }, why) : t.key ? el("span", { class: "key" }, keyText(t.key)) : null);
+    if (why) item.setAttribute("aria-disabled", "true");
+    item.addEventListener("click", () => {
+      closeFlyout();
+      if (why) return emit("tool-refused", why);
+      useTool(t.id);
+    });
+    list.append(item);
+  }
+  list.addEventListener("keydown", (e) => {
+    const items = [...list.querySelectorAll(".menu-item")], at = items.indexOf(document.activeElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") items[(at + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+    else if (e.key === "ArrowLeft") closeFlyout({ refocus: true });
+    else if (e.key === "Tab") closeFlyout();
+    else return;
+    e.preventDefault(); // (the page's keys do not hear it)
+  });
+  document.body.append(list);
+  const r = b.getBoundingClientRect(), m = list.getBoundingClientRect();
+  list.style.left = `${Math.min(r.right + 8, innerWidth - m.width - 4)}px`;
+  list.style.top = `${Math.max(4, Math.min(r.top - 4, innerHeight - m.height - 4))}px`;
+  flyout = { el: list, family: kin, button: b };
+  b.setAttribute("aria-expanded", "true");
+  if (focus) (list.querySelector('[aria-checked="true"]') || list.querySelector(".menu-item"))?.focus();
+}
+
+function closeFlyout({ refocus = false } = {}) {
+  if (!flyout) return;
+  const { el: list, button } = flyout;
+  flyout = null;
+  list.remove();
+  button.setAttribute("aria-expanded", "false");
+  if (refocus) button.focus({ preventScroll: true });
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (flyout && !e.target.closest?.(".rail-flyout") && !flyout.button.contains(e.target)) closeFlyout();
+}, true);
+document.addEventListener("keydown", (e) => { // Esc, wherever the keys are: put away first (and nothing else)
+  if (flyout && e.key === "Escape" && !e.defaultPrevented) {
+    e.preventDefault();
+    closeFlyout({ refocus: flyout.el.contains(document.activeElement) });
+  }
+}, true);
+window.addEventListener("blur", () => closeFlyout());
+window.addEventListener("resize", () => closeFlyout());
 
 /** The rail as things are: the tool in use pressed, those that cannot be used now dimmed
  * and saying why. */

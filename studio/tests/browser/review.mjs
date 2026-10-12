@@ -158,8 +158,9 @@ test("Shift-click adds rooms; Shift-drag draws a band that chooses those it cove
 test("each tool is taken by its key: pressed in the rail, its options over the canvas, its hint in the status bar", async () => {
   const tools = await R(() => window.storeypathReview.tools().map((t) => ({ id: t.id, key: t.key, label: t.label, options: Boolean(t.options), action: Boolean(t.action) })));
   for (const t of tools) {
-    if (t.action || t.id === "select") continue;
-    await press(t.key);
+    if (t.action || t.id === "select" || !t.key) continue; // (one without a key: from its family's place, below)
+    const [k, ...mods] = t.key.split("+").reverse();
+    await press(k, mods);
     const now = await R(() => ({ tool: window.storeypathReview.state.tool,
       pressed: document.querySelector("#rail [aria-pressed='true']")?.dataset.tool,
       options: !document.getElementById("tool-options").hidden, hint: document.getElementById("sb-hint").textContent }));
@@ -193,6 +194,84 @@ test("the plan by the keys: the arrows move it, + and − zoom it, Space held an
   truly(await R(() => !document.getElementById("menu").hidden && document.activeElement.closest("#menu")), "Shift-F10: the menu, its keys in it");
   await press("Escape");
   await press("f");
+});
+
+test("tools of one family share a place on the rail: right-clicked or held, it opens the others; Paint one wall paints the wall clicked alone, undone", async () => {
+  await press("Escape");
+  const place = () => R(() => {
+    const b = document.querySelector('#rail [data-family="paint"]');
+    return b && { tool: b.dataset.tool, pressed: b.getAttribute("aria-pressed"), expanded: b.getAttribute("aria-expanded") };
+  });
+  const flyout = () => R(() => [...document.querySelectorAll(".rail-flyout .menu-item")].map((b) => b.dataset.tool));
+  truly(await R(() => ["paint", "paint-wall", "dropper"].filter((id) => document.querySelector(`#rail [data-tool="${id}"]`)).length === 1),
+    "the paint tools: one place on the rail");
+  const at = await R(() => {
+    const r = document.querySelector('#rail [data-family="paint"]').getBoundingClientRect();
+    return [r.left + r.width / 2, r.top + r.height / 2];
+  });
+  // right-clicked: its tools beside it, none taken; Esc puts them away
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: at[0], y: at[1], button: "right", buttons: 2, clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: at[0], y: at[1], button: "right", buttons: 0, clickCount: 1 });
+  truly((await flyout()).join() === "paint,paint-wall,dropper" && (await place()).expanded === "true", `right-clicked: ${await flyout()}`);
+  await press("Escape");
+  truly(!(await flyout()).length && !(await toolNow()), "Esc: put away, no tool taken");
+  // held: open, and letting go takes no tool
+  await page.mouse("mouseMoved", ...at);
+  await page.mouse("mousePressed", ...at, { down: true });
+  await until(() => Boolean(document.querySelector(".rail-flyout")), "held: open", 3000);
+  await page.mouse("mouseReleased", ...at);
+  truly((await flyout()).length === 3 && !(await toolNow()), `let go: open still, no tool taken (${await toolNow()})`);
+  // Paint one wall chosen: its place shows it, pressed; the walls' brush alone
+  await R(() => document.querySelector('.rail-flyout [data-tool="paint-wall"]').click());
+  const now = await place();
+  truly((await toolNow()) === "paint-wall" && now.tool === "paint-wall" && now.pressed === "true" && !(await flyout()).length, `one wall: ${JSON.stringify(now)}`);
+  truly(await R(() => document.querySelectorAll(".fin-brush").length === 1), "its options: the walls' brush alone");
+  await R(() => document.querySelector(".fin-brush").click()); // (a finish none of the offices has)
+  await until(() => Boolean(document.querySelector(".fin-picker .fin-grid .fin-tile")), "the finishes", 5000);
+  const brush = await R(() => {
+    const t = [...document.querySelectorAll(".fin-picker .fin-grid .fin-tile")].at(-1);
+    t.click();
+    return t.dataset.code ?? t.textContent;
+  });
+  // in an office near a wall: that wall drawn, then painted alone
+  const office = await officeNamed("001");
+  const near = await R((id) => {
+    const r = window.storeypathReview, s = r.state.byId.get(id), v = r.state.view;
+    const ring = s.geometry.type === "Polygon" ? s.geometry.coordinates[0] : s.geometry.coordinates[0][0];
+    let best = null;
+    for (let i = 0; i + 1 < ring.length; i++) {
+      const [a, b] = [ring[i], ring[i + 1]], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (!best || l > best.l) best = { a, b, l };
+    }
+    const m = [(best.a[0] + best.b[0]) / 2, (best.a[1] + best.b[1]) / 2], c = s.label_point;
+    const d = Math.hypot(c[0] - m[0], c[1] - m[1]) || 1, p = [m[0] + ((c[0] - m[0]) / d) * 0.3, m[1] + ((c[1] - m[1]) / d) * 0.3];
+    const box = document.getElementById("svg").getBoundingClientRect();
+    return [box.left + p[0] * v.k + v.tx, box.top - p[1] * v.k + v.ty];
+  }, office.id);
+  await page.mouse("mouseMoved", ...near);
+  await until(() => Boolean(document.querySelector("#preview line.paint-wall")), "the wall a click paints, drawn", 3000);
+  await page.click(...near);
+  const painted = await until((id) => {
+    const w = window.storeypathReview.state.byId.get(id).wall_finishes || [];
+    return w.length === 1 && w[0];
+  }, "that wall painted alone", 8000, office.id);
+  truly(!(await R((id) => window.storeypathReview.state.byId.get(id).wall_finish, office.id)), `its other walls as they were: ${JSON.stringify(painted)} (${brush})`);
+  await press("z", ["mod"]);
+  await until((id) => !(window.storeypathReview.state.byId.get(id).wall_finishes || []).length, "undone", 8000, office.id);
+  // P and Shift-P: each its tool, its place following; the dropper from the brushes, Esc back
+  await press("p");
+  truly((await toolNow()) === "paint" && (await place()).tool === "paint", "P: Paint floors and walls, in its place");
+  await press("p", ["shift"]);
+  truly((await toolNow()) === "paint-wall" && (await place()).tool === "paint-wall", "Shift-P: Paint one wall");
+  await R(() => document.querySelector(".fin-dropper").click());
+  truly((await toolNow()) === "dropper" && (await place()).tool === "dropper", "the dropper");
+  await press("Escape");
+  truly((await toolNow()) === "paint-wall", "Esc: back to painting one wall");
+  await press("Escape");
+  truly(!(await toolNow()), "Esc again: done");
+  await press("p");
+  await press("Escape");
+  noErrors("the paint tools");
 });
 
 test("Measure: two points clicked, the distance between them", async () => {

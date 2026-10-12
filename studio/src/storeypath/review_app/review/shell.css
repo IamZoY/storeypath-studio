@@ -74,6 +74,22 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 }
 .rail button[aria-pressed="true"] .rail-key { color: var(--accent-text); }
 .rail button .rail-key.off { visibility: hidden; } /* its key does not choose it here (another view's, the walker's) */
+/* a family's place: its corner mark opens the family's other tools beside it (so does holding it, or right-clicking) */
+.rail button .rail-more {
+  position: absolute; right: 0; top: 0; width: 14px; height: 14px; border-radius: 0 var(--r-md) 0 0;
+}
+.rail button .rail-more::after {
+  content: ""; position: absolute; right: 3px; top: 3px; border-style: solid; border-width: 0 5px 5px 0;
+  border-color: transparent var(--text-faint) transparent transparent;
+}
+.rail button[aria-pressed="true"] .rail-more::after, .rail button:hover .rail-more::after { border-right-color: var(--accent-text); }
+.rail button[aria-expanded="true"] { background: var(--surface-3); color: var(--text); }
+.rail-flyout { min-width: 230px; }
+.rail-flyout .menu-item[aria-checked="true"] { font-weight: var(--fw-semibold); }
+.rail-flyout .menu-item[aria-checked="true"] .icon { color: var(--accent-text); }
+.rail-flyout .menu-item[aria-disabled="true"] { opacity: .5; }
+.rail-flyout .why { margin-left: auto; padding-left: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); max-width: 180px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- panels ----------------------------------------------------------------------------- */
 .panel {

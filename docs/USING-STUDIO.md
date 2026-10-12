@@ -83,7 +83,9 @@ building.
 ![Review: the tool rail, the rooms by type, review mode on a room the rules could not type, its likely types in the inspector](images/review.webp)
 
 *Review* on a floor opens the review editor: the floor drawn over its drawing, in the
-middle; the **tools** on the left (each with its key, shown in its tooltip); the
+middle; the **tools** on the left (each with its key, shown in its tooltip; tools of a
+kind share a place, as in a drawing program: hold it, right-click it or click its corner
+mark for the others, and the one you take stays in its place); the
 **navigator** (Rooms, Items, View) beside them; the **inspector** of what is chosen on
 the right; a **top bar** that says where you are (project / building / floor: the
 floor's name is its menu, with how many rooms each floor has to review) and switches
@@ -146,7 +148,7 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   is shown, and you start in the room you chose, or where the 3D view or the plan was
   looking. In 3D and walking you edit as on the plan: a click chooses a room or an
   item (walking: at the cross) and the inspector shows it; the *Place* tool
-  (<kbd>I</kbd>) and *Paint finishes* (<kbd>P</kbd>) work there too; drag items in 3D;
+  (<kbd>I</kbd>) and the paint tools (<kbd>P</kbd>, <kbd>Shift P</kbd>) work there too; drag items in 3D;
   <kbd>R</kbd>, <kbd>,</kbd> <kbd>.</kbd> and <kbd>Del</kbd> as on the plan. Walls,
   doors, dividers and spaces are drawn on the plan: a drawing tool's key over a place
   in 3D (or right-click, or <kbd>2</kbd>) shows that place there. What changes —
@@ -281,14 +283,22 @@ type's (offices carpet, lobbies marble, restrooms porcelain with white wall tile
   grid of swatches by kind, its type's first. *Apply to every office on this floor* gives
   every room of its type the same, as one change. *Colour: by floor finish* (View) fills
   the plan with the finishes' tones, the legend listing them.
-- **In 3D and walking**, *Paint finishes* (<kbd>P</kbd>) shows a palette: choose a floor
+- **In 3D and walking**, *Paint floors and walls* (<kbd>P</kbd>) shows a palette: choose a floor
   finish and a wall finish, then click a floor (that room's) or a wall (the walls of the
   room on the side you clicked); walking, at the cross. <kbd>Alt</kbd>-click takes up the
   finishes where you click. The room changes at once, in place.
+- **One wall otherwise** (an accent wall): *Paint one wall* (<kbd>Shift P</kbd>) paints
+  the wall you click alone, in 3D or walking; on the plan, click in the room near the wall
+  (the wall is drawn under the pointer). The right-click menu has it too: a room on the
+  plan, or a wall in 3D, offers *Paint this wall…* and *Paint all its walls…*. The
+  inspector's Walls says how many walls are finished otherwise, and *Make them as the
+  rest* gives them the room's finish again.
+- The paint tools share one place on the rail: *Paint floors and walls*, *Paint one
+  wall* and *Take up finishes* (the dropper; <kbd>Esc</kbd> goes back to painting).
 
 They are corrections like any other: saved at once, in the history, undone and redone,
 kept through every re-read, and exported with each space and zone (`floor_finish`,
-`wall_finish`, format 0.9).
+`wall_finish`, format 0.9; a space's walls finished one by one, `wall_finishes`, 0.9.3).
 
 ### Capacity and grade
 

@@ -15,6 +15,7 @@ from storeypath import catalogue
 from storeypath.accounts import Accounts
 from storeypath.bundle import write_project_file
 from storeypath.export import export_package, preview_package
+from storeypath.package import FORMAT_VERSION
 from storeypath.samples import build_demo
 from storeypath.server import Studio
 from storeypath.validate import validate_package
@@ -76,7 +77,7 @@ def test_a_package_carries_the_types_its_items_use_each_once_or_the_whole_catalo
     cat = catalogue.default_catalogue()
     used = export_package(ws, tmp_path / "used.storeypath", building=b_id, bake=False, catalogue=cat, record=False)
     assert sorted(_types_of(tmp_path / "used.storeypath")) == ["DESK-MANAGER", "MEETING-TABLE-8"]
-    assert used.format_version == "0.9.2" and validate_package(tmp_path / "used.storeypath") == []
+    assert used.format_version == FORMAT_VERSION and validate_package(tmp_path / "used.storeypath") == []
     export_package(ws, tmp_path / "all.storeypath", building=b_id, bake=False, catalogue=cat, record=False, item_types="all")
     assert _types_of(tmp_path / "all.storeypath") == [t.code for t in cat.types]
     assert validate_package(tmp_path / "all.storeypath") == []
@@ -283,7 +284,7 @@ def test_a_type_given_a_3d_model_takes_its_size_and_a_package_carries_it_once(st
     with zipfile.ZipFile(io.BytesIO(blob)) as z:
         manifest = json.loads(z.read("manifest.json"))
         types = {t["code"]: t for t in json.loads(z.read(manifest["files"]["catalogue"]))["types"]}
-        assert manifest["format_version"] == "0.9.2" and manifest["files"]["models"] == "models/"
+        assert manifest["format_version"] == FORMAT_VERSION and manifest["files"]["models"] == "models/"
         assert types["SOFA"]["model"] == "models/SOFA.glb" and types["DESK-JUNIOR"]["model"] is None
         assert z.read("models/SOFA.glb") == glb and [n for n in z.namelist() if n.startswith("models/")] == ["models/SOFA.glb"]
 

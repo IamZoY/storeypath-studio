@@ -342,7 +342,7 @@ function setup3d(world) {
     if (finish.painting()) { // painted (or taken up), not chosen: seen as it is now, unmarked, until the pointer leaves it
       e.preventDefault();
       if (editable()) finish.pick(e.detail);
-      view3d.painted = JSON.stringify(paintTarget(e.detail));
+      view3d.painted = JSON.stringify(finish.target(e.detail));
       world.mark(null);
       return;
     }
@@ -420,16 +420,13 @@ function markUnder(p) {
   if (!w?.mark) return;
   if (!p || p.floor !== state.floor?.id || state.tool === "place" || menuOpen() || !editable() && finish.painting()) return w.mark(null);
   if (finish.painting()) {
-    const target = paintTarget(p), key = JSON.stringify(target);
+    const target = finish.target(p), key = JSON.stringify(target);
     if (key === view3d.painted) return w.mark(null); // (just painted: seen as it is)
     view3d.painted = null;
     return w.mark(target);
   }
   w.mark(p.item && !p.door && p.item !== state.asset ? { item: p.item } : null); // (the item chosen: lit already)
 }
-
-/** What a click paints there: the walls of the room on a wall's side, else the floor's room. */
-const paintTarget = (p) => (p?.wall && p.room ? { walls: p.room } : p?.space ? { floor: p.space } : null);
 
 /** Walking: E. The door under the pointer, else the nearest ahead (the world takes E first
  * when there is one: here when it did not), else up at stairs or a lift. */
@@ -512,6 +509,8 @@ export function showWalk() {
 function walkKeys() {
   const may = editable();
   if (state.tool === "place") return "Click the floor: place it · Alt-click: as it is · Esc: stop placing";
+  if (state.tool === "dropper") return "Click a floor or a wall: take up its finishes · Esc: back to painting";
+  if (state.tool === "paint-wall") return "Click a wall: paint that wall alone · Alt-click: take up its finish · Esc: stop painting";
   if (finish.painting()) return "Click a floor or a wall: paint it · Alt-click: take up its finish · Esc: stop painting";
   if (state.asset && may) return "R , . turn it · Del delete · drag it to move it · Esc: let it go";
   return "Drag to look · W A S D to move · double-click to go there";
