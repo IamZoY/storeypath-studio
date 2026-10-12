@@ -16,6 +16,7 @@ import { refreshFloor } from "./live.js";
 import { toast } from "./notify.js";
 import { selectItem } from "./selection.js";
 import { BASE, inRing, rings, state, toSegment, view3d } from "./state.js";
+import { renderDrawn } from "./plan.js";
 import { setTool, tool } from "./tools.js";
 import { dirty3d } from "./view3d.js";
 import * as vertical from "./vertical.js";
@@ -201,22 +202,36 @@ export function toolClick(p) {
 
 export async function submitEdit(body, saying, after = null) {
   if (viewOnly()) return;
-  state.busy = true;
+  // a wall or dividing line: drawn at once, the next one drawn while it is read (Studio
+  // reads them in turn); anything else is waited for
+  const line = body.add?.wall ? ["wall", body.add.wall] : body.add?.divider ? ["divider", body.add.divider] : null;
+  if (line) {
+    state.pending.push(line);
+    renderDrawn();
+  } else {
+    state.busy = true;
+  }
   $("map").classList.add("busy");
+  const floorId = state.floor.id;
   try {
-    await followJob(await request(`${BASE}/floors/${state.floor.id}/edits`, body), saying);
+    await followJob(await request(`${BASE}/floors/${floorId}/edits`, body), saying);
     await refreshProject();
-    view3d.dirty.add(state.floor.id); // read again with it: built again in 3D (that floor alone)
+    view3d.dirty.add(floorId); // read again with it: built again in 3D (that floor alone)
     state.busy = false;
-    await refreshFloor(null); // what the read changed, drawn in place
+    if (state.floor?.id === floorId) await refreshFloor(null); // what the read changed, drawn in place
     toast(body.remove ? "Taken away" : body.resize ? "Size changed; the floor was read again" : "Added; the floor was read again");
     after?.();
   } catch (e) {
     toast(`Not saved: ${e.message}`, true);
   } finally {
-    state.busy = false;
-    $("map").classList.remove("busy");
-    clearPreview();
+    if (line) {
+      state.pending = state.pending.filter((x) => x !== line);
+      renderDrawn();
+    } else {
+      state.busy = false;
+      clearPreview();
+    }
+    if (!state.busy && !state.pending.length) $("map").classList.remove("busy");
   }
 }
 

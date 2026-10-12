@@ -253,7 +253,7 @@ function renderDoors() {
   );
 }
 
-function renderDrawn() {
+export function renderDrawn() {
   const f = state.floor;
   // Walls and dividing lines drawn in review, over the rest: chosen by a click, to
   // take them away
@@ -267,7 +267,8 @@ function renderDrawn() {
       line.dataset.kind = kind_;
       return line;
     });
-  }));
+  }), ...state.pending.map(([kind_, [a, b]]) => svg("line", { // drawn, being read: not to be chosen yet
+    x1: a[0], y1: a[1], x2: b[0], y2: b[1], class: `pending${kind_ === "divider" ? " divide" : ""}` })));
 }
 
 export function styleSpace(s) {

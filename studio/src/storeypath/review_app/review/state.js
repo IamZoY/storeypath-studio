@@ -35,6 +35,7 @@ export const state = {
   asset: null, // the item (furniture or equipment) chosen
   placeType: null, // the type being placed (tool "place")
   busy: false, // an edit is being saved and the floor read again
+  pending: [], // walls and dividing lines drawn, being read (["wall" | "divider", line]): drawn meanwhile
   reading: null, // the floor's drawing being read again: its job's ID (a person may stop it)
   segments: null, // the floor's wall edges, for snapping to
   alt: false, // Alt held (placing or dragging freely)

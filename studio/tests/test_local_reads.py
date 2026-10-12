@@ -3,6 +3,8 @@ wall drawn or taken away comes near are found again around it (find_spaces_aroun
 the rest are as the floor's last read found them, and what the floor holds then is
 what reading the whole floor again gives."""
 
+import time
+
 import pytest
 from shapely.geometry import shape
 
@@ -143,3 +145,28 @@ def test_walls_drawn_anywhere_leave_the_floor_as_reading_it_whole_does(floor, wh
     report, whole = _read_again(ws, d, f_id)
     assert ways[0] == "around"
     assert _held(ws, f_id) == _held(whole, f_id)
+
+
+def test_a_floors_read_kept_on_disk_is_taken_by_a_studio_started_again(floor, monkeypatch):
+    ws, d, f_id, ways = floor
+    kept = d / "reads"
+    convert._reads.clear()
+    convert_floor(ws, f_id, d, reads=kept)  # read whole: kept in memory and on disk
+    for _ in range(100):  # (written in the background)
+        if (kept / f"{f_id}.read").exists():
+            break
+        time.sleep(0.05)
+    convert._reads.clear()  # (as a Studio started again)
+    ways.clear()
+    x0, y0, x1, y1 = shape(_room(ws, f_id, "201").geometry).bounds
+    ws.floor(f_id).edits.walls.append([[x0 + 1.2, y0 - 0.1], [x0 + 1.2, y1 + 0.1]])
+    convert_floor(ws, f_id, d, drawn=True, reads=kept)
+    assert ways == ["around"]
+
+    # one kept by a Studio that read otherwise is not taken
+    convert._reads.clear()
+    ways.clear()
+    monkeypatch.setattr(convert, "READ_CODE", "another reading")
+    ws.floor(f_id).edits.walls.clear()
+    convert_floor(ws, f_id, d, drawn=True, reads=kept)
+    assert ways == ["whole"]

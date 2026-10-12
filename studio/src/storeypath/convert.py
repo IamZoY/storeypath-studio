@@ -90,20 +90,20 @@ class ConversionReport:
 def convert_floor(
     ws: Workspace, floor_id: str, workspace_dir: str | Path = ".", model: LocalModel | None = None,
     symbols: SymbolSpotter | None = None, vision: VisionModel | None = None, say=None, force: bool = False,
-    tiles: str | Path | None = None, drawn: bool = False,
+    tiles: str | Path | None = None, drawn: bool = False, reads: str | Path | None = None,
 ) -> ConversionReport:
     """Read a floor's drawing and register what it holds (read_floor, applied to ``ws``:
     apply_read). A read that would retire most of the floor is held back unless
     ``force`` (see apply_extraction): the floor is then left as it was. ``drawn``: read
     after a person drew on the floor in review (or undid it), see apply_extraction."""
-    read = read_floor(ws, floor_id, workspace_dir, model, symbols, vision, say, tiles, drawn)
+    read = read_floor(ws, floor_id, workspace_dir, model, symbols, vision, say, tiles, drawn, reads)
     return apply_read(ws, read, force=force, drawn=drawn)
 
 
 def read_floor(
     ws: Workspace, floor_id: str, workspace_dir: str | Path = ".", model: LocalModel | None = None,
     symbols: SymbolSpotter | None = None, vision: VisionModel | None = None, say=None,
-    tiles: str | Path | None = None, drawn: bool = False,
+    tiles: str | Path | None = None, drawn: bool = False, reads: str | Path | None = None,
 ) -> FloorRead:
     """Read a floor's drawing: what it holds, to register in the project (apply_read).
     With the "auto" profile the layers are read from what is drawn on them; ``model``
@@ -112,7 +112,8 @@ def read_floor(
     drawn (vision.py). What the models answer is kept in ``ws``. ``tiles``: a folder
     where the drawing's prints for the vision model are kept, for the floor read again
     (FloorPrint). ``drawn``: read after a person drew on the floor in review (or undid
-    it): what can be is taken from its last read (_extract)."""
+    it): what can be is taken from its last read (_extract), kept in memory and in
+    ``reads`` (a folder), where it is kept for Studio started again."""
     floor = ws.floor(floor_id)
     if floor.source is None:
         raise ValueError(f"floor {floor_id} has no source drawing")
@@ -125,7 +126,7 @@ def read_floor(
     base = load_profile(resolve_profile(src.profile, workspace_dir))
     reader = TextReader(ws, base, model)
     drawing = (sha, src.region, src.offset, src.units, src.profile)  # what the floor's plan is read from
-    last = _last_read(floor_id, drawing) if drawn else None
+    last = _last_read(floor_id, drawing, reads) if drawn else None
     if last is not None:  # read again after a person drew on it: with the layers' roles it was read with
         profile, layers = last.profile, last.layers
     elif src.profile == AUTO:
@@ -168,7 +169,8 @@ def read_floor(
         notes.append(f"symbols were not spotted: {spot_failed}")
     if vision is not None and vision.failed:
         notes.append(f"vision: {vision.failed}")
-    return FloorRead(floor_id, extraction, layers, sha, (floor.symbols, floor.symbols_key), tally, notes, read)
+    return FloorRead(floor_id, extraction, layers, sha, (floor.symbols, floor.symbols_key), tally, notes, read,
+                     Path(reads) if reads is not None else None)
 
 
 @dataclass
@@ -184,7 +186,8 @@ class FloorRead:
     symbols: tuple  # (records, key): the symbols spotted in it, as the floor keeps them
     tally: dict  # what vision looked at
     notes: list[str]  # what the read had to say beside what applying it says
-    kept: "_Read"  # what to keep of it for the floor read again
+    kept: "_Read"  # what to keep of it for the floor read again…
+    keep_in: Path | None = None  # …and where, beside memory
 
 
 def apply_read(ws: Workspace, read: FloorRead, force: bool = False, drawn: bool = False) -> ConversionReport:
@@ -197,7 +200,7 @@ def apply_read(ws: Workspace, read: FloorRead, force: bool = False, drawn: bool 
     if not report.held:  # a read held back leaves the floor as it was
         floor.layers = read.layers
         floor.source.sha256 = read.sha
-        _keep_read(read.floor_id, read.kept)
+        _keep_read(read.floor_id, read.kept, read.keep_in)
     report.warnings += read.notes
     return report
 
@@ -239,18 +242,108 @@ def _drawing(path: Path, sha: str):
     return doc
 
 
-def _last_read(floor_id: str, drawing: tuple) -> "_Read | None":
+def _last_read(floor_id: str, drawing: tuple, folder: Path | str | None = None) -> "_Read | None":
+    """The floor's last read, when it was of ``drawing``: kept in memory, else in
+    ``folder`` (by a Studio before this one: taken only when read with the same reading
+    code, READ_CODE)."""
     with _kept_lock:
         read = _reads.get(floor_id)
+    if read is None and folder is not None:
+        read = _read_from(Path(folder) / _read_file(floor_id))
+        if read is not None:
+            with _kept_lock:
+                _reads.setdefault(floor_id, read)
+                _trim_reads()
     return read if read is not None and read.drawing == drawing else None
 
 
-def _keep_read(floor_id: str, read: "_Read") -> None:
+def _keep_read(floor_id: str, read: "_Read", folder: Path | str | None = None) -> None:
+    """The floor's last read kept in memory and, written in the background, in ``folder``."""
     with _kept_lock:
         _reads[floor_id] = read
         _reads.move_to_end(floor_id)
-        while len(_reads) > READS_KEPT:
-            _reads.popitem(last=False)
+        _trim_reads()
+    if folder is not None:
+        threading.Thread(target=_write_read, args=(Path(folder) / _read_file(floor_id), read), daemon=True,
+                         name=f"keeping {floor_id}'s read").start()
+
+
+def _trim_reads() -> None:
+    while len(_reads) > READS_KEPT:
+        _reads.popitem(last=False)
+
+
+def _read_file(floor_id: str) -> str:
+    return f"{floor_id}.read"
+
+
+def _write_read(path: Path, read: "_Read") -> None:
+    """A read written whole or not at all (a file of its own, put in place)."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        part = path.with_name(f"{path.name}.{threading.get_ident()}.part")
+        part.write_bytes(pickle.dumps((READ_CODE, read), protocol=pickle.HIGHEST_PROTOCOL))
+        part.replace(path)
+    except OSError:
+        pass  # (not kept on disk: read whole the first time again)
+
+
+def _read_from(path: Path) -> "_Read | None":
+    """A read kept in a file of Studio's own cache, when read with this reading code."""
+    try:
+        code, read = pickle.loads(path.read_bytes())
+    except (OSError, pickle.UnpicklingError, EOFError, AttributeError, ImportError, ValueError, TypeError):
+        return None
+    return read if code == READ_CODE and isinstance(read, _Read) else None
+
+
+def _reading_code() -> str:
+    """What the reading code is: its modules' source, hashed. A read kept by a Studio
+    that read otherwise is not taken."""
+    import hashlib
+    import importlib
+
+    h = hashlib.sha256()
+    for name in ("analyse", "cad", "convert", "extract", "geometry", "profile", "split", "walls"):
+        h.update(Path(importlib.import_module(f"storeypath.{name}").__file__).read_bytes())
+    return h.hexdigest()[:16]
+
+
+READ_CODE = _reading_code()
+
+
+def keep_a_read(ws: Workspace, floor_id: str, workspace_dir: str | Path, reads: str | Path | None = None) -> bool:
+    """The floor's read worked out and kept, not applied (read_floor's, without vision,
+    and the layers' roles as the rules and the texts read already say: no model asked),
+    for the floor read again after a person draws on it, where none is kept. Whether one
+    was kept."""
+    floor = ws.floor(floor_id)
+    src = floor.source
+    if src is None or (src.sha256 and _last_read(floor_id, (src.sha256, src.region, src.offset, src.units,
+                                                             src.profile), reads) is not None):
+        return False
+    path = Path(workspace_dir) / src.path
+    sha = file_sha256(path)
+    drawing = (sha, src.region, src.offset, src.units, src.profile)
+    if _last_read(floor_id, drawing, reads) is not None:
+        return False
+    doc = _drawing(path, sha)
+    base = load_profile(resolve_profile(src.profile, workspace_dir))
+    reader = TextReader(ws, base, None)
+    if src.profile == AUTO:
+        analysis = analyse(doc, meters_per_unit(doc, src.units), src.region, reader.is_room_name, base)
+        profile, layers = analysis.profile, analysis.summary()
+    else:
+        profile, layers = base, []
+    _, read = _extract(floor_id, doc, profile, src, floor.edits, reader, drawing, layers, None)
+    _keep_read(floor_id, read, reads)
+    return True
+
+
+def kept_read(floor_id: str, src, reads: str | Path | None = None) -> bool:
+    """Whether a read of the floor's drawing (``src``: as it was last read) is kept."""
+    return src is not None and bool(src.sha256) and _last_read(
+        floor_id, (src.sha256, src.region, src.offset, src.units, src.profile), reads) is not None
 
 
 def _extract(floor_id: str, doc, profile, src, edits, reader: TextReader, drawing: tuple, layers: list,

@@ -272,6 +272,7 @@ def _message(e: Exception) -> str:
 CACHE = "cache"  # in the data folder: what is made again when gone (prints of floors)
 WORK = "work"  # in the cache: drawings read from the database for a step, removed after it
 TILES = "tiles"  # in the cache: drawings printed for the vision model, kept for a floor read again
+READS = "reads"  # in the cache: each floor's last read, for it read again after a person drew on it
 
 
 class Studio:
@@ -307,7 +308,8 @@ class Studio:
         self._networks: dict[tuple, tuple] = {}  # (code, building, version) -> its walking network, worked out
         self._previews: OrderedDict[str, bytes] = OrderedDict()  # a preview's tag -> the package (preview_tag)
         self._started = uuid.uuid4().hex  # (a newer Studio may make previews otherwise: their tags are new)
-        self._warm = warm  # what a step leaves to be done later done now, in the background (prints)
+        self._warm = warm  # what a step leaves to be done later done now, in the background (prints, reads)
+        self._warming: set[str] = set()  # floors whose read is being worked out (warm)
         # One lock per project, held while a job changes it: converting one project
         # (minutes, with vision) never holds up another, and pages only read. It is the
         # database's too (StepLock): another Studio on it waits as this one does.
@@ -1108,7 +1110,7 @@ class Studio:
                     source = ws.floor(fid).source.model_dump(exclude={"sha256"})
                     try:
                         floor_read = read_floor(ws, fid, folder, self.model, self.symbols, vision, say=say,
-                                                tiles=self.cache / TILES, drawn=drawn)
+                                                tiles=self.cache / TILES, drawn=drawn, reads=self.cache / READS)
                     except Exception as e:  # this floor stays as it was; the others are converted
                         # what the models answered meanwhile is kept, so reading it again asks only about the rest
                         self._keep_answers(code, ws, fid, by)
@@ -1145,6 +1147,40 @@ class Studio:
         if failed:  # the job fails, the floors converted kept
             raise ValueError(f"not converted: {'; '.join(failed)}")
         return {"summaries": summaries, "held": held, "why": why}
+
+    def warm(self, code: str, floor_id: str) -> None:
+        """A floor's read worked out in the background where Studio keeps none
+        (convert.keep_a_read): the first wall a person draws on it is then found as
+        quickly as the next. A floor once at a time, never while it is read."""
+        from .convert import kept_read
+
+        if not self._warm:
+            return
+        ws = self.workspace(code)
+        f = next((f for *_, f, i in ws.iter_floors() if i == floor_id), None)
+        if f is None or f.source is None or f.converted_at is None or kept_read(floor_id, f.source, self.cache / READS):
+            return
+        with self._lock:
+            if floor_id in self._warming:
+                return
+            self._warming.add(floor_id)
+
+        def run():
+            from .convert import keep_a_read
+
+            try:
+                with StepLock(self.db, f"{floor_id} read"):
+                    ws = self.workspace(code)
+                    source = ws.floor(floor_id).source
+                    with self._files(code, {drawing_name(source.path)}) as folder:
+                        keep_a_read(ws, floor_id, folder, self.cache / READS)
+            except Exception:  # (the first wall drawn reads the whole floor, as before)
+                traceback.print_exc()
+            finally:
+                with self._lock:
+                    self._warming.discard(floor_id)
+
+        threading.Thread(target=run, name=f"warming {floor_id}", daemon=True).start()
 
     def _keep_answers(self, code: str, ws: Workspace, fid: str, by) -> None:
         """What the models answered in a read of ``ws`` kept in the project, as it is now."""

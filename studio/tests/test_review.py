@@ -287,6 +287,42 @@ def test_a_floor_read_has_its_prints_drawn_before_it_is_first_opened(studio, tmp
     assert len(drawn) == 2 and sum("~notext" in name for name in drawn) == 1, drawn
 
 
+def test_a_floor_opened_by_someone_who_may_draw_on_it_has_its_read_ready(studio, tmp_path):
+    # Studio started again keeps no floor's read: one is worked out as the floor is
+    # opened, and the first wall drawn on it has only the rooms near it found again
+    import shutil
+
+    from storeypath import convert
+
+    base, app = studio
+    code = call(f"{base}/api/projects", {"name": "Walls"})[1]["code"]
+    write_floor_dxf(tmp_path / "level-0.dxf", office_floor(0), origin=(100.0, 50.0), title="LEVEL 0 PLAN",
+                    area_outlines=False, walls="lines")
+    call(f"{base}/api/projects/{code}/drawings/level-0.dxf?private=0", raw=(tmp_path / "level-0.dxf").read_bytes())
+    plan = wait(base, call(f"{base}/api/projects/{code}/drawings/level-0.dxf/plans", {})[1])["plans"][0]
+    wait(base, call(f"{base}/api/projects/{code}/floors", {"drawing": "level-0.dxf", "plans": [
+        {"index": plan["index"], "title": plan["title"], "region": plan["region"],
+         "building": "Offices", "ordinal": 0}]})[1])
+    fid = next(i for *_, i in app.workspace(code).iter_floors())
+    convert._reads.pop(fid, None)  # (as a Studio started again, keeping none on disk)
+    shutil.rmtree(app.cache / "reads", ignore_errors=True)
+
+    _, floor = call(f"{base}/api/projects/{code}/floors/{fid}")  # opened
+    for _ in range(300):
+        if fid in convert._reads:
+            break
+        time.sleep(0.1)
+    assert fid in convert._reads
+    room = max((s for s in floor["spaces"] if s["kind"] == "space"), key=lambda s: s["area"] if s["area"] < 50 else 0)
+    x0, y0, x1, y1 = shape(room["geometry"]).bounds
+    status, job = call(f"{base}/api/projects/{code}/floors/{fid}/edits", {"add": {"wall": [[x0 + 1.2, y0 - 0.1],
+                                                                                           [x0 + 1.2, y1 + 0.1]]}})
+    assert status == 200
+    wait(base, job)
+    _, job = call(f"{base}/api/jobs/{job['id']}")
+    assert any("the rooms near the walls drawn found again" in line for line in job["log"]), job["log"]
+
+
 def test_one_drawing_per_floor_goes_into_the_same_building(studio, tmp_path):
     # A building drawn one floor per file, in the same coordinates: each file's plan
     # is added to the building chosen by its ID, lined up without moving; a revised

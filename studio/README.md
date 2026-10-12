@@ -284,7 +284,11 @@ away has only the rooms it comes near found again, from what is drawn around the
 tell: a wall out beyond the building (it may close off the outside into a room), or
 one coming near a room that rings others or is a fifth of the building or more
 (whether that is the outside round the building is told from the whole floor). The
-rest of the floor stays as it was read: *Re-read drawing* reads it all again. Steps
+rest of the floor stays as it was read: *Re-read drawing* reads it all again. Each
+floor's last read is kept in Studio's cache (`cache/reads/`), for Studio started
+again, as long as it reads drawings the same way; where none is kept, it is worked
+out as someone who may draw on the floor opens it. A wall or dividing line drawn
+shows at once, and the next is drawn while it is read. Steps
 that work on the whole project (adding floors, placing buildings, exporting, opening a
 file into it) hold the project in the database for as long as they run (an advisory
 lock): Review's changes meanwhile are answered *busy* (409), from this Studio or

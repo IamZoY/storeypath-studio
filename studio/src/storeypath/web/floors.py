@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import Request
 
 from .. import areasample, vertical
+from ..accounts import rank
 from ..review import floor_print, floor_print_png
 from ..server import Download
 from .calls import Body, Calls, May, Query, TheStudio, answer
@@ -20,11 +21,13 @@ F = "/api/projects/{code}/floors/{floor_id}"
 @calls.get(F)
 def floor(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, query: Query):
     """The floor; ``?since=<version>``: what changed after it (Review.floor)."""
-    may.floor(code, floor_id, "view")
+    sight = may.floor(code, floor_id, "view")
     since = (query.get("since") or [None])[0]
     if since is not None and not since.isdigit():
         raise ValueError("since: a version, a whole number")
     floor = studio.review(code).floor(floor_id, since=int(since) if since is not None else None)
+    if since is None and rank(sight.floor(floor_id)) >= rank("edit"):
+        studio.warm(code, floor_id)  # opened by someone who may draw on it: its read ready for them
     return answer(request, {**floor, "editing": studio.editing(code, floor_id)})
 
 

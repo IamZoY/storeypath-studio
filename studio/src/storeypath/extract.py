@@ -676,12 +676,18 @@ def find_spaces_around(plan: PlanDrawn, profile: Profile, labels: list[Label], l
     pockets_before = [p for p in previous.pockets if p.intersects(window)]
     polygons = [p for p in _without_spikes(found.polygons) if p.area >= profile.spaces.min_area]
     new = [p for p in polygons if inside.contains(p)]
-    # what was found near them, away from the window's edge, is as it was (a room
-    # beside them is that room, a recess that recess), else the walls changed more
-    # than the rooms they come near (a recess closed off into a room)
-    if any(not _found_before(p, rooms_before) for p in polygons if not inside.contains(p)):
+    # what was found beside them is as it was (a room beside them is that room, a recess
+    # that recess), else the walls changed more than the rooms they come near (a recess
+    # closed off into a room); what lies out towards the window's edge, where what is
+    # drawn beyond is not seen, is as it was whatever is found of it here
+    beside = area.buffer(AROUND_WINDOW_M / 2)
+
+    def near_them(p) -> bool:
+        return not inside.contains(p) and beside.contains(p)
+
+    if any(not _found_before(p, rooms_before) for p in polygons if near_them(p)):
         return whole("a room beside the walls is found otherwise")
-    if any(inside.contains(p) or not _found_before(p, pockets_before) for p, _ in found.pockets):
+    if any(inside.contains(p) or (near_them(p) and not _found_before(p, pockets_before)) for p, _ in found.pockets):
         return whole("the outside beside the walls is found otherwise")
     walls = unary_union([c.buffer(DRAWN_WALL_M) for c in changed])
     differs = area.symmetric_difference(unary_union(new)).difference(walls) if new else area
@@ -695,11 +701,11 @@ def find_spaces_around(plan: PlanDrawn, profile: Profile, labels: list[Label], l
 
     kept = [i for i in range(len(previous.spaces)) if i not in touched]
     index = {old: new for new, old in enumerate(kept)}
-    beside = area.buffer(1.0)  # their walls and windows, as found again
+    theirs = area.buffer(1.0)  # their walls and windows, as found again
     fabric = replace(previous.fabric,
-                     walls=previous.fabric.walls.difference(beside).union(found.fabric.walls.intersection(beside)),
-                     windows=[w for w in previous.fabric.windows if not w.intersects(beside)] +
-                             [w for w in found.fabric.windows if w.intersects(beside)])
+                     walls=previous.fabric.walls.difference(theirs).union(found.fabric.walls.intersection(theirs)),
+                     windows=[w for w in previous.fabric.windows if not w.intersects(theirs)] +
+                             [w for w in found.fabric.windows if w.intersects(theirs)])
     return replace(
         previous,
         spaces=[previous.spaces[i] for i in kept] + spaces,
