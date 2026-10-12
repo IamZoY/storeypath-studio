@@ -51,6 +51,7 @@ import tempfile
 import threading
 import time
 import weakref
+from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -561,6 +562,19 @@ class _Kept:
     ws: Workspace
 
 
+@dataclass(frozen=True)
+class Touched:
+    """What one change touched (ProjectStore.changed_since): objects, corrections (by
+    their object) and items, by ID, and the floors whose own row changed (their walls,
+    outline, drawn edits…)."""
+
+    ids: frozenset
+    floors: frozenset
+
+
+CHANGES_KEPT = 2000  # a project's latest changes whose IDs are kept (changed_since)
+
+
 # ---- the store -------------------------------------------------------------------
 
 class ProjectStore:
@@ -570,6 +584,7 @@ class ProjectStore:
         self.db = db
         self._lock = threading.Lock()
         self._kept: dict[str, _Kept] = {}
+        self._touched: dict[str, OrderedDict[int, Touched]] = {}  # code -> version -> what that change touched
         self._reading: dict[str, threading.Lock] = {}
         self._scopes: dict[int, tuple | None] = {}  # id(Workspace loaded) -> what of the project it holds
         self._catalogue: tuple[int, Any] | None = None
@@ -618,22 +633,48 @@ class ProjectStore:
 
     def current(self, code: str) -> Workspace:
         """The project as it is now: shared, never to be changed (load one to change)."""
+        return self.now(code)[1]
+
+    def now(self, code: str) -> tuple[int, Workspace]:
+        """The project as it is now (current), with its version."""
         version = self.version(code)
         if version is None:
             raise NotFound(f"no project {code}")
         kept = self._kept.get(code)
         if kept is not None and kept.version == version:
-            return kept.ws
+            return kept.version, kept.ws
         with self._lock:
             reading = self._reading.setdefault(code, threading.Lock())
         with reading:  # read once, however many ask at once
             kept = self._kept.get(code)
             if kept is not None and kept.version >= version:
-                return kept.ws
+                return kept.version, kept.ws
             with self.db.connection() as conn:
                 version, ws = self._read(conn, code)
             self._keep(code, version, ws)
-            return ws
+            return version, ws
+
+    def changed_since(self, code: str, since: int, until: int) -> Touched | None:
+        """What the changes after version ``since`` up to ``until`` touched, together;
+        None when this Studio does not know each of them (made by another Studio on the
+        database, before it started, or too long ago)."""
+        if since > until:
+            return None
+        with self._lock:
+            log = self._touched.get(code, {})
+            if any(v not in log for v in range(since + 1, until + 1)):
+                return None
+            changes = [log[v] for v in range(since + 1, until + 1)]
+        return Touched(frozenset().union(*(t.ids for t in changes)), frozenset().union(*(t.floors for t in changes)))
+
+    def _touch(self, code: str, version: int, ch: Changes) -> None:
+        floors = {f"{code}-{'-'.join(key)}" for table, key, _ in ch.nodes if table == "floors"} | set(ch.edits)
+        touched = Touched(frozenset([*ch.objects, *ch.overrides, *ch.items]), frozenset(floors))
+        with self._lock:
+            log = self._touched.setdefault(code, OrderedDict())
+            log[version] = touched
+            while len(log) > CHANGES_KEPT:
+                log.popitem(last=False)
 
     def _keep(self, code: str, version: int, ws: Workspace) -> None:
         with self._lock:
@@ -702,6 +743,7 @@ class ProjectStore:
                 changed = (version, after)
         except _Nothing:
             return result
+        self._touch(code, changed[0], changes)
         self._keep(code, *changed)
         for listener in list(self.listeners):
             listener(code)
@@ -763,14 +805,17 @@ class ProjectStore:
             conn.execute("SELECT pg_notify(%s, %s)", (CHANNEL, _dumps({"project": code, "deleted": True})))
         with self._lock:
             self._kept.pop(code, None)
+            self._touched.pop(code, None)
 
     def forget(self, code: str | None = None) -> None:
         """What is kept in memory of a project (of every project) forgotten: read again."""
         with self._lock:
             if code is None:
                 self._kept.clear()
+                self._touched.clear()
             else:
                 self._kept.pop(code, None)
+                self._touched.pop(code, None)
 
     # ---- writing rows -------------------------------------------------------------
 

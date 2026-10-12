@@ -235,7 +235,7 @@ log).
 | `GET …/exports/<file>`; `POST …/exports/<file>` `{password}` (the package encrypted with it: [SEALED-FILES.md](../docs/SEALED-FILES.md)) | view on the building it holds (on the project, for one no export entered) |
 | `GET …/preview.storeypath[?building]` | any access: built with their floors alone. It comes with an `ETag`, and asked again with it (`If-None-Match`) while nothing it holds changed, it is answered 304 and nothing is sent; Studio keeps the packages it made the same way |
 | `GET …/project.storeypath-project`; `POST …/project.storeypath-project` `{password}` (encrypted) | view on the project |
-| `GET …/floors/<id>`, `…/drawing`, `…/print`, `…/print.png` | view on the floor; its drawing and print as above |
+| `GET …/floors/<id>[?since=<version>]`, `…/drawing`, `…/print`, `…/print.png` | view on the floor; its drawing and print as above. A floor comes with the project's `version` it is of; asked for `since` one, only what changed after it (`"since"` then says so): the spaces, zones, openings and items changed, the IDs of those gone, what the items say each space seats when one of them changed, and the floor's own fields with all its openings when it changed itself; the whole floor where Studio cannot say (a change made by another Studio on the database, or before it started) |
 | `POST …/floors/<id>/sample/preview {area, keep?, remove?}`, `POST …/floors/<id>/sample {area, note?, keep?, remove?}` | view on the floor, as its drawing: an area sample's preview, and the sample itself (`<id>.spsample`, recorded in the audit log) ([area samples](../docs/AREA-SAMPLES.md)) |
 | `POST …/floors/<id>/edits`, `…/items`, `POST …/objects/<id>` | edit on the floor, and the rooms the change touches (it takes their locks; 423 while someone else holds one) |
 | `POST …/floors/<id>/convert` | edit on the floor, while nobody else is editing a room of it (423) |
@@ -291,8 +291,9 @@ lock): Review's changes meanwhile are answered *busy* (409), from this Studio or
 another on the same database.
 
 **Live.** Studio listens to its database's changes (one connection, from the first
-page on) and sends each to the pages of those who may see it: Review redraws what
-changed where you are (the view, what you chose and what you are typing are kept;
+page on) and sends each to the pages of those who may see it: Review asks for what
+changed since the floor it has (not the whole floor: a room named on a floor of a
+thousand is that room) and redraws only that, where you are (the view, what you chose and what you are typing are kept;
 an editor whose space someone else changed shows the change) and says who did what
 (*Khalid Engineer deleted OFFICE 012*); its top bar shows who else is on the floor and
 who is editing it, small marks with their initials (the status bar says it in words);

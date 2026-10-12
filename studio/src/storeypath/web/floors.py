@@ -18,9 +18,14 @@ F = "/api/projects/{code}/floors/{floor_id}"
 
 
 @calls.get(F)
-def floor(code: str, floor_id: str, request: Request, may: May, studio: TheStudio):
+def floor(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, query: Query):
+    """The floor; ``?since=<version>``: what changed after it (Review.floor)."""
     may.floor(code, floor_id, "view")
-    return answer(request, {**studio.review(code).floor(floor_id), "editing": studio.editing(code, floor_id)})
+    since = (query.get("since") or [None])[0]
+    if since is not None and not since.isdigit():
+        raise ValueError("since: a version, a whole number")
+    floor = studio.review(code).floor(floor_id, since=int(since) if since is not None else None)
+    return answer(request, {**floor, "editing": studio.editing(code, floor_id)})
 
 
 @calls.get(F + "/drawing")

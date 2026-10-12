@@ -183,6 +183,15 @@ class StoredProject:
     def current(self) -> Workspace:
         return self.store.current(self.code)
 
+    def now(self) -> tuple[int, Workspace]:
+        """The project as it is now, with its version."""
+        return self.store.now(self.code)
+
+    def changed_since(self, since: int, until: int):
+        """What the changes after version ``since`` up to ``until`` touched (store.Touched),
+        or None when that is not known here."""
+        return self.store.changed_since(self.code, since, until)
+
     def change(self, fn, by=None, editor=None):
         return self.store.change(self.code, fn, by=by, editor=editor)
 
@@ -451,28 +460,83 @@ class Review:
                       if r.kind in ("space", "zone") and r.geometry and not ws.effective(r)["ignored"])
         return seating(ws, cat, floor_id, units=units)
 
-    def floor(self, floor_id: str) -> dict:
-        ws = self.workspace()
+    def floor(self, floor_id: str, since: int | None = None) -> dict:
+        """The floor as Review shows it, and the project's ``version`` it is of. With
+        ``since`` (a version the page has the floor as of), only what changed after it,
+        where that is known here (``"since"`` then says so; else the whole floor): the
+        spaces, zones, openings and items changed, the IDs of those gone from the floor,
+        what the items say of each space when one of them changed (``seats``), and the
+        floor's own fields with all its openings when it changed itself."""
+        version, ws = self.source.now() if hasattr(self.source, "now") else (None, self.workspace())
         f = self._floor(ws, floor_id)
         cat = self.catalogue()
+        touched = self.source.changed_since(since, version) \
+            if since is not None and version is not None and hasattr(self.source, "changed_since") else None
+        if touched is not None:
+            return self._floor_since(ws, f, floor_id, cat, version, since, touched)
         objects = sorted(ws.floor_objects(floor_id), key=lambda r: r.id)
         seats = self._seats(ws, cat, floor_id, objects)
         return {
-            "id": floor_id, "name": f.name, "ordinal": f.ordinal,
-            "source": Path(f.source.path).name if f.source else None,
-            "converted_at": f.converted_at.isoformat() if f.converted_at else None,
-            "method": f.method, "warnings": f.warnings, "outline": f.outline,
+            "id": floor_id, "version": version, **self._floor_fields(f),
             # spaces and their zones; a space divided into zones is used through them
             # a shape with nothing in it (a sliver read by an older Studio) is not shown
             "spaces": [self._space(ws, r, seats, cat) for r in objects
                        if r.kind in ("space", "zone") and not self._shape(r)["empty"]],
             "doors": [self._door(ws, r, f.edits.resized) for r in objects if r.kind == "opening"],
-            # for drawing walls and doors onto: the walls as found, and what was drawn
-            "walls": f.walls, "wall_thickness": f.wall_thickness, "edits": f.edits.model_dump(),
             # furniture and equipment on the floor, retired ones too (to be restored), in
             # the order they were placed (the last on top: their IDs are in no order)
             "items": [self._item(i, cat) for i in ws.floor_items(floor_id, include_retired=True)],
         }
+
+    def _floor_fields(self, f) -> dict:
+        """A floor's own fields, as Review shows them."""
+        return {
+            "name": f.name, "ordinal": f.ordinal,
+            "source": Path(f.source.path).name if f.source else None,
+            "converted_at": f.converted_at.isoformat() if f.converted_at else None,
+            "method": f.method, "warnings": f.warnings, "outline": f.outline,
+            # for drawing walls and doors onto: the walls as found, and what was drawn
+            "walls": f.walls, "wall_thickness": f.wall_thickness, "edits": f.edits.model_dump(),
+        }
+
+    def _floor_since(self, ws: Workspace, f, floor_id: str, cat, version: int, since: int, touched) -> dict:
+        """What changed on a floor after version ``since`` (floor)."""
+        objects = {r.id: r for r in ws.floor_objects(floor_id)}
+        mine = sorted(i for i in touched.ids if i.startswith(floor_id + "-"))
+        itself = floor_id in touched.floors
+        items = sorted(i for i in touched.ids if i in ws.items)
+        seats = self._seats(ws, cat, floor_id, list(objects.values())) if items or itself else None
+        spaces, doors, gone = [], [], [i for i in mine if i not in objects]
+        for i in mine:
+            r = objects.get(i)
+            if r is None:
+                continue
+            if r.kind in ("space", "zone"):
+                if self._shape(r)["empty"]:
+                    gone.append(i)
+                else:
+                    spaces.append(self._space(ws, r, seats, cat))
+            elif r.kind == "opening" and not itself:
+                doors.append(self._door(ws, r, f.edits.resized))
+        if itself:  # (an opening's size given in review is the floor's)
+            doors = [self._door(ws, r, f.edits.resized) for r in sorted(objects.values(), key=lambda r: r.id)
+                     if r.kind == "opening"]
+        out = {"id": floor_id, "version": version, "since": since, "spaces": spaces, "doors": doors,
+               "items": [self._item(ws.items[i], cat) for i in items if ws.items[i].floor_id == floor_id],
+               # (and items moved to another floor, or taken away)
+               "gone": gone + [i for i in items if ws.items[i].floor_id != floor_id] +
+                       sorted(i for i in touched.ids if i not in ws.items and i not in ws.objects)}
+        if seats is not None:  # how many each space seats, as its items now say
+            out["seats"] = {}
+            for r in objects.values():
+                if r.kind in ("space", "zone"):
+                    capacity, capacity_from = capacity_of(ws.effective(r), seats.get(r.id))
+                    out["seats"][r.id] = {"capacity": capacity, "capacity_from": capacity_from,
+                                          "workplaces": (seats.get(r.id) or {}).get("workplaces", 0),
+                                          "grade": (seats.get(r.id) or {}).get("grade")}
+        if itself:
+            out.update(self._floor_fields(f))
+        return out
 
     # ---- items: furniture and equipment ---------------------------------------------
 

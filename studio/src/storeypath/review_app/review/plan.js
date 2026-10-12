@@ -155,32 +155,71 @@ function renderDrawing({ groups, texts }) {
 // ---- the floor's spaces, doors and what was drawn ---------------------------------------
 
 export function renderPlan() {
+  renderOutline();
+  renderSpaces();
+  renderDoors();
+  renderDrawn();
+  placeLabels();
+}
+
+/** Only what a change changed drawn again (Review.floor ``since``): its spaces, the
+ * openings when one changed, the floor's outline and drawn lines when it changed itself;
+ * the whole plan where a space divided into zones, or a zone, changed (drawn one under
+ * another). ``before``: the spaces as they were, by ID. */
+export function patchPlan(d, before) {
+  const ids = [...d.spaces.map((s) => s.id), ...d.gone];
+  const zoned = (s) => s !== undefined && (s.kind === "zone" || divided(s));
+  if (ids.some((id) => zoned(before.get(id)) || zoned(state.byId.get(id)))) return renderPlan();
+  for (const id of ids) {
+    state.paths.get(id)?.remove();
+    state.labels.get(id)?.remove();
+    state.paths.delete(id);
+    state.labels.delete(id);
+    state.bounds.delete(id);
+    const s = state.byId.get(id);
+    if (s) drawSpace(s);
+  }
+  if ("outline" in d) renderOutline();
+  if (d.doors.length || "walls" in d) renderDoors();
+  if ("edits" in d) renderDrawn();
+  placeLabels();
+}
+
+function renderOutline() {
   const f = state.floor;
   $("outline").setAttribute("d", f.outline ? pathData(f.outline) : "");
+}
 
-  const spaces = $("spaces");
-  const labels = $("labels");
-  spaces.replaceChildren();
-  labels.replaceChildren();
+function renderSpaces() {
+  const f = state.floor;
+  $("spaces").replaceChildren();
+  $("labels").replaceChildren();
   state.paths.clear();
   state.labels.clear();
   state.bounds.clear();
   for (const s of f.spaces.filter(divided)) { // under its zones: just its outline, along the walls
-    spaces.append(svg("path", { d: pathData(s.geometry), class: "divided" }));
+    $("spaces").append(svg("path", { d: pathData(s.geometry), class: "divided" }));
     state.bounds.set(s.id, extent(s.geometry));
   }
-  for (const s of units()) {
-    const path = svg("path", { d: pathData(s.geometry) });
-    path.dataset.id = s.id;
-    if (s.kind === "zone") path.classList.add("zone");
-    spaces.append(path);
-    state.paths.set(s.id, path);
-    state.bounds.set(s.id, extent(s.geometry));
-    const label = svg("text");
-    labels.append(label);
-    state.labels.set(s.id, label);
-    styleSpace(s);
-  }
+  for (const s of units()) drawSpace(s);
+}
+
+/** A space (or zone) drawn on the plan, with its label. */
+function drawSpace(s) {
+  const path = svg("path", { d: pathData(s.geometry) });
+  path.dataset.id = s.id;
+  if (s.kind === "zone") path.classList.add("zone");
+  $("spaces").append(path);
+  state.paths.set(s.id, path);
+  state.bounds.set(s.id, extent(s.geometry));
+  const label = svg("text");
+  $("labels").append(label);
+  state.labels.set(s.id, label);
+  styleSpace(s);
+}
+
+function renderDoors() {
+  const f = state.floor;
   // A line Studio drew to divide an open area (no wall in the drawing): thin, light and
   // dashed over the rooms, where walls show as dark gaps between them.
   const dividers = f.doors.flatMap((d) => d.divider || []).map((line) => line.map((p) => p.join(",")).join(" "));
@@ -212,6 +251,10 @@ export function renderPlan() {
       return mark;
     }),
   );
+}
+
+function renderDrawn() {
+  const f = state.floor;
   // Walls and dividing lines drawn in review, over the rest: chosen by a click, to
   // take them away
   const drawn = [...(f.edits?.walls || []).map((w) => ["wall", w]), ...(f.edits?.dividers || []).map((d) => ["divider", d])];
@@ -225,7 +268,6 @@ export function renderPlan() {
       return line;
     });
   }));
-  placeLabels();
 }
 
 export function styleSpace(s) {

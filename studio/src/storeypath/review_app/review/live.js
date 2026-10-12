@@ -8,13 +8,37 @@ import { request } from "./api.js";
 import { emit } from "./bus.js";
 import { renderAssets } from "./items.js";
 import { say, toast } from "./notify.js";
-import { renderPlan } from "./plan.js";
+import { patchPlan, renderPlan } from "./plan.js";
 import { keepChosen } from "./selection.js";
 import { BASE, CODE, reviewSpaces, state, view3d } from "./state.js";
 import { carry, dirty3d, update3d } from "./view3d.js";
 
 // what is to be read again: everything, or what these IDs are of; and whether a read is under way
 const live = { busy: false, waiting: null, retry: 0 };
+
+// a floor's own fields, sent with what changed when the floor itself changed (Review.floor)
+const FLOOR_FIELDS = ["name", "ordinal", "source", "converted_at", "method", "warnings", "outline", "walls",
+  "wall_thickness", "edits"];
+
+/** The floor the page has, with what changed since (Review.floor ``since``): the spaces,
+ * openings and items changed in it, those gone out, what the items say of each space, the
+ * floor's own fields (and all its openings) when it changed itself. Spaces and openings in
+ * the order of their IDs, as the whole floor has them. */
+function patched(floor, d) {
+  const gone = new Set(d.gone);
+  const merge = (list, fresh) => {
+    const byId = new Map(fresh.map((x) => [x.id, x]));
+    const had = new Set(list.map((x) => x.id));
+    return list.filter((x) => !gone.has(x.id)).map((x) => byId.get(x.id) ?? x).concat(fresh.filter((x) => !had.has(x.id)));
+  };
+  const order = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  let spaces = merge(floor.spaces, d.spaces).sort(order);
+  if (d.seats) spaces = spaces.map((s) => (d.seats[s.id] ? { ...s, ...d.seats[s.id] } : s));
+  const doors = "walls" in d ? d.doors : merge(floor.doors, d.doors).sort(order);
+  const out = { ...floor, spaces, doors, items: merge(floor.items, d.items), version: d.version, editing: d.editing };
+  for (const k of FLOOR_FIELDS) if (k in d) out[k] = d[k];
+  return out;
+}
 
 /** What a change changed (null: anything; undefined: nothing more, a read put off), and
  * whether it may have changed the floor's shape (its walls, doors or spaces: built again
@@ -82,9 +106,20 @@ export async function refreshFloor(change) {
   if (!id) return;
   live.busy = true;
   try {
-    const floor = await request(`${BASE}/floors/${encodeURIComponent(id)}`);
+    // what changed since the floor the page has (the whole floor when Studio cannot say)
+    const have = state.floor;
+    const since = Number.isInteger(have?.version) ? `?since=${have.version}` : "";
+    const got = await request(`${BASE}/floors/${encodeURIComponent(id)}${since}`);
     if (state.floor?.id !== id) return;
+    if (got.since != null && state.floor !== have) { // the floor shown read meanwhile: its own changes asked for again
+      live.waiting = together(live.waiting, want);
+      clearTimeout(live.retry);
+      live.retry = setTimeout(() => refreshFloor(undefined), 0);
+      return;
+    }
     const changedHere = (thing) => want.all || want.targets.has(thing);
+    const before = state.byId;
+    const floor = got.since != null ? patched(have, got) : got;
     state.floor = floor;
     state.byId = new Map(floor.spaces.map((s) => [s.id, s]));
     state.segments = null;
@@ -93,7 +128,8 @@ export async function refreshFloor(change) {
       entry.review = reviewSpaces().length;
       emit("project");
     }
-    renderPlan();
+    if (got.since != null) patchPlan(got, before);
+    else renderPlan();
     // what is chosen: kept while it is there; the inspector shown again only when it changed
     keepChosen();
     renderAssets();

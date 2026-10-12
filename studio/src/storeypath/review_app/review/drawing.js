@@ -11,7 +11,8 @@ import { roomTaken, viewOnly } from "./access.js";
 import { followJob, request } from "./api.js";
 import { emit } from "./bus.js";
 import { $, el, svg } from "./dom.js";
-import { openFloor, refreshProject } from "./floor.js";
+import { refreshProject } from "./floor.js";
+import { refreshFloor } from "./live.js";
 import { toast } from "./notify.js";
 import { selectItem } from "./selection.js";
 import { BASE, inRing, rings, state, toSegment, view3d } from "./state.js";
@@ -206,7 +207,8 @@ export async function submitEdit(body, saying, after = null) {
     await followJob(await request(`${BASE}/floors/${state.floor.id}/edits`, body), saying);
     await refreshProject();
     view3d.dirty.add(state.floor.id); // read again with it: built again in 3D (that floor alone)
-    await openFloor(state.floor.id, null, { keepView: true });
+    state.busy = false;
+    await refreshFloor(null); // what the read changed, drawn in place
     toast(body.remove ? "Taken away" : body.resize ? "Size changed; the floor was read again" : "Added; the floor was read again");
     after?.();
   } catch (e) {
