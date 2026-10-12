@@ -876,6 +876,7 @@ Calls: `POST …/floors/<id>/vertical`, `GET …/objects/<id>/stack`,
 | `STOREYPATH_ADMIN_PASSWORD` | with no users yet, the first admin, `admin`, is made at start with this password, not `admin` |
 | `STOREYPATH_NODE` | Node.js for building the floors' 3D at export (default: `node` on the `PATH`; empty: never) |
 | `STOREYPATH_SYMBOLS` | the SymPoint-V2 folder (default `/opt/storeypath/symbols`) |
+| `STOREYPATH_READ_WORKERS` | processes `serve` reads floors in (default: the machine's cores less one, at most 4; `0`: read in Studio's own process, one at a time). Python runs one thread of Studio's code at a time, so a floor's read uses one core: with workers, floors are read side by side (two people drawing on two floors; a building's floors read together), each floor always by the same worker, which keeps what it read of it. Each takes up to about 1 GB more memory on a big floor |
 
 ## Layer-mapping profiles
 

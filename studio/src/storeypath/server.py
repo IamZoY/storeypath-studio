@@ -85,6 +85,7 @@ import traceback
 import uuid
 import zipfile
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -195,12 +196,15 @@ class Jobs:
 
     LANES = ("steps", "drawn")
 
-    def __init__(self, data: Path | None = None):
+    def __init__(self, data: Path | None = None, drawn: int = 1):
+        """``drawn``: floors read at once because people drew on them (a read of one floor
+        waits for the one before it all the same: Studio._convert)."""
         self.data = data
         self._jobs: dict[str, Job] = {}
         self._queues: dict[str, Queue] = {lane: Queue() for lane in self.LANES}
         for lane in self.LANES:
-            threading.Thread(target=self._work, args=(lane,), name=f"jobs: {lane}", daemon=True).start()
+            for n in range(drawn if lane == "drawn" else 1):
+                threading.Thread(target=self._work, args=(lane,), name=f"jobs: {lane} {n}", daemon=True).start()
 
     def submit(self, title: str, fn, project: str | None = None, scope: tuple = ("project", None),
                user: str | None = None, kind: str = "", about: str | None = None,
@@ -286,7 +290,7 @@ class Studio:
 
     def __init__(self, data: str | Path, model: LocalModel | None = None, warm: bool = True,
                  symbols: SymbolSpotter | None = None, vision: VisionModel | None = None, db=None,
-                 first_start: bool = True):
+                 first_start: bool = True, read_workers: int = 0):
         from . import db as databases
         from .db.store import ProjectStore
 
@@ -299,7 +303,14 @@ class Studio:
         self.model = model if model is not None else LocalModel()
         self.symbols = symbols if symbols is not None else SymbolSpotter()
         self.vision = vision if vision is not None else VisionModel()
-        self.jobs = Jobs(self.data)
+        # floors read in processes of their own (workers.py), so that reads use the machine's
+        # cores; none: read here, one at a time
+        self.readers = None
+        if read_workers:
+            from .workers import ReadWorkers
+
+            self.readers = ReadWorkers(read_workers)
+        self.jobs = Jobs(self.data, drawn=max(1, read_workers))
         if warm and self.model.available():
             # Load the model now, in the background, so the first drawing does not
             # wait for 2–3 GB of weights to come off the disk.
@@ -1077,6 +1088,7 @@ class Studio:
     def _convert(self, code: str, floor_ids: list[str], job: Job, force: bool = False, by=None,
                  drawn: bool = False) -> dict:
         from .convert import apply_read, read_floor
+        from .workers import models_settings
 
         job.floors = list(dict.fromkeys([*job.floors, *floor_ids]))  # (a page opened again shows them being read)
         self.reload_helpers()  # the GPU helpers as an admin last set them
@@ -1090,15 +1102,18 @@ class Studio:
         read = []  # the floors read and saved
         vision = self.vision if self.vision.available() else None
         ws = self.store.load(code)
-        names = {drawing_name(ws.floor(f).source.path) for f in floor_ids if ws.floor(f).source is not None}
+        floors = [f for f in floor_ids if ws.floor(f).source is not None]
+        names = {drawing_name(ws.floor(f).source.path) for f in floors}
+        side_by_side = self.readers is not None and len(floors) > 1
+        settings = models_settings(self) if self.readers is not None else None
+        noted = threading.Lock()
         with self._files(code, names) as folder:
-            def say(line: str) -> None:  # (where a read stops when asked to)
-                job.check()
-                job.say("  " + line)
+            def one(fid: str) -> None:
+                """A floor read and applied (or why not, in ``failed``)."""
+                def say(line: str) -> None:  # (where a read stops when asked to)
+                    job.check()
+                    job.say(f"  {fid}: {line}" if side_by_side else "  " + line)
 
-            for fid in floor_ids:
-                if ws.floor(fid).source is None:
-                    continue
                 job.check()
                 job.say(f"converting {fid}")
                 # A floor is read one read at a time, from the project as it is when its
@@ -1109,8 +1124,16 @@ class Studio:
                     ws = self.store.load(code)
                     source = ws.floor(fid).source.model_dump(exclude={"sha256"})
                     try:
-                        floor_read = read_floor(ws, fid, folder, self.model, self.symbols, vision, say=say,
-                                                tiles=self.cache / TILES, drawn=drawn, reads=self.cache / READS)
+                        if self.readers is not None:  # in a process of its own
+                            floor_read, readings, answers = self.readers.read(fid, {
+                                "ws": ws.model_dump_json(), "folder": str(folder), "tiles": str(self.cache / TILES),
+                                "reads": str(self.cache / READS), "drawn": drawn, "models": settings},
+                                say=say, stopping=lambda: job.stop_by is not None)
+                            ws.readings.update(readings)
+                            ws.vision.update(answers)
+                        else:
+                            floor_read = read_floor(ws, fid, folder, self.model, self.symbols, vision, say=say,
+                                                    tiles=self.cache / TILES, drawn=drawn, reads=self.cache / READS)
                     except Exception as e:  # this floor stays as it was; the others are converted
                         # what the models answered meanwhile is kept, so reading it again asks only about the rest
                         self._keep_answers(code, ws, fid, by)
@@ -1119,16 +1142,18 @@ class Studio:
                                           "it asks only about the rest)") from None
                         traceback.print_exc()
                         job.say(f"  {fid}: not converted: {_message(e)}")
-                        failed.append(f"{fid}: {_message(e)}")
-                        continue
+                        with noted:
+                            failed.append(f"{fid}: {_message(e)}")
+                        return
                     with self._changing(code):
                         now = self.store.load(code)
                         floor = next((f for *_, f, i in now.iter_floors() if i == fid), None)
                         if floor is None or floor.source is None or \
                                 floor.source.model_dump(exclude={"sha256"}) != source:
                             job.say(f"  {fid}: its drawing changed while it was read: not applied")
-                            failed.append(f"{fid}: its drawing changed while it was read")
-                            continue
+                            with noted:
+                                failed.append(f"{fid}: its drawing changed while it was read")
+                            return
                         now.readings.update(ws.readings)
                         now.vision.update(ws.vision)
                         # a read that would retire most of a floor is not applied: the floor keeps its rooms
@@ -1136,12 +1161,21 @@ class Studio:
                         self.store.save_floor(now, fid, by=by, more={"summary": report.summary(), "held": report.held})
                 job.say("  " + report.summary())
                 for w in report.warnings:
-                    job.say("  warning: " + w)
-                summaries.append(report.summary())
-                if report.held:
-                    held.append(fid)
-                    why[fid] = report.hold
-                read.append(fid)
+                    job.say(f"  {fid}: warning: {w}" if side_by_side else "  warning: " + w)
+                with noted:
+                    summaries.append(report.summary())
+                    if report.held:
+                        held.append(fid)
+                        why[fid] = report.hold
+                    read.append(fid)
+
+            if side_by_side:  # each in its worker, on a core of its own
+                with ThreadPoolExecutor(max_workers=min(len(floors), len(self.readers))) as pool:
+                    for _ in pool.map(one, floors):
+                        pass
+            else:
+                for fid in floors:
+                    one(fid)
         if read and self._warm:
             self._print_ahead(code, read)
         if failed:  # the job fails, the floors converted kept
@@ -1173,7 +1207,11 @@ class Studio:
                     ws = self.workspace(code)
                     source = ws.floor(floor_id).source
                     with self._files(code, {drawing_name(source.path)}) as folder:
-                        keep_a_read(ws, floor_id, folder, self.cache / READS)
+                        if self.readers is not None:  # in the worker that reads the floor: kept there
+                            self.readers.keep(floor_id, {"ws": ws.model_dump_json(), "folder": str(folder),
+                                                         "reads": str(self.cache / READS)})
+                        else:
+                            keep_a_read(ws, floor_id, folder, self.cache / READS)
             except Exception:  # (the first wall drawn reads the whole floor, as before)
                 traceback.print_exc()
             finally:
@@ -1181,6 +1219,12 @@ class Studio:
                     self._warming.discard(floor_id)
 
         threading.Thread(target=run, name=f"warming {floor_id}", daemon=True).start()
+
+    def close(self) -> None:
+        """What Studio started stopped: the language model's server, the read workers."""
+        if self.readers is not None:
+            self.readers.close()
+        self.model.close()
 
     def _keep_answers(self, code: str, ws: Workspace, fid: str, by) -> None:
         """What the models answered in a read of ``ws`` kept in the project, as it is now."""

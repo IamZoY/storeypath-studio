@@ -753,7 +753,9 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
     stale = viewer_out_of_date()
     if stale:
         typer.echo(f"WARNING: {stale}", err=True)
-    studio = Studio(data, db=db)
+    from .workers import default_count
+
+    studio = Studio(data, db=db, read_workers=default_count())
     if store is not None:
         studio.store = store
     try:
@@ -786,7 +788,7 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
         pass
     finally:
         server.server_close()
-        studio.model.close()
+        studio.close()
 
 
 # ---- users, backups --------------------------------------------------------------
