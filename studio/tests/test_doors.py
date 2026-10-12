@@ -9,7 +9,7 @@ from shapely.geometry import Point
 from storeypath.analyse import analyse
 from storeypath.cad import read_drawing
 from storeypath.extract import add_lift_doors, extract_floor
-from storeypath.samples import WALL, office_floor, write_floor_dxf
+from storeypath.samples import WALL, Door, office_floor, write_floor_dxf
 
 ORIGIN = (125.0, 48.0)
 
@@ -61,10 +61,41 @@ def _glazed_doorway(tmp_path, tag=None):
     return ex, min(ex.doors, key=lambda o: o.point.distance(at))
 
 
-def test_glazing_between_two_rooms_is_a_sliding_door(tmp_path):
+def test_glazing_that_is_the_only_way_into_a_room_is_a_sliding_door(tmp_path):
     _, opening = _glazed_doorway(tmp_path)
     assert opening.source == "glazing" and len(opening.connects) == 2
-    assert opening.issues == ["drawn as glazing between two rooms, taken as a sliding door; check it"]
+    assert opening.issues == ["drawn as glazing, the only way into a room, taken as a sliding door; check it"]
+
+
+def _glazed_panes(tmp_path, panes, door):
+    """Office 101's wall onto the corridor glazed in panes (0.8 m, centred at
+    ``panes``), beside its door or with no door at all."""
+    cells = office_floor(1)
+    i = next(i for i, c in enumerate(cells) if c.number == "101")
+    y = cells[i].door.y
+    cells[i] = replace(cells[i], door=cells[i].door if door else None,
+                       doors=[Door(x, y, "h", -1, 0.8, block=False) for x in panes])
+
+    def glaze(doc):
+        for x in panes:
+            for dy in (-WALL / 2, 0, WALL / 2):
+                doc.modelspace().add_line(_mm(x - 0.4, y + dy), _mm(x + 0.4, y + dy), dxfattribs={"layer": "A-GLAZ"})
+
+    ex = _plan(tmp_path, cells, glaze)
+    office = next(k for k, s in enumerate(ex.spaces) if s.number == "101")
+    return [o for o in ex.doors if office in o.connects and len(o.connects) == 2 and o.source in ("window", "glazing")]
+
+
+def test_glazing_beside_a_door_is_a_window(tmp_path):
+    # an office's glass front onto its corridor, its door in it: the panes are windows
+    glass = _glazed_panes(tmp_path, [8.8, 11.2], door=True)
+    assert len(glass) == 2 and {o.source for o in glass} == {"window"}
+
+
+def test_a_row_of_panes_round_a_room_with_no_door_is_windows(tmp_path):
+    # which pane would be the door is not drawn (a courtyard's windows, between columns)
+    glass = _glazed_panes(tmp_path, [8.8, 10.0, 11.2], door=False)
+    assert len(glass) == 3 and {o.source for o in glass} == {"window"}
 
 
 def test_a_tag_says_whether_an_opening_is_a_door_or_a_window(tmp_path):

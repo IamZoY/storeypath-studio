@@ -188,3 +188,37 @@ def test_a_read_after_a_person_drew_on_the_floor_is_not_held_for_the_rooms_it_ch
     ws.floor(f_id).source = SourceDrawing(path="level-2-rev.dxf")
     report = convert_floor(ws, f_id, d, drawn=True)
     assert not report.held and report.lost == [old["209"]]
+
+
+def test_an_opening_read_as_another_kind_where_it_stood_keeps_its_id_and_what_was_done_to_it(workspace):
+    # Office 201's doorway glazed across, its only way in: a sliding door. The drawing
+    # then gives it a door beside it: the glazing is read as a window, the same opening
+    import ezdxf
+
+    ws, d, f_id, _, cells = workspace
+    i = next(i for i, c in enumerate(cells) if c.number == "201")
+    glazed = Door(10, 8.5, "h", -1, block=False)
+
+    def draw(extra):
+        cells[i].door, cells[i].doors = glazed, extra
+        write_floor_dxf(d / "level-2.dxf", cells)
+        doc = ezdxf.readfile(d / "level-2.dxf")
+        for dy in (-0.1, 0, 0.1):
+            doc.modelspace().add_line(((125 + 9.55) * 1000, (48 + 8.5 + dy) * 1000),
+                                      ((125 + 10.45) * 1000, (48 + 8.5 + dy) * 1000), dxfattribs={"layer": "A-GLAZ"})
+        doc.saveas(d / "level-2.dxf")
+
+    def at_the_glazing():
+        return min((r for r in ws.floor_objects(f_id) if r.kind == "opening" and r.status == "active"),
+                   key=lambda r: abs(r.geometry["coordinates"][0] - 135) + abs(r.geometry["coordinates"][1] - 56.5))
+
+    draw([])
+    convert_floor(ws, f_id, d)
+    door = at_the_glazing()
+    assert door.type == "door" and door.type_source == "glazing"
+    ws.overrides[door.id] = Override(hidden=True)
+    draw([Door(11.3, 8.5, "h", -1)])
+    report = convert_floor(ws, f_id, d)
+    window = at_the_glazing()
+    assert window.id == door.id and window.type == "window" and door.id not in report.retired
+    assert ws.overrides[window.id].hidden

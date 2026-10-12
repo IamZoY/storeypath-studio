@@ -33,6 +33,7 @@ MATCH_MIN_IOU = 0.5  # outlines overlapping this much are the same space
 MATCH_MIN_IOU_SAME_NUMBER = 0.1  # …or this much when the room number is unchanged
 VERTICAL_MIN_IOU = 0.5  # elevator/stairs outlines on two floors this aligned share a code
 DOOR_MATCH_DISTANCE = 0.5  # m
+SAME_OPENING_M = 0.05  # an opening this close to one read before is that one, whatever kind it is read as
 SAMPLE_TEXTS = 6  # unknown texts per layer asked about when reading what a layer holds
 # A read that finds no spaces where a floor has some, or that would retire more than
 # this share of them, is most likely a bad read (layers renamed, wrong units, a
@@ -643,7 +644,8 @@ def _gap_band(walls, span, thickness: float):
 
 def _apply_doors(ws, floor_id, building_id, ex: FloorExtraction, space_ids, now, report) -> None:
     """Openings keep their IDs by position: windows are matched only with windows,
-    ways through (doors, doorways) only with ways through."""
+    ways through (doors, doorways) only with ways through, unless it stands where it
+    stood (the same opening, read as another kind: what was done to it stays)."""
     existing = [r for r in ws.floor_objects(floor_id) if r.kind == "opening"]
     old_points = [shape(r.geometry) for r in existing]
     tree = STRtree(old_points)
@@ -654,9 +656,9 @@ def _apply_doors(ws, floor_id, building_id, ex: FloorExtraction, space_ids, now,
         near = tree.query(door.point, predicate="dwithin", distance=DOOR_MATCH_DISTANCE)
         for j in sorted(int(k) for k in near):
             p = old_points[j]
-            same_group = (existing[j].type == "window") == (kind == "window")
             d = door.point.distance(p)
-            if j not in used and same_group and d <= best_d:
+            alike = (existing[j].type == "window") == (kind == "window") or d <= SAME_OPENING_M
+            if j not in used and alike and d <= best_d:
                 best, best_d = j, d
         if best is None:
             record_id = _allocate_id(ws, floor_id, building_id)

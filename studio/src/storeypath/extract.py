@@ -652,9 +652,9 @@ def _opening_tag(e) -> tuple[str, str] | None:
 
 def _read_tags(doors: list[ExtractedDoor], tags) -> None:
     """Each tag names the opening it is drawn by (the nearest within reach). A door
-    tag makes a door of an opening drawn as glazing or left open; glazing between two
-    rooms with no window tag is a sliding door too, for review. Doors drawn as doors
-    stay doors whatever the tag."""
+    tag makes a door of an opening drawn as glazing or left open; glazing that is the
+    only way into a room, with no window tag, is a sliding door too, for review (see
+    _sliding_doors). Doors drawn as doors stay doors whatever the tag."""
     taken: dict[int, float] = {}
     for tag, kind, point in tags:
         near = [(d.footprint.distance(point), i) for i, d in enumerate(doors)]
@@ -664,15 +664,34 @@ def _read_tags(doors: list[ExtractedDoor], tags) -> None:
         if dist <= TAG_REACH_M and dist < taken.get(i, float("inf")):
             taken[i] = dist
             doors[i].tag = f"{tag}:{kind}"
+    untagged = []
     for d in doors:
         tag, _, kind = (d.tag or "").partition(":")
         d.tag = tag or None
         if d.source in ("window", "doorway", "split") and kind == "D":
             d.source = "door"
-        elif d.source == "window" and len(d.connects) == 2 and kind != "W" and d.width is not None \
-                and SLIDING_DOOR_M[0] <= d.width <= SLIDING_DOOR_M[1]:
+        elif d.source == "window" and not kind:
+            untagged.append(d)
+    _sliding_doors(doors, untagged)
+
+
+WAYS_IN = ("door", "doorway", "split")
+
+
+def _sliding_doors(doors: list[ExtractedDoor], untagged: list[ExtractedDoor]) -> None:
+    """Glazing between two rooms at a door's width, with no tag, is a sliding door
+    where it is the only way into one of them: that room has no other way in, and no
+    other such glazing. Glazing beside a door (an office's glass front onto its
+    corridor) is windows, and so is a row of panes round a room with no door drawn
+    (a courtyard's windows): which pane would be the door is not drawn."""
+    way_in = {i for d in doors if d.source in WAYS_IN for i in d.connects}
+    could = [d for d in untagged if len(d.connects) == 2 and d.width is not None
+             and SLIDING_DOOR_M[0] <= d.width <= SLIDING_DOOR_M[1]]
+    reached = Counter(i for d in could for i in d.connects)
+    for d in could:
+        if any(i not in way_in and reached[i] == 1 for i in d.connects):
             d.source = "glazing"
-            d.issues.append("drawn as glazing between two rooms, taken as a sliding door; check it")
+            d.issues.append("drawn as glazing, the only way into a room, taken as a sliding door; check it")
 
 
 LIFT_DOOR_M = 0.9  # an assumed lift door's width

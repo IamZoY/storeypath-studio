@@ -699,8 +699,10 @@ the way a person reads a plan:
 - Glazing and closed door leaves on door/window layers continue the wall across
   their gap; a cross marking a lift car does not.
 - Door and window tags (D4, W12, SD2) say which an opening is: a door tag makes a
-  door of an opening drawn as glazing or left open. Glazing between two rooms at a
-  door's width with no window tag is taken as a sliding door.
+  door of an opening drawn as glazing or left open. Glazing at a door's width with
+  no tag is taken as a sliding door only where it is the only way into a room;
+  beside a door, or one of a row of panes, it is a window. An opening read as
+  another kind where it stood keeps its ID on a re-read.
 - Blocks on door layers are doors only when they have a swing, a door's name, or a
   sliding door's shape: basins, baths and cars put on a door layer are not doors.
 - A lift with no way in drawn is given a door on the wall it shares with a hall,

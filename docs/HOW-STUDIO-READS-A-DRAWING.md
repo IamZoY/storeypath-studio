@@ -263,8 +263,10 @@ columns), are added.
 - **Windows**: glazing in the walls. **Openings**: doorways, ways through with no
   door.
 - **Tags** (*D4*, *W12*, *SD2*) say which an opening is: a door tag makes a door of
-  an opening drawn as glazing or left open; glazing between two rooms at a door's
-  width with no window tag is taken as a sliding door.
+  an opening drawn as glazing or left open. Glazing at a door's width with no tag is
+  taken as a sliding door only where it is the only way into a room: beside a door
+  (an office's glass front) it is windows, and so is a row of panes round a room
+  with no door drawn (a courtyard's windows).
 - **A lift** with no way in drawn (its doors are often left out of plans) is given
   one on the wall it shares with a hall, lobby or corridor.
 
