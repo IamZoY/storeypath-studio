@@ -103,6 +103,9 @@ export async function setView(mode) {
   showWalk();
   emit("view"); // (a tool that does not work in this view is put down: tools.js)
   if (!view3d.shown) {
+    // back on the plan from walking: no longer walking, so that walking again starts where
+    // the plan looks then (else the walker would be where it was left), and 3D is where it was
+    if (view3d.world?.mode === "walk") view3d.world.setMode("dollhouse", { back: true });
     view3d.world?.pause(); // kept as it is, for the next time
     return;
   }
