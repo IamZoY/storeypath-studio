@@ -154,11 +154,11 @@ def read_floor(
                           only={i for i, u in enumerate(units) if any(u is z for z in zones)}, sheet=sheet, tally=tally)
         if (ways := keep_ways_through(extraction)) and say is not None:
             say(f"vision: {ways} area(s) it saw as no room kept, as doors join them to several rooms")
-        type_stairs(extraction.units(), stair_flights(_floor_segments(doc, src, extraction.scale)))
+        type_stairs(extraction.units(), _flights(doc, src, extraction.scale))
         type_zoned_spaces(extraction.spaces, extraction.zones)
         keep_to_the_building(extraction)
     else:
-        type_stairs(extraction.units(), stair_flights(_floor_segments(doc, src, extraction.scale)))
+        type_stairs(extraction.units(), _flights(doc, src, extraction.scale))
     _sizes_from_the_schedule(extraction, doc, src.region, vision, model, say)
     _drawn_openings(extraction, floor.edits.openings, profile.doors.reach)
     _resized_openings(extraction, floor.edits.resized)
@@ -420,6 +420,18 @@ def _read_room_types(ex: FloorExtraction, reader: TextReader) -> None:
     for s in ex.units():
         if s.name and s.type == SpaceType.UNSPECIFIED and (t := reader.room_type(s.name)) is not None:
             s.type, s.type_source = t, "model"
+
+
+def _flights(doc, src, scale: float) -> list:
+    """The floor's stair flights (stair_flights of its line pieces), kept with the drawing
+    read, as its line pieces are."""
+    kept = getattr(doc, "_storeypath_flights", None)
+    if kept is None:
+        kept = doc._storeypath_flights = {}
+    key = (src.region, src.offset, scale)
+    if key not in kept:
+        kept[key] = stair_flights(_floor_segments(doc, src, scale))
+    return kept[key]
 
 
 def _floor_segments(doc, src, scale: float) -> list:

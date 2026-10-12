@@ -624,7 +624,8 @@ def find_spaces(plan: PlanDrawn, profile: Profile, labels: list[Label], lines: l
 
 
 AROUND_REACH_M = 0.35  # the rooms a wall drawn or taken away comes this near are found again…
-AROUND_WINDOW_M = 6.0  # …from what is drawn within this much of them (the doors, glazing and wall ends closing them)
+AROUND_BESIDE_M = 3.0  # …and what is found within this much of the walls is to be as it was found before, from
+# what is drawn within this much more of those rooms: what bridges a gap in a wall (WallsConfig.max_opening), a wall
 AROUND_SAME = 0.9  # an area found near them is one found before where they overlap this much (IoU)
 AROUND_SLACK = 0.01  # …and what they cover differs from what they covered by at most this share (beyond the wall)
 AROUND_LARGEST = 0.2  # a room this share of the building or more is found with the whole floor's
@@ -655,11 +656,16 @@ def find_spaces_around(plan: PlanDrawn, profile: Profile, labels: list[Label], l
     # building is told from the whole floor (walls._surrounding, _within_the_land_line):
     # one is found with it
     largest = AROUND_LARGEST * previous.envelope.area
+
+    def round_others(room) -> float:  # what a room's holes hold (a corridor round a core: a little)
+        return sum(Polygon(ring).area for p in as_polygons(room) for ring in p.interiors)
+
     rooms = [previous.spaces[i].polygon for i in touched]
-    if any(r.area >= largest or any(p.interiors for p in as_polygons(r)) for r in rooms):
-        return whole("a wall near a room round others, or a fifth of the building")
+    if any(r.area >= largest or round_others(r) >= largest for r in rooms):
+        return whole("a wall near a room round much of the building, or a fifth of it")
     area = unary_union([previous.spaces[i].polygon for i in touched])
-    window = area.buffer(AROUND_WINDOW_M, join_style="mitre")
+    window = area.buffer(AROUND_BESIDE_M + profile.walls.max_opening + profile.walls.max_thickness + 1.0,
+                         join_style="mitre")
     x0, y0, x1, y1 = window.bounds
 
     def near(geoms):
@@ -676,11 +682,12 @@ def find_spaces_around(plan: PlanDrawn, profile: Profile, labels: list[Label], l
     pockets_before = [p for p in previous.pockets if p.intersects(window)]
     polygons = [p for p in _without_spikes(found.polygons) if p.area >= profile.spaces.min_area]
     new = [p for p in polygons if inside.contains(p)]
-    # what was found beside them is as it was (a room beside them is that room, a recess
-    # that recess), else the walls changed more than the rooms they come near (a recess
-    # closed off into a room); what lies out towards the window's edge, where what is
-    # drawn beyond is not seen, is as it was whatever is found of it here
-    beside = area.buffer(AROUND_WINDOW_M / 2)
+    # what was found beside the walls is as it was (a room beside them is that room, a
+    # recess that recess), else they changed more than the rooms they come near (a recess
+    # closed off into a room); what lies further off (along a long corridor they come
+    # near, out towards the window's edge where what is drawn beyond is not seen) they do
+    # not change: it is as it was, whatever is found of it here
+    beside = reach.buffer(AROUND_BESIDE_M)
 
     def near_them(p) -> bool:
         return not inside.contains(p) and beside.contains(p)
@@ -1573,6 +1580,14 @@ def _connect_doors(spaces, door_boxes, reach, warnings, spans=None) -> list[Extr
     tree = STRtree(polys)
     doors = []
     unconnected = 0
+    # each space within reach of its edge, worked out once (a corridor has hundreds of doors)
+    grown: dict[int, object] = {}
+
+    def within_reach(i: int):
+        if i not in grown:
+            grown[i] = polys[i].buffer(reach)
+        return grown[i]
+
     for k, fp in enumerate(door_boxes):
         zone = fp.buffer(reach)
         near = []
@@ -1588,7 +1603,7 @@ def _connect_doors(spaces, door_boxes, reach, warnings, spans=None) -> list[Extr
         # zone that lies within reach of all of them but inside none of them.
         wall = zone
         for i in connects:
-            wall = wall.intersection(polys[i].buffer(reach)).difference(polys[i])
+            wall = wall.intersection(within_reach(i)).difference(polys[i])
         point = wall.centroid if not wall.is_empty else fp.centroid
         span, width, *leaves = spans[k] if spans else (None, None)
         doors.append(ExtractedDoor(footprint=fp, point=point, connects=connects, span=span, width=width,

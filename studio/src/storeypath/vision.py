@@ -1368,6 +1368,18 @@ def _segments_in(doc, region_drawing, frame: tuple[float, float, float]) -> list
     return out
 
 
+def _cuts_of(doc, polygon, shape_text: str, in_drawing, frame: tuple[float, float, float]) -> list[LineString]:
+    """candidate_cuts of a room, from what is drawn over it: kept with the drawing read,
+    as its line pieces are (_segments_in), for the room as it is (``shape_text``)."""
+    kept = getattr(doc, "_storeypath_cuts", None)
+    if kept is None:
+        kept = doc._storeypath_cuts = {}
+    key = (shape_text, *frame)
+    if key not in kept:
+        kept[key] = candidate_cuts(polygon, _segments_in(doc, in_drawing(polygon.buffer(TO_WALL_M)), frame))
+    return kept[key]
+
+
 def _parallel(a: LineString, b: LineString) -> bool:
     return abs((_angle(a) - _angle(b) + 90) % 180 - 90) <= 10
 
@@ -1427,7 +1439,7 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
     for k in merged:
         polygon = units[k].polygon
         shape_text = wkt.dumps(polygon, rounding_precision=2)
-        for cut in candidate_cuts(polygon, _segments_in(doc, in_drawing(polygon.buffer(TO_WALL_M)), (ox, oy, scale))):
+        for cut in _cuts_of(doc, polygon, shape_text, in_drawing, (ox, oy, scale)):
             text = shape_text + "|" + wkt.dumps(cut, rounding_precision=2)
             key = hashlib.sha1(f"{name}|{SPLIT_VERSION}|{sha}|{src.region}|{src.offset}|{text}".encode()).hexdigest() if name else None
             lines.append([k, cut, key, answers.get(key) if key else by_cut.get(text), text])
