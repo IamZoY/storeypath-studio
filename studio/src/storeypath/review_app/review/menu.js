@@ -93,6 +93,11 @@ export function openMenu(cx, cy, p) {
   } else if (s) {
     select(s.id);
     items.push(...heading(title(s), typeLabel(s.type)));
+    if (editable()) {
+      const now = finish.shown(s);
+      items.push(menuItem(`Floor finish: ${finishOf(now.floor)?.name ?? now.floor}…`, () => finish.chooseAt(cx, cy, s, "floor"), { ico: "paint-roller" }));
+      items.push(menuItem(`Wall finish: ${finishOf(now.wall)?.name ?? now.wall}…`, () => finish.chooseAt(cx, cy, s, "wall"), { ico: "paint-roller" }));
+    }
     items.push(menuItem(s.ignored ? "Restore this space" : "Delete this space", () => setFlag(s.id, "ignored", !s.ignored),
       { danger: !s.ignored, hint: s.ignored ? "" : key("edit.delete"), ico: s.ignored ? "rotate-cw" : "trash-2" }));
     items.push(el("hr"));
@@ -176,6 +181,9 @@ export function menu3d(cx, cy, p = null) {
     items.push(menuItem(walls ? `Paint these walls: ${finishOf(code)?.name ?? code}` : `Paint this floor: ${finishOf(code)?.name ?? code}`,
       () => finish.paintAt(on), { ico: "paint-roller" }));
     items.push(menuItem("Pick up its finish", () => finish.paintAt(on, { takeUp: true }), { ico: "pipette", hint: "Alt-click" }));
+    const now = finish.shown(unit);
+    items.push(menuItem(walls ? `Wall finish: ${finishOf(now.wall)?.name ?? now.wall}…` : `Floor finish: ${finishOf(now.floor)?.name ?? now.floor}…`,
+      () => finish.chooseAt(cx, cy, walls ? room : unit, walls ? "wall" : "floor"), { ico: "paint-roller" }));
   }
   if (may && here) {
     if (items.length) items.push(el("hr"));

@@ -316,12 +316,32 @@ export function pick(p) {
     api.toast(`Took up ${finishOf(now.floor)?.name} and ${finishOf(now.wall)?.name}`);
     return true;
   }
-  // (already so: nothing to change)
+  // already so: nothing to change, and said (else a click seems to do nothing)
+  const already = (what, code) => api.toast(`${what} ${finishOf(code)?.name ?? code} already: choose another finish in the brushes above`);
   if (p.wall) {
     const target = room?.kind === "space" ? room : unit.kind === "zone" ? st.byId.get(unit.space_id) : unit;
-    if (target && shown(target).wall !== paint.wall) api.saveSpace({ wall_finish: paint.wall }, target.id);
-  } else if (shown(unit).floor !== paint.floor) api.saveSpace({ floor_finish: paint.floor }, unit.id);
+    if (!target) return true;
+    if (shown(target).wall === paint.wall) already("Its walls are", paint.wall);
+    else api.saveSpace({ wall_finish: paint.wall }, target.id);
+  } else if (shown(unit).floor === paint.floor) already("Its floor is", paint.floor);
+  else api.saveSpace({ floor_finish: paint.floor }, unit.id);
   return true;
+}
+
+/** A room's floor's, or walls', finish chosen from the swatches opened at (cx, cy) on the
+ * page (the right-click menus), saved as the inspector saves it (a zone's walls are its
+ * space's). */
+export function chooseAt(cx, cy, s, applies) {
+  const space = spaceOf(s), target = applies === "wall" ? space ?? s : s;
+  const anchor = api.el("span", {});
+  Object.assign(anchor.style, { position: "fixed", left: `${cx}px`, top: `${cy}px`, width: "1px", height: "1px" });
+  document.body.append(anchor);
+  picker(anchor, { applies, current: target[`${applies}_finish`] ?? null,
+    typeDefault: applies === "floor" ? (space ? floorFinish({ type: s.type }, space) : defaultFinish("floor", s.type))
+      : defaultFinish("wall", target.type),
+    defaultLabel: applies === "floor" && space?.floor_finish ? "As its space" : "As its type",
+    onPick: (picked) => api.saveSpace({ [`${applies}_finish`]: picked }, target.id) });
+  anchor.remove(); // (the picker is placed by it already)
 }
 
 /** Esc: the picker put away. Whether it was. */
