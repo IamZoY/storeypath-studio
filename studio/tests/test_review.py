@@ -859,10 +859,10 @@ def test_a_building_whose_first_reading_failed_is_read_again_and_put_beside(stud
         return job
 
     assert add("a.dxf", "Admin")["state"] == "done"
-    read = storeypath.convert.convert_floor
-    monkeypatch.setattr(storeypath.convert, "convert_floor", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("could not locate vertex")))
+    read = storeypath.convert.read_floor
+    monkeypatch.setattr(storeypath.convert, "read_floor", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("could not locate vertex")))
     assert add("b.dxf", "Clinic")["state"] == "failed"
-    monkeypatch.setattr(storeypath.convert, "convert_floor", read)
+    monkeypatch.setattr(storeypath.convert, "read_floor", read)
 
     _, p = call(f"{base}/api/projects/{code}")
     clinic = next(b for b in p["locations"][0]["buildings"] if b["name"] == "Clinic")

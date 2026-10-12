@@ -27,7 +27,7 @@ from .geometry import as_polygons, iou
 from .profile import Profile
 from .types import SpaceType
 from .split import exact_parts, split_by_labels
-from .walls import DoorShape, DoorSwing, open_issue, read_fabric, spaces_from_walls
+from .walls import DoorShape, DoorSwing, Fabric, open_issue, read_fabric, spaces_from_walls
 
 MAX_BLOCK_DEPTH = 8
 CURVE_TOLERANCE_M = 0.02
@@ -399,7 +399,44 @@ def extract_floor(
     point so that floors drawn side by side line up. ``skip_label`` leaves out texts
     on label layers that do not name rooms (levels, notes…). ``drawn_walls`` are
     walls a person drew in review ([[x, y], [x, y]], local meters): walls like any;
-    ``drawn_dividers`` divide the spaces they cross into zones, with no wall."""
+    ``drawn_dividers`` divide the spaces they cross into zones, with no wall.
+
+    In three steps, each of which a floor read again may take from its last read
+    (convert.py): what the plan holds (gather_plan), the spaces found in it
+    (find_spaces, or find_spaces_around a wall drawn), and those named, typed and
+    joined by their doors (finish_floor)."""
+    plan = gather_plan(doc, profile, units, region)
+    labels = plan_labels(plan, profile, skip_label)
+    lines, fills, warnings = plan_walls(plan, drawn_walls, offset)
+    found = find_spaces(plan, profile, labels, lines, fills, drawn_walls, offset)
+    return finish_floor(plan, found, profile, labels, lines, fills, offset, drawn_dividers, warnings)
+
+
+@dataclass
+class PlanDrawn:
+    """What a floor's plan holds, as gathered from its drawing (gather_plan), in
+    meters where the drawing has it (before the floor's offset). The same for every
+    read of one plan with the same layers' roles: kept, the floor is read again after
+    a person drew on it without going through the drawing again."""
+
+    scale: float  # meters per drawing unit
+    warnings: list[str]
+    closed_shapes: list  # (polygon, layer): outlines drawn on space layers
+    wall_lines: list[LineString]
+    wall_fills: list[Polygon]
+    labels: list[Label]  # every text on a label layer (which name rooms is decided as the floor is read)
+    blocks: list  # (name, where)
+    door_shapes: list[DoorShape]
+    opening_lines: list[LineString]  # door/window linework: glazing, leaves, frames
+    tags: list  # (tag, D or W, where): door and window tags
+    layer_counts: Counter
+    loose_door_entities: int = 0
+
+
+def gather_plan(doc: Drawing, profile: Profile, units: str | None = None,
+                region: tuple[float, float, float, float] | None = None) -> PlanDrawn:
+    """What the plan holds (extract_floor's first step): its walls, outlines, door
+    blocks and swings, door and window linework, texts and blocks, in meters."""
     scale = meters_per_unit(doc, units)
     tol = CURVE_TOLERANCE_M / scale
     warnings: list[str] = []
@@ -418,8 +455,8 @@ def extract_floor(
     labels: list[Label] = []
     blocks: list[tuple[str, Point]] = []
     door_shapes: list[DoorShape] = []
-    opening_lines: list[LineString] = []  # door/window linework: glazing, leaves, frames
-    tags: list[tuple[str, str, Point]] = []  # (tag, D or W, where): door and window tags
+    opening_lines: list[LineString] = []
+    tags: list[tuple[str, str, Point]] = []
     layer_counts: Counter[str] = Counter()
     loose_door_entities = 0
 
@@ -436,10 +473,6 @@ def extract_floor(
                 tags.append((*tag, Point(c[0] * scale, c[1] * scale)))
             if profile.label_layers.fullmatch(layer):
                 lines, c = _text_lines(e), _center(e)
-                if skip_label is not None and lines and all(
-                    skip_label(ln) and not profile.number_re.fullmatch(ln) for ln in lines
-                ):
-                    continue
                 if lines and c:
                     labels.append(Label(lines, Point(c[0] * scale, c[1] * scale)))
             continue
@@ -489,29 +522,80 @@ def extract_floor(
     if linework:
         for p in polygonize(unary_union(linework)):
             closed_shapes.append((p, "linework"))
-    dx, dy = (offset[0] * scale, offset[1] * scale) if offset else (0.0, 0.0)
-    for (x0, y0), (x1, y1) in drawn_walls or []:  # drawn in local meters: back where the drawing has them
-        wall_fills.append(LineString([(x0 + dx, y0 + dy), (x1 + dx, y1 + dy)])
-                          .buffer(DRAWN_WALL_M / 2, cap_style="square", join_style="mitre"))
+    return PlanDrawn(scale, warnings, closed_shapes, wall_lines, wall_fills, labels, blocks,
+                     _merge_doors(door_shapes), opening_lines, tags, layer_counts, loose_door_entities)
 
-    door_shapes = _merge_doors(door_shapes)
+
+def plan_labels(plan: PlanDrawn, profile: Profile, skip_label: Callable[[str], bool] | None) -> list[Label]:
+    """The plan's labels without the texts that do not name rooms (``skip_label``),
+    unless they are numbers."""
+    if skip_label is None:
+        return list(plan.labels)
+    return [lb for lb in plan.labels
+            if not all(skip_label(ln) and not profile.number_re.fullmatch(ln) for ln in lb.lines)]
+
+
+def plan_walls(plan: PlanDrawn, drawn_walls: list | None,
+               offset: tuple[float, float] | None) -> tuple[list, list, list[str]]:
+    """The plan's wall lines and fills, with the walls a person drew (local meters, put
+    back where the drawing has them), without what lies far from the plan and lines
+    drawn across each other; and the read's warnings so far."""
+    warnings = list(plan.warnings)
+    dx, dy = _offset_m(plan, offset)
+    fills = list(plan.wall_fills)
+    for (x0, y0), (x1, y1) in drawn_walls or []:
+        fills.append(LineString([(x0 + dx, y0 + dy), (x1 + dx, y1 + dy)])
+                     .buffer(DRAWN_WALL_M / 2, cap_style="square", join_style="mitre"))
+    lines, fills = _near_the_plan(plan.wall_lines, fills, warnings)
+    return _without_crosses(lines), fills, warnings
+
+
+def _offset_m(plan: PlanDrawn, offset) -> tuple[float, float]:
+    return (offset[0] * plan.scale, offset[1] * plan.scale) if offset else (0.0, 0.0)
+
+
+@dataclass
+class FoundSpaces:
+    """A floor's spaces as found in its plan (find_spaces), before they are named,
+    typed and joined by doors, where the drawing has them (before the floor's offset):
+    kept, a wall a person draws has only the rooms around it found again
+    (find_spaces_around)."""
+
+    spaces: list[ExtractedSpace]
+    zones: list[ExtractedZone]  # by index into spaces
+    gaps: list[LineString]  # where a space was divided across a gap in a wall
+    doorways: list[Polygon]  # openings closed with no door drawn
+    fabric: Fabric | None
+    outline: object
+    used: str  # "outlines" or "walls"
+    outside: int  # areas left out as the outside
+    warnings: list[str]  # what finding them had to say
+    envelope: object = None  # (walls) the building's extent the spaces were found in
+    pockets: list = field(default_factory=list)  # (walls) the areas left out as the outside
+
+
+def find_spaces(plan: PlanDrawn, profile: Profile, labels: list[Label], lines: list, fills: list,
+                drawn_walls: list | None, offset) -> FoundSpaces:
+    """The floor's spaces (extract_floor's second step): its outlines, else what its
+    walls (``lines``, ``fills``: plan_walls) enclose, those holding several rooms'
+    labels divided between them."""
+    method = profile.spaces.method
+    warnings: list[str] = []
     doorways: list[Polygon] = []
-    open_edges = fabric = None
+    open_edges = fabric = envelope = None
+    pockets: list = []
     outside = 0
-    spaces, containers = _clean_spaces(closed_shapes, profile, warnings, [lb.point for lb in labels])
+    spaces, containers = _clean_spaces(plan.closed_shapes, profile, warnings, [lb.point for lb in labels])
     outline = _floor_outline(spaces, containers)
     used = "outlines"
-    wall_lines, wall_fills = _near_the_plan(wall_lines, wall_fills, warnings)
-    wall_lines = _without_crosses(wall_lines)
-    if not spaces and method != "outlines" and (wall_lines or wall_fills):
-        found = spaces_from_walls(
-            wall_lines, wall_fills, door_shapes, opening_lines, [lb.point for lb in labels], profile.walls,
-            profile.spaces.min_area,
-        )
+    if not spaces and method != "outlines" and (lines or fills):
+        found = spaces_from_walls(lines, fills, plan.door_shapes, plan.opening_lines, [lb.point for lb in labels],
+                                  profile.walls, profile.spaces.min_area)
         spaces = [ExtractedSpace(polygon=p, layer="walls") for p in _without_spikes(found.polygons)
                   if p.area >= profile.spaces.min_area]
         doorways, open_edges, fabric = found.doorways, found.open_edges, found.fabric
-        outline, used = found.outline, "walls"
+        outline, used, envelope = found.outline, "walls", found.envelope
+        pockets = [p for p, _ in found.pockets]
         outside = len(found.pockets)
         if found.pockets:
             warnings.append(
@@ -520,10 +604,11 @@ def extract_floor(
             )
 
     if used == "outlines" and drawn_walls:  # rooms drawn as outlines: a drawn wall parts them too
+        dx, dy = _offset_m(plan, offset)
         spaces = _parted_by(spaces, [_drawn_line(w, dx, dy) for w in drawn_walls], profile.spaces.min_area)
 
     if not spaces:
-        top = ", ".join(f"{name} ({n})" for name, n in layer_counts.most_common(15))
+        top = ", ".join(f"{name} ({n})" for name, n in plan.layer_counts.most_common(15))
         looked = {"outlines": f"outlines on layers matching {profile.spaces.layers}",
                   "walls": f"walls on layers matching {profile.walls.layers}"}
         where = " or ".join(v for k, v in looked.items() if method in (k, "auto"))
@@ -535,19 +620,127 @@ def extract_floor(
         spaces, zones, gaps = _divide_open_areas(spaces, labels, profile, fabric.walls if fabric else None)
         for s in spaces:
             s.issues += open_issue(s.polygon, open_edges)
+    return FoundSpaces(spaces, zones, gaps, doorways, fabric, outline, used, outside, warnings, envelope, pockets)
+
+
+AROUND_REACH_M = 0.35  # the rooms a wall drawn or taken away comes this near are found again…
+AROUND_WINDOW_M = 6.0  # …from what is drawn within this much of them (the doors, glazing and wall ends closing them)
+AROUND_SAME = 0.9  # an area found near them is one found before where they overlap this much (IoU)
+AROUND_SLACK = 0.01  # …and what they cover differs from what they covered by at most this share (beyond the wall)
+AROUND_LARGEST = 0.2  # a room this share of the building or more is found with the whole floor's
+
+
+def find_spaces_around(plan: PlanDrawn, profile: Profile, labels: list[Label], lines: list, fills: list,
+                       previous: FoundSpaces, changed: list[LineString], why: list | None = None) -> FoundSpaces | None:
+    """The spaces after walls were drawn or taken away (``changed``, where the drawing
+    has them; ``lines``, ``fills``: plan_walls with the walls drawn now): the rooms
+    they come near found again from what is drawn around those rooms, the rest as
+    ``previous`` found them (find_spaces), in a fraction of the time on a big floor.
+    None where that may not be what finding the whole floor's would give: a wall that
+    makes a room of what was none (the outside, a recess in the facade), or changes
+    a room beyond those it comes near. ``why``: what made it None, said there."""
+    def whole(reason: str) -> None:
+        if why is not None:
+            why.append(reason)
+
+    if previous.used != "walls" or previous.envelope is None or previous.fabric is None or not changed:
+        return whole("its spaces are not found from walls")
+    if unary_union(changed).difference(previous.envelope.buffer(AROUND_REACH_M)).length > 0:
+        return whole("a wall out beyond the building")  # it may close off the outside into a room
+    reach = unary_union([c.buffer(AROUND_REACH_M) for c in changed])
+    touched = {i for i, s in enumerate(previous.spaces) if s.polygon.intersects(reach)}
+    if not touched:
+        return whole("a wall near no room")
+    # whether an area round others, or a very large one, is the outside round the
+    # building is told from the whole floor (walls._surrounding, _within_the_land_line):
+    # one is found with it
+    largest = AROUND_LARGEST * previous.envelope.area
+    rooms = [previous.spaces[i].polygon for i in touched]
+    if any(r.area >= largest or any(p.interiors for p in as_polygons(r)) for r in rooms):
+        return whole("a wall near a room round others, or a fifth of the building")
+    area = unary_union([previous.spaces[i].polygon for i in touched])
+    window = area.buffer(AROUND_WINDOW_M, join_style="mitre")
+    x0, y0, x1, y1 = window.bounds
+
+    def near(geoms):
+        return [g for g in geoms if g.bounds[0] <= x1 and g.bounds[2] >= x0 and g.bounds[1] <= y1
+                and g.bounds[3] >= y0 and g.intersects(window)]
+
+    found = spaces_from_walls(near(lines), near(fills), [d for d in plan.door_shapes if d.box.intersects(window)],
+                              near(plan.opening_lines), [lb.point for lb in labels if window.contains(lb.point)],
+                              profile.walls, profile.spaces.min_area, within=(previous.envelope, window))
+    if found.fabric is None:
+        return whole("no walls found around it")
+    inside = area.buffer(AROUND_REACH_M)
+    rooms_before = [s.polygon for s in previous.spaces if s.polygon.intersects(window)]
+    pockets_before = [p for p in previous.pockets if p.intersects(window)]
+    polygons = [p for p in _without_spikes(found.polygons) if p.area >= profile.spaces.min_area]
+    new = [p for p in polygons if inside.contains(p)]
+    # what was found near them, away from the window's edge, is as it was (a room
+    # beside them is that room, a recess that recess), else the walls changed more
+    # than the rooms they come near (a recess closed off into a room)
+    if any(not _found_before(p, rooms_before) for p in polygons if not inside.contains(p)):
+        return whole("a room beside the walls is found otherwise")
+    if any(inside.contains(p) or not _found_before(p, pockets_before) for p, _ in found.pockets):
+        return whole("the outside beside the walls is found otherwise")
+    walls = unary_union([c.buffer(DRAWN_WALL_M) for c in changed])
+    differs = area.symmetric_difference(unary_union(new)).difference(walls) if new else area
+    if differs.area > AROUND_SLACK * area.area + profile.spaces.min_area:
+        # what they covered is not covered again: a room opened onto what is not found here
+        return whole("the rooms near the walls are not found again whole")
+    spaces = [ExtractedSpace(polygon=p, layer="walls") for p in new]
+    spaces, zones, gaps = _divide_open_areas(spaces, labels, profile, found.fabric.walls if found.fabric else None)
+    for s in spaces:
+        s.issues += open_issue(s.polygon, found.open_edges)
+
+    kept = [i for i in range(len(previous.spaces)) if i not in touched]
+    index = {old: new for new, old in enumerate(kept)}
+    beside = area.buffer(1.0)  # their walls and windows, as found again
+    fabric = replace(previous.fabric,
+                     walls=previous.fabric.walls.difference(beside).union(found.fabric.walls.intersection(beside)),
+                     windows=[w for w in previous.fabric.windows if not w.intersects(beside)] +
+                             [w for w in found.fabric.windows if w.intersects(beside)])
+    return replace(
+        previous,
+        spaces=[previous.spaces[i] for i in kept] + spaces,
+        zones=[replace(z, space=index[z.space]) for z in previous.zones if z.space in index] +
+              [replace(z, space=z.space + len(kept)) for z in zones],
+        gaps=[g for g in previous.gaps if not g.intersects(inside)] + gaps,
+        doorways=[d for d in previous.doorways if not d.intersects(inside)] +
+                 [d for d in found.doorways if d.intersects(inside)],
+        fabric=fabric,
+    )
+
+
+def _found_before(polygon, before: list) -> bool:
+    """Whether an area is one found before: the same as those it overlaps most of
+    (a space found whole that was divided across a doorway is several)."""
+    parts = [b for b in before if b.intersects(polygon) and b.intersection(polygon).area > 0.5 * b.area]
+    return bool(parts) and iou(polygon, unary_union(parts)) >= AROUND_SAME
+
+
+def finish_floor(plan: PlanDrawn, found: FoundSpaces, profile: Profile, labels: list[Label], lines: list,
+                 fills: list, offset, drawn_dividers: list | None, warnings: list[str]) -> FloorExtraction:
+    """The spaces found divided by the lines a person drew, named, typed and joined
+    by their doors and windows, put where the floor is (extract_floor's last step;
+    ``warnings``: the read's so far, plan_walls')."""
+    spaces, zones, gaps, doorways, fabric = found.spaces, found.zones, found.gaps, found.doorways, found.fabric
+    outline, outside, warnings = found.outline, found.outside, [*warnings, *found.warnings]
+    dx, dy = _offset_m(plan, offset)
     if drawn_dividers:
         zones = _divided_by_drawn(spaces, zones, [_drawn_line(d, dx, dy) for d in drawn_dividers],
                                   profile.spaces.min_area)
     zoned = {z.space for z in zones}
     units = [*zones, *(s for i, s in enumerate(spaces) if i not in zoned)]
     _assign_labels(units, labels, profile, warnings)
-    _assign_blocks(units, blocks)
+    _assign_blocks(units, plan.blocks)
     for s in units:
         s.type, s.type_source = profile.classify(s.name, s.blocks, s.layer)
     type_zoned_spaces(spaces, zones)
 
-    if fabric is None and (wall_lines or wall_fills):
-        fabric = read_fabric(wall_lines, wall_fills, door_shapes, opening_lines, profile.walls)
+    door_shapes, opening_lines = plan.door_shapes, plan.opening_lines
+    if fabric is None and (lines or fills):
+        fabric = read_fabric(lines, fills, door_shapes, opening_lines, profile.walls)
     doors = _connect_doors(spaces, [d.box for d in door_shapes], profile.doors.reach, warnings,
                            [(d.span, d.width, _leaves(d)) for d in door_shapes])
     # Openings closed with no door drawn count as doors between two spaces; on the
@@ -568,13 +761,13 @@ def extract_floor(
         for d in _connect_doors(spaces, [g.buffer(0.05) for g in gaps], profile.doors.reach, [])
         if len(d.connects) == 2
     ]
-    _read_tags(doors, tags)
-    if loose_door_entities and not door_shapes:
+    _read_tags(doors, plan.tags)
+    if plan.loose_door_entities and not door_shapes:
         warnings.append(
-            f"{loose_door_entities} lines/arcs on door layers are not door blocks or swing arcs; no doors found"
+            f"{plan.loose_door_entities} lines/arcs on door layers are not door blocks or swing arcs; no doors found"
         )
     if offset:
-        dx, dy = -offset[0] * scale, -offset[1] * scale
+        dx, dy = -dx, -dy
         for s in [*spaces, *zones]:
             s.polygon = translate(s.polygon, dx, dy)
         for d in doors:
@@ -594,7 +787,8 @@ def extract_floor(
             outline = unary_union([p for p in as_polygons(outline) if p.distance(rooms) <= 0.1]) or outline
         if outline is not None and outside:  # areas left out as the outside: the walls round them too
             outline, walls = _to_the_building(outline, walls, rooms)
-    return FloorExtraction(spaces, doors, outline, scale, warnings, used, walls, _thickness(walls), labels, zones)
+    return FloorExtraction(spaces, doors, outline, plan.scale, warnings, found.used, walls, _thickness(walls),
+                           labels, zones)
 
 
 PLAN_CELL_M = 50.0  # walls are grouped into bodies on a grid this coarse…

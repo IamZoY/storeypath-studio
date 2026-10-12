@@ -35,7 +35,7 @@ def _ended(team, who, job, within=30):
 
 
 def _a_read_that_waits(monkeypatch):
-    """convert_floor as a long read: vision answers one room, says so, and waits to be let
+    """read_floor as a long read: vision answers one room, says so, and waits to be let
     go before it says how far it has got again."""
     halfway, go_on = threading.Event(), threading.Event()
 
@@ -47,7 +47,7 @@ def _a_read_that_waits(monkeypatch):
         say("vision: 2 of 2 rooms looked at")  # (where a read asked to stop stops)
         raise AssertionError("a read asked to stop went on")
 
-    monkeypatch.setattr(convert_module, "convert_floor", reading)
+    monkeypatch.setattr(convert_module, "read_floor", reading)
     return halfway, go_on
 
 

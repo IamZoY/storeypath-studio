@@ -188,24 +188,28 @@ class Job:
 
 
 class Jobs:
-    """Long steps, run one at a time in the background (drawings are large and the
-    language model has one slot). Each is kept, to be followed or listed again, until
-    it ended JOBS_KEPT_S ago."""
+    """Long steps, run in the background one at a time in each of LANES: a floor read
+    because a person drew on it (seconds) goes in a lane of its own, never behind a
+    drawing read whole (minutes); within a lane, one at a time (drawings are large).
+    Each is kept, to be followed or listed again, until it ended JOBS_KEPT_S ago."""
+
+    LANES = ("steps", "drawn")
 
     def __init__(self, data: Path | None = None):
         self.data = data
         self._jobs: dict[str, Job] = {}
-        self._queue: Queue = Queue()
-        threading.Thread(target=self._work, daemon=True).start()
+        self._queues: dict[str, Queue] = {lane: Queue() for lane in self.LANES}
+        for lane in self.LANES:
+            threading.Thread(target=self._work, args=(lane,), name=f"jobs: {lane}", daemon=True).start()
 
     def submit(self, title: str, fn, project: str | None = None, scope: tuple = ("project", None),
                user: str | None = None, kind: str = "", about: str | None = None,
-               floors: list[str] | None = None) -> Job:
+               floors: list[str] | None = None, lane: str = "steps") -> Job:
         self._forget()
         job = Job(uuid.uuid4().hex[:12], title, project=project, scope=scope, user=user, kind=kind, about=about,
                   floors=list(floors or []))
         self._jobs[job.id] = job
-        self._queue.put((job, fn))
+        self._queues[lane].put((job, fn))
         return job
 
     def get(self, job_id: str) -> Job:
@@ -239,9 +243,9 @@ class Jobs:
             if job.ended is not None and job.ended < old:
                 self._jobs.pop(job_id, None)
 
-    def _work(self):
+    def _work(self, lane: str):
         while True:
-            job, fn = self._queue.get()
+            job, fn = self._queues[lane].get()
             try:
                 job.state, job.started = "running", _now_iso()
                 job.check()  # (stopped while it waited)
@@ -1065,11 +1069,12 @@ class Studio:
 
         return self.jobs.submit("Converting", run, project=code, user=_uid(by),
                                 scope=("floor", floor) if floor is not None else ("project", None),
-                                kind="read", floors=[floor] if floor is not None else None)
+                                kind="read", floors=[floor] if floor is not None else None,
+                                lane="drawn" if drawn and floor is not None else "steps")
 
     def _convert(self, code: str, floor_ids: list[str], job: Job, force: bool = False, by=None,
                  drawn: bool = False) -> dict:
-        from .convert import convert_floor
+        from .convert import apply_read, read_floor
 
         job.floors = list(dict.fromkeys([*job.floors, *floor_ids]))  # (a page opened again shows them being read)
         self.reload_helpers()  # the GPU helpers as an admin last set them
@@ -1081,31 +1086,32 @@ class Studio:
             job.say(f"looking at the rooms with {self.vision.name}")
         summaries, held, failed, why = [], [], [], {}
         read = []  # the floors read and saved
-        with self._changing(code):
-            ws = self.store.load(code)
-            names = {drawing_name(ws.floor(f).source.path) for f in floor_ids if ws.floor(f).source is not None}
-            with self._files(code, names) as folder:
-                def say(line: str) -> None:  # (where a read stops when asked to)
-                    job.check()
-                    job.say("  " + line)
+        vision = self.vision if self.vision.available() else None
+        ws = self.store.load(code)
+        names = {drawing_name(ws.floor(f).source.path) for f in floor_ids if ws.floor(f).source is not None}
+        with self._files(code, names) as folder:
+            def say(line: str) -> None:  # (where a read stops when asked to)
+                job.check()
+                job.say("  " + line)
 
-                for fid in floor_ids:
-                    if ws.floor(fid).source is None:
-                        continue
-                    job.check()
-                    job.say(f"converting {fid}")
-                    # a read that would retire most of a floor is not applied: the floor keeps its rooms
+            for fid in floor_ids:
+                if ws.floor(fid).source is None:
+                    continue
+                job.check()
+                job.say(f"converting {fid}")
+                # A floor is read one read at a time, from the project as it is when its
+                # read starts, and that read is applied to the project as it is when it
+                # ends: what people changed meanwhile is kept (as any read keeps it), and
+                # the project is held only while it is applied, a second or two.
+                with StepLock(self.db, f"{fid} read"):
+                    ws = self.store.load(code)
+                    source = ws.floor(fid).source.model_dump(exclude={"sha256"})
                     try:
-                        report = convert_floor(ws, fid, folder, self.model, self.symbols,
-                                               self.vision if self.vision.available() else None,
-                                               say=say, force=force, tiles=self.cache / TILES, drawn=drawn)
+                        floor_read = read_floor(ws, fid, folder, self.model, self.symbols, vision, say=say,
+                                                tiles=self.cache / TILES, drawn=drawn)
                     except Exception as e:  # this floor stays as it was; the others are converted
                         # what the models answered meanwhile is kept, so reading it again asks only about the rest
-                        saved = self.store.load(code)
-                        saved.readings.update(ws.readings)
-                        saved.vision.update(ws.vision)
-                        ws = saved
-                        self.store.save(ws, floors=[], by=by, part="project", kind="answers", targets=[fid])
+                        self._keep_answers(code, ws, fid, by)
                         if isinstance(e, Stopped):
                             raise Stopped(f"{e}: {fid} stays as it was (what vision answered is kept: read again, "
                                           "it asks only about the rest)") from None
@@ -1113,20 +1119,40 @@ class Studio:
                         job.say(f"  {fid}: not converted: {_message(e)}")
                         failed.append(f"{fid}: {_message(e)}")
                         continue
-                    job.say("  " + report.summary())
-                    for w in report.warnings:
-                        job.say("  warning: " + w)
-                    summaries.append(report.summary())
-                    if report.held:
-                        held.append(fid)
-                        why[fid] = report.hold
-                    self.store.save_floor(ws, fid, by=by, more={"summary": report.summary(), "held": report.held})
-                    read.append(fid)
+                    with self._changing(code):
+                        now = self.store.load(code)
+                        floor = next((f for *_, f, i in now.iter_floors() if i == fid), None)
+                        if floor is None or floor.source is None or \
+                                floor.source.model_dump(exclude={"sha256"}) != source:
+                            job.say(f"  {fid}: its drawing changed while it was read: not applied")
+                            failed.append(f"{fid}: its drawing changed while it was read")
+                            continue
+                        now.readings.update(ws.readings)
+                        now.vision.update(ws.vision)
+                        # a read that would retire most of a floor is not applied: the floor keeps its rooms
+                        report = apply_read(now, floor_read, force=force, drawn=drawn)
+                        self.store.save_floor(now, fid, by=by, more={"summary": report.summary(), "held": report.held})
+                job.say("  " + report.summary())
+                for w in report.warnings:
+                    job.say("  warning: " + w)
+                summaries.append(report.summary())
+                if report.held:
+                    held.append(fid)
+                    why[fid] = report.hold
+                read.append(fid)
         if read and self._warm:
             self._print_ahead(code, read)
         if failed:  # the job fails, the floors converted kept
             raise ValueError(f"not converted: {'; '.join(failed)}")
         return {"summaries": summaries, "held": held, "why": why}
+
+    def _keep_answers(self, code: str, ws: Workspace, fid: str, by) -> None:
+        """What the models answered in a read of ``ws`` kept in the project, as it is now."""
+        with self._changing(code):
+            saved = self.store.load(code)
+            saved.readings.update(ws.readings)
+            saved.vision.update(ws.vision)
+            self.store.save(saved, floors=[], by=by, part="project", kind="answers", targets=[fid])
 
     def _print_ahead(self, code: str, floor_ids: list[str]) -> None:
         """Floors' prints drawn now, in the background, where a read leaves them to be

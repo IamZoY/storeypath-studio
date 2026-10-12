@@ -97,11 +97,48 @@ def finished(base, job):
     raise AssertionError(job)
 
 
-@pytest.mark.parametrize("which", ["convert", "export"])
-def test_a_job_never_loses_what_review_saved(studio, monkeypatch, which):
-    """A correction or an item sent while a job works is refused (409, saying why), not
-    saved and then lost when the job saves; one sent before or after is kept, and an
-    item's number is never given twice."""
+def test_what_review_saves_while_floors_are_read_is_kept(studio, monkeypatch):
+    """A floor is read without holding the project, and its read is applied to the
+    project as it is when it ends: a correction, an item placed or taken away and a
+    wall drawn while the floors are read are saved at once, and kept."""
+    base, s, ws_path = studio
+    ws = Workspace.load(ws_path)
+    code, f0 = ws.id, f"{ws.id}-DEMO-HQ-F00"
+    space = max((r for r in ws.floor_objects(f0) if r.kind == "space"), key=lambda r: shape(r.geometry).area)
+    p = shape(space.geometry).representative_point()
+    started, go = threading.Event(), threading.Event()
+    import storeypath.convert
+    real = storeypath.convert.read_floor
+
+    def slow(*a, **kw):  # a floor being read
+        started.set()
+        go.wait(10)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(storeypath.convert, "read_floor", slow)
+    _, first = call(f"{base}/api/projects/{code}/floors/{f0}/items", {"type": "DESK-JUNIOR", "x": p.x, "y": p.y})
+    _, job = call(f"{base}/api/projects/{code}/convert", {})
+    assert started.wait(10)
+    try:
+        assert call(f"{base}/api/projects/{code}/objects/{space.id}", {"correction": {"name": "During"}})[0] == 200
+        status, second = call(f"{base}/api/projects/{code}/floors/{f0}/items", {"type": "DESK-JUNIOR", "x": p.x, "y": p.y})
+        assert status == 200
+        assert call(f"{base}/api/projects/{code}/items/{first['id']}", {"retired": True})[0] == 200
+        status, drawn = call(f"{base}/api/projects/{code}/floors/{f0}/edits", {"add": {"wall": [[0, 0], [3, 0]]}})
+        assert status == 200
+    finally:
+        go.set()
+    assert finished(base, job)["state"] == "done" and finished(base, drawn)["state"] == "done"
+    saved = s.workspace(code)
+    assert saved.overrides[space.id].name == "During"
+    assert saved.items[first["id"]].status == "retired" and saved.items[second["id"]].status == "active"
+    assert saved.floor(f0).edits.walls == [[[0, 0], [3, 0]]]
+
+
+def test_a_job_holding_the_project_never_loses_what_review_saved(studio, monkeypatch):
+    """A correction or an item sent while a job holding the project works (an export) is
+    refused (409, saying why), not saved and then lost when the job saves; one sent
+    before or after is kept, and an item's number is never given twice."""
     base, s, ws_path = studio
     ws = Workspace.load(ws_path)
     code, f0, hq = ws.id, f"{ws.id}-DEMO-HQ-F00", f"{ws.id}-DEMO-HQ"
@@ -109,7 +146,7 @@ def test_a_job_never_loses_what_review_saved(studio, monkeypatch, which):
     p = shape(space.geometry).representative_point()
 
     started, go = threading.Event(), threading.Event()
-    module, name = ("storeypath.convert", "convert_floor") if which == "convert" else ("storeypath.export", "export_package")
+    module, name = "storeypath.export", "export_package"
     real = getattr(__import__(module, fromlist=[name]), name)
 
     def slow(*a, **kw):  # the job, loaded and working
@@ -119,7 +156,7 @@ def test_a_job_never_loses_what_review_saved(studio, monkeypatch, which):
 
     monkeypatch.setattr(f"{module}.{name}", slow)
     _, first = call(f"{base}/api/projects/{code}/floors/{f0}/items", {"type": "DESK-JUNIOR", "x": p.x, "y": p.y})
-    _, job = call(f"{base}/api/projects/{code}/{which}", {} if which == "convert" else {"building": hq})
+    _, job = call(f"{base}/api/projects/{code}/export", {"building": hq})
     assert started.wait(10)
     try:
         status, answer = call(f"{base}/api/projects/{code}/objects/{space.id}", {"correction": {"name": "During"}})
@@ -141,7 +178,7 @@ def test_a_job_never_loses_what_review_saved(studio, monkeypatch, which):
     _, second = call(f"{base}/api/projects/{code}/floors/{f0}/items", {"type": "DESK-JUNIOR", "x": p.x, "y": p.y})
     assert set(s.workspace(code).items) == {first["id"], second["id"]}  # kept
     go.set()
-    _, job = call(f"{base}/api/projects/{code}/{which}", {} if which == "convert" else {"building": hq})
+    _, job = call(f"{base}/api/projects/{code}/export", {"building": hq})
     assert finished(base, job)["state"] == "done"
     saved = s.workspace(code)
     assert saved.overrides[space.id].name == "After" and {first["id"], second["id"]} <= set(saved.items)

@@ -270,10 +270,25 @@ many. A room is let go too when its person leaves the floor (another floor, the 
 closed), or makes no change to it for 5 minutes: a page left open keeps nothing, so
 nobody is kept out of rooms someone went past. A person holds their rooms whichever of
 their pages they use. Reading a whole floor again from Review waits until nobody else
-holds a room on it. Steps that work on the whole project (adding floors, reading
-every floor again, placing buildings, exporting, opening a file into it) hold the
-project in the database for as long as they run (an advisory lock): Review's changes
-meanwhile are answered *busy* (409), from this Studio or another on the same database.
+holds a room on it.
+
+**Reading a floor while people work on it.** A floor is read from the project as it is
+when its read starts, and the read is applied to the project as it is when it ends:
+what people changed meanwhile (a correction, an item, a wall drawn) is kept, as any
+read keeps it, and the project is held only while the read is applied, a second or
+two. Two reads of one floor take turns; floors are read side by side. A floor read
+again because a person drew on it is quick, and waits behind no other step: what its
+drawing holds is taken from its last read, as are its rooms, and a wall drawn or taken
+away has only the rooms it comes near found again, from what is drawn around them
+(seconds on a floor of a thousand rooms). The whole floor is read where only it can
+tell: a wall out beyond the building (it may close off the outside into a room), or
+one coming near a room that rings others or is a fifth of the building or more
+(whether that is the outside round the building is told from the whole floor). The
+rest of the floor stays as it was read: *Re-read drawing* reads it all again. Steps
+that work on the whole project (adding floors, placing buildings, exporting, opening a
+file into it) hold the project in the database for as long as they run (an advisory
+lock): Review's changes meanwhile are answered *busy* (409), from this Studio or
+another on the same database.
 
 **Live.** Studio listens to its database's changes (one connection, from the first
 page on) and sends each to the pages of those who may see it: Review redraws what

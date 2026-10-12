@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 import storeypath.llm as llm
 import storeypath.vision as vision
 from storeypath.cli import app
-from storeypath.convert import convert_floor
+from storeypath.convert import convert_floor, read_floor
 from storeypath.llm import ModelUnavailable
 from storeypath.reading import TextReader
 from storeypath.samples import office_floor, simple_office, write_floor_dxf
@@ -157,7 +157,7 @@ def test_the_studio_converts_the_other_floors_when_one_fails(tmp_path, monkeypat
     data = tmp_path / "data"
     data.mkdir()
     ws_file, floors = _three_floors(data)
-    monkeypatch.setattr(storeypath.convert, "convert_floor", _failing_on(floors[1], convert_floor))
+    monkeypatch.setattr(storeypath.convert, "read_floor", _failing_on(floors[1], read_floor))
     studio = Studio(data, model=NoModel(), warm=False, vision=vision.VisionModel(url=""))
     job = Job("j", "Converting")
     with pytest.raises(ValueError, match=f"not converted: {floors[1]}: RuntimeError: something unforeseen"):

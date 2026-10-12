@@ -8,6 +8,9 @@ code from the building's counter.
 
 from __future__ import annotations
 
+import pickle
+import threading
+from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,8 +19,9 @@ from shapely.geometry import Point, mapping, shape
 
 from .analyse import analyse, name_hint, plan_texts
 from .cad import file_sha256, meters_per_unit, read_drawing, read_notes
-from .extract import (ExtractedDoor, ExtractedSpace, FloorExtraction, _assign_labels, add_lift_doors, extract_floor,
-                      keep_to_the_building, stair_flights, type_stairs, type_zoned_spaces)
+from .extract import (ExtractedDoor, ExtractedSpace, FloorExtraction, _assign_labels, _drawn_line, add_lift_doors,
+                      find_spaces, find_spaces_around, finish_floor, gather_plan, keep_to_the_building,
+                      plan_labels, plan_walls, stair_flights, type_stairs, type_zoned_spaces)
 from .geometry import iou
 from .ids import child_id, parse_id
 from .llm import LocalModel, worth_reading
@@ -88,15 +92,27 @@ def convert_floor(
     symbols: SymbolSpotter | None = None, vision: VisionModel | None = None, say=None, force: bool = False,
     tiles: str | Path | None = None, drawn: bool = False,
 ) -> ConversionReport:
-    """Read a floor's drawing and register what it holds. With the "auto" profile the
-    layers are read from what is drawn on them; ``model`` (a local language model)
-    reads the texts the rules do not know; ``symbols`` spots the fixtures drawn in
-    rooms that have no name; ``vision`` looks at every room as drawn (vision.py).
-    A read that would retire most of the floor is held back unless ``force`` (see
-    apply_extraction): the floor is then left as it was. ``tiles``: a folder where the
-    drawing's prints for the vision model are kept, for the floor read again (FloorPrint).
-    ``drawn``: read after a person drew on the floor in review (or undid it), see
-    apply_extraction."""
+    """Read a floor's drawing and register what it holds (read_floor, applied to ``ws``:
+    apply_read). A read that would retire most of the floor is held back unless
+    ``force`` (see apply_extraction): the floor is then left as it was. ``drawn``: read
+    after a person drew on the floor in review (or undid it), see apply_extraction."""
+    read = read_floor(ws, floor_id, workspace_dir, model, symbols, vision, say, tiles, drawn)
+    return apply_read(ws, read, force=force, drawn=drawn)
+
+
+def read_floor(
+    ws: Workspace, floor_id: str, workspace_dir: str | Path = ".", model: LocalModel | None = None,
+    symbols: SymbolSpotter | None = None, vision: VisionModel | None = None, say=None,
+    tiles: str | Path | None = None, drawn: bool = False,
+) -> FloorRead:
+    """Read a floor's drawing: what it holds, to register in the project (apply_read).
+    With the "auto" profile the layers are read from what is drawn on them; ``model``
+    (a local language model) reads the texts the rules do not know; ``symbols`` spots
+    the fixtures drawn in rooms that have no name; ``vision`` looks at every room as
+    drawn (vision.py). What the models answer is kept in ``ws``. ``tiles``: a folder
+    where the drawing's prints for the vision model are kept, for the floor read again
+    (FloorPrint). ``drawn``: read after a person drew on the floor in review (or undid
+    it): what can be is taken from its last read (_extract)."""
     floor = ws.floor(floor_id)
     if floor.source is None:
         raise ValueError(f"floor {floor_id} has no source drawing")
@@ -104,23 +120,25 @@ def convert_floor(
         vision.failed = None  # only what goes wrong converting this floor is reported with it
     src = floor.source
     path = Path(workspace_dir) / src.path
-    doc = read_drawing(path)
+    sha = file_sha256(path)
+    doc = _drawing(path, sha)
     base = load_profile(resolve_profile(src.profile, workspace_dir))
     reader = TextReader(ws, base, model)
-    if src.profile == AUTO:
+    drawing = (sha, src.region, src.offset, src.units, src.profile)  # what the floor's plan is read from
+    last = _last_read(floor_id, drawing) if drawn else None
+    if last is not None:  # read again after a person drew on it: with the layers' roles it was read with
+        profile, layers = last.profile, last.layers
+    elif src.profile == AUTO:
         reader.learn(plan_texts(doc, src.region, per_layer=SAMPLE_TEXTS,
                                 unknown=lambda t: worth_reading(t) and reader.is_room_name(t) is None))
         analysis = analyse(doc, meters_per_unit(doc, src.units), src.region, reader.is_room_name, base)
-        profile = analysis.profile
+        profile, layers = analysis.profile, analysis.summary()
     else:
-        profile, analysis = base, None
-    extraction = extract_floor(doc, profile, src.units, src.region, src.offset,
-                               skip_label=lambda t: reader.is_room_name(t) is False, drawn_walls=floor.edits.walls,
-                               drawn_dividers=floor.edits.dividers)
+        profile, layers = base, []
+    extraction, read = _extract(floor_id, doc, profile, src, floor.edits, reader, drawing, layers, last, say)
     _drawn_spaces(extraction, floor.edits.spaces, profile.spaces.min_area)
     tally: dict = {}  # what vision looked at (the report's)
     _read_room_types(extraction, reader)
-    sha = file_sha256(path)
     spotted, spot_failed = _spot_symbols(floor, doc, profile, symbols, extraction.scale, sha)
     type_rooms(extraction.units(), spotted)
     add_lift_doors(extraction)
@@ -143,19 +161,138 @@ def convert_floor(
     _sizes_from_the_schedule(extraction, doc, src.region, vision, model, say)
     _drawn_openings(extraction, floor.edits.openings, profile.doors.reach)
     _resized_openings(extraction, floor.edits.resized)
-    report = apply_extraction(ws, floor_id, extraction, force=force, drawn=drawn)
-    report.vision = tally
-    if not report.held:  # a read held back leaves the floor as it was
-        floor.layers = analysis.summary() if analysis is not None else []
-        floor.source.sha256 = sha
-    report.warnings += read_notes(doc)
+    notes = read_notes(doc)
     if reader.model_failed:
-        report.warnings.append(f"the language model was not used: {reader.model_failed}")
+        notes.append(f"the language model was not used: {reader.model_failed}")
     if spot_failed:
-        report.warnings.append(f"symbols were not spotted: {spot_failed}")
+        notes.append(f"symbols were not spotted: {spot_failed}")
     if vision is not None and vision.failed:
-        report.warnings.append(f"vision: {vision.failed}")
+        notes.append(f"vision: {vision.failed}")
+    return FloorRead(floor_id, extraction, layers, sha, (floor.symbols, floor.symbols_key), tally, notes, read)
+
+
+@dataclass
+class FloorRead:
+    """A floor's drawing read (read_floor), to be applied to the project (apply_read):
+    to the one it was read from, or to the project as it is when the read ends, with
+    what people changed meanwhile."""
+
+    floor_id: str
+    extraction: FloorExtraction
+    layers: list  # the layers' roles, as the floor lists them
+    sha: str  # the drawing's content
+    symbols: tuple  # (records, key): the symbols spotted in it, as the floor keeps them
+    tally: dict  # what vision looked at
+    notes: list[str]  # what the read had to say beside what applying it says
+    kept: "_Read"  # what to keep of it for the floor read again
+
+
+def apply_read(ws: Workspace, read: FloorRead, force: bool = False, drawn: bool = False) -> ConversionReport:
+    """A floor's read applied to ``ws`` (apply_extraction), with what was read with it:
+    its layers, the drawing's content and the symbols spotted in it."""
+    floor = ws.floor(read.floor_id)
+    floor.symbols, floor.symbols_key = read.symbols
+    report = apply_extraction(ws, read.floor_id, read.extraction, force=force, drawn=drawn)
+    report.vision = read.tally
+    if not report.held:  # a read held back leaves the floor as it was
+        floor.layers = read.layers
+        floor.source.sha256 = read.sha
+        _keep_read(read.floor_id, read.kept)
+    report.warnings += read.notes
     return report
+
+
+DRAWINGS_KEPT = 2  # drawings kept read, by their content (a big floor's takes about 0.4 GB)
+READS_KEPT = 4  # floors whose last read is kept, for a person drawing on them
+_drawings: OrderedDict[str, object] = OrderedDict()
+_reads: OrderedDict[str, "_Read"] = OrderedDict()
+_kept_lock = threading.Lock()
+
+
+@dataclass
+class _Read:
+    """What a floor's last read found in its drawing, kept: read again after a person
+    drew on it, the floor takes what it can from it (_extract) instead of going through
+    the drawing again (a minute and more on a big floor). Each read takes copies."""
+
+    drawing: tuple  # what it was read from: the drawing's content, the part read, its offset, units, profile
+    walls: list  # the walls drawn it was read with
+    profile: object  # the layers' roles it was read with…
+    layers: list  # …as the floor lists them
+    plan: bytes  # what the plan holds (extract.PlanDrawn)
+    found: bytes  # the spaces found in it, before they were named (extract.FoundSpaces)
+
+
+def _drawing(path: Path, sha: str):
+    """The drawing at ``path`` (of content ``sha``), read: kept, so that the floor read
+    again, or another floor of it, does not read it again."""
+    with _kept_lock:
+        doc = _drawings.get(sha)
+        if doc is not None:
+            _drawings.move_to_end(sha)
+            return doc
+    doc = read_drawing(path)
+    with _kept_lock:
+        _drawings[sha] = doc
+        while len(_drawings) > DRAWINGS_KEPT:
+            _drawings.popitem(last=False)
+    return doc
+
+
+def _last_read(floor_id: str, drawing: tuple) -> "_Read | None":
+    with _kept_lock:
+        read = _reads.get(floor_id)
+    return read if read is not None and read.drawing == drawing else None
+
+
+def _keep_read(floor_id: str, read: "_Read") -> None:
+    with _kept_lock:
+        _reads[floor_id] = read
+        _reads.move_to_end(floor_id)
+        while len(_reads) > READS_KEPT:
+            _reads.popitem(last=False)
+
+
+def _extract(floor_id: str, doc, profile, src, edits, reader: TextReader, drawing: tuple, layers: list,
+             last: "_Read | None", say=None) -> tuple[FloorExtraction, "_Read"]:
+    """The floor's extraction (extract_floor), and the read to keep of it. Read again
+    after a person drew on it (``last``: its last read), what its plan holds is taken
+    from that read, and so are its spaces: as they were when its walls are (a door, a
+    dividing line or a space drawn), else found again around the walls drawn or taken
+    away (find_spaces_around), the whole floor's only where that cannot tell."""
+    skip = lambda t: reader.is_room_name(t) is False  # noqa: E731
+    plan = pickle.loads(last.plan) if last is not None else gather_plan(doc, profile, src.units, src.region)
+    labels = plan_labels(plan, profile, skip)
+    lines, fills, warnings = plan_walls(plan, edits.walls, src.offset)
+    found = None
+    if last is not None:
+        before = pickle.loads(last.found)
+        changed = _walls_changed(last.walls, edits.walls)
+        if not changed:
+            found = before
+        else:
+            dx, dy = (src.offset[0] * plan.scale, src.offset[1] * plan.scale) if src.offset else (0.0, 0.0)
+            why: list[str] = []
+            found = find_spaces_around(plan, profile, labels, lines, fills, before,
+                                       [_drawn_line(w, dx, dy) for w in changed], why)
+            if say is not None:
+                say("the rooms near the walls drawn found again" if found is not None
+                    else f"the whole floor read: {why[0]}")
+    if found is None:
+        found = find_spaces(plan, profile, labels, lines, fills, edits.walls, src.offset)
+    read = _Read(drawing, [list(map(list, w)) for w in edits.walls], profile, layers,
+                 last.plan if last is not None else pickle.dumps(plan, protocol=pickle.HIGHEST_PROTOCOL),
+                 pickle.dumps(found, protocol=pickle.HIGHEST_PROTOCOL))  # (before finish_floor names them)
+    return finish_floor(plan, found, profile, labels, lines, fills, src.offset, edits.dividers, warnings), read
+
+
+def _walls_changed(before: list, now: list) -> list:
+    """The walls drawn since, and those taken away since."""
+    def key(w):
+        return tuple(tuple(map(float, p)) for p in w)
+
+    a, b = Counter(key(w) for w in before), Counter(key(w) for w in now)
+    return [list(map(list, w)) for w in ((a - b) + (b - a)).elements()]
 
 
 NOT_SYMBOLS = {"dimension", "grid"}  # layers whose lines are not things in the building
@@ -204,7 +341,7 @@ def _floor_segments(doc, src, scale: float) -> list:
     extent = src.region if src.region is not None else drawing_extents(doc)
     if extent is None:
         return []
-    return _segments_in(doc, box(*extent), lambda x, y: ((x - ox) * scale, (y - oy) * scale))
+    return _segments_in(doc, box(*extent), (ox, oy, scale))
 
 
 def _name_zones(ex: FloorExtraction, zones: list, profile, reader: TextReader, spotted) -> None:

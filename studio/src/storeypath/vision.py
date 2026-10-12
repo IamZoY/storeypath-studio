@@ -1063,10 +1063,11 @@ def look_at_rooms(spaces: list[ExtractedSpace], doc, src, scale: float, sha: str
     if say is not None and near:
         say(f"vision: {near} room(s) barely changed kept what it saw")
     merged = []
+    points = _RoomPoints(spaces) if any(view is not None for view in seen) else None
     for k, view in zip(chosen, seen):
         if view is None:
             continue
-        apply_view(spaces[k], view, wraps=_wraps_the_rest(k, spaces))
+        apply_view(spaces[k], view, wraps=_wraps_the_rest(k, spaces, points))
         if view.outline == MERGED and not spaces[k].ignored and not _drawn(spaces[k]):
             merged.append(k)
     return merged
@@ -1109,13 +1110,24 @@ def keep_ways_through(ex) -> int:
 WRAPS_SHARE = 0.5  # an area whose outline wraps round this share of the other rooms' area…
 
 
-def _wraps_the_rest(k: int, spaces: list[ExtractedSpace]) -> bool:
+def _wraps_the_rest(k: int, spaces: list[ExtractedSpace], points=None) -> bool:
     """Whether a space's outline wraps round most of the other rooms, as the yard
-    round a house does (the convex hull of its outline holds them)."""
-    hull = spaces[k].polygon.convex_hull
-    others = [s.polygon for j, s in enumerate(spaces) if j != k]
-    total = sum(p.area for p in others)
-    return total > 0 and sum(p.area for p in others if hull.contains(p.representative_point())) >= WRAPS_SHARE * total
+    round a house does (the convex hull of its outline holds them). ``points``: the
+    spaces' (_RoomPoints), worked out once for all of them."""
+    points = points or _RoomPoints(spaces)
+    total = points.total - points.areas[k]
+    held = sum(points.areas[j] for j in points.tree.query(spaces[k].polygon.convex_hull, predicate="contains") if j != k)
+    return total > 0 and held >= WRAPS_SHARE * total
+
+
+class _RoomPoints:
+    """A point inside each space, their areas, and a tree of the points."""
+
+    def __init__(self, spaces: list[ExtractedSpace]):
+        self.points = [s.polygon.representative_point() for s in spaces]
+        self.areas = [s.polygon.area for s in spaces]
+        self.total = sum(self.areas)
+        self.tree = STRtree(self.points)
 
 
 def _drawn(space) -> bool:
@@ -1320,12 +1332,26 @@ def candidate_cuts(polygon, segments) -> list[LineString]:
     return out
 
 
-def _segments_in(doc, region_drawing, to_local) -> list[LineString]:
-    """Straight pieces of everything drawn over a room (not text or dimensions),
-    in local meters."""
+def _segments_in(doc, region_drawing, frame: tuple[float, float, float]) -> list[LineString]:
+    """Straight pieces of everything drawn over a room (not text or dimensions), in
+    local meters (``frame``: the floor's offset, drawing units, and meters per unit).
+    Kept with the drawing, as long as it is kept read (a floor read again after a
+    person drew on it asks for the same, and they take seconds to find on a big floor):
+    not to be changed."""
     from .extract import _flatten, _walk
 
     x0, y0, x1, y1 = region_drawing.bounds
+    kept = getattr(doc, "_storeypath_segments", None)
+    if kept is None:
+        kept = doc._storeypath_segments = {}
+    key = (round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3), *frame)
+    if key in kept:
+        return kept[key]
+    ox, oy, scale = frame
+
+    def to_local(x, y):
+        return (x - ox) * scale, (y - oy) * scale
+
     out = []
     for e, _ in _walk(plan_entities(doc, (x0, y0, x1, y1))):
         if e.dxftype() in ("TEXT", "MTEXT", "ATTRIB", "INSERT", "DIMENSION", "HATCH", "MULTILEADER"):
@@ -1338,6 +1364,7 @@ def _segments_in(doc, region_drawing, to_local) -> list[LineString]:
             continue
         pts = [to_local(x, y) for x, y in flat[0]]
         out += [LineString([a, b]) for a, b in zip(pts, pts[1:]) if a != b]
+    kept[key] = out
     return out
 
 
@@ -1396,14 +1423,11 @@ def split_merged(ex, units: list, doc, src, sha: str, model: VisionModel | None,
     def in_drawing(g):  # local meters → drawing units
         return translate(scale_geom(g, 1 / scale, 1 / scale, origin=(0, 0)), ox, oy)
 
-    def to_local(x, y):
-        return (x - ox) * scale, (y - oy) * scale
-
     lines = []  # [room, cut, key, answer, cut as text]
     for k in merged:
         polygon = units[k].polygon
         shape_text = wkt.dumps(polygon, rounding_precision=2)
-        for cut in candidate_cuts(polygon, _segments_in(doc, in_drawing(polygon.buffer(TO_WALL_M)), to_local)):
+        for cut in candidate_cuts(polygon, _segments_in(doc, in_drawing(polygon.buffer(TO_WALL_M)), (ox, oy, scale))):
             text = shape_text + "|" + wkt.dumps(cut, rounding_precision=2)
             key = hashlib.sha1(f"{name}|{SPLIT_VERSION}|{sha}|{src.region}|{src.offset}|{text}".encode()).hexdigest() if name else None
             lines.append([k, cut, key, answers.get(key) if key else by_cut.get(text), text])

@@ -100,7 +100,7 @@ class File(NamedTuple):
 
 BUSY_MESSAGE = ("a job is working on this project (adding floors, converting or exporting): "
                 "nothing was changed; make the change again when the job is done")
-BUSY_WAIT_S = 1.0  # a change waits this long for a short one (placing a building) to finish
+BUSY_WAIT_S = 5.0  # a change waits this long for a short one (a floor's read applied, a building placed) to end
 
 
 # ---- where a project is kept ------------------------------------------------------
