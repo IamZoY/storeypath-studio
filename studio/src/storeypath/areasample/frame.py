@@ -7,6 +7,7 @@ import math
 from dataclasses import dataclass
 
 from shapely.affinity import translate
+from shapely import make_valid
 from shapely.geometry import box, mapping, shape
 
 MAX_SIDE_M = 50.0  # an area is at most this wide and high: a sample is never a whole plan
@@ -83,7 +84,10 @@ class Frame:
         None when nothing of it is there."""
         if geom is None or geom.is_empty:
             return None
-        out = self.moved(geom).intersection(self.extent)
+        moved = self.moved(geom)
+        if not moved.is_valid:  # (a shape kept as it was found, a vision answer's, may cross itself)
+            moved = make_valid(moved)
+        out = moved.intersection(self.extent)
         return None if out.is_empty else out
 
     def geojson(self, value) -> dict | None:

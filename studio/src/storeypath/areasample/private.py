@@ -34,6 +34,9 @@ ALWAYS = ("project", "site", "building", "floor", "address")  # never kept, what
 NAMED = ("name", "phone", "email", "web", "extension", "id number", "contact")  # taken out of layers' names too
 # what the JSON files hold of Studio's own words (types, who decided, rules, units, local IDs)
 # or of names already scrubbed as names (layers): never scrubbed as texts
+# The maps of a sample keyed by the drawing's own texts (a text's lines, each read): their
+# keys are scrubbed as texts are; every other key is the sample's own field name, never
+DATA_KEYED = {"lines_read_as"}
 STUDIO_KEYS = {"type", "kind", "decided_by", "type_source", "found_as", "outline", "a", "b", "source", "category",
                "units", "header_units", "units_chosen", "profile", "method", "rule", "id", "parent", "zones", "in",
                "label_of", "room", "connects", "layer", "roles", "read_as", "rooms_only", "asked", "model",
@@ -329,17 +332,19 @@ class Privacy:
         """The parts that go still found in ``strings`` (none, once scrubbed)."""
         return sorted({p.pattern for p, _, _ in self._patterns for s in strings if isinstance(s, str) and p.search(s)})
 
-    def scrub_all(self, value):
-        """Every string in a JSON value scrubbed (the keys too), but Studio's own words:
-        a type, who decided it, a rule… (STUDIO_KEYS), which a text taken out (CORRIDOR)
-        must not change, and names already scrubbed as names (layers)."""
+    def scrub_all(self, value, data_keys: bool = False):
+        """Every string in a JSON value scrubbed, but Studio's own words: the sample's field
+        names (a key is scrubbed only in a map keyed by the drawing's texts, ``data_keys``:
+        DATA_KEYED), a type, who decided it, a rule… (STUDIO_KEYS), which a text taken out
+        (CORRIDOR) must not change, and names already scrubbed as names (layers). A word
+        taken out as a name ("OFFICE - FRAME") never renames a field ("frame")."""
         if isinstance(value, str):
             return self.scrub(value)
         if isinstance(value, list):
             return [self.scrub_all(v) for v in value]
         if isinstance(value, dict):
-            return {self.scrub(k) if isinstance(k, str) else k: v if k in STUDIO_KEYS else self.scrub_all(v)
-                    for k, v in value.items()}
+            return {(self.scrub(k) if data_keys and isinstance(k, str) else k):
+                    (v if k in STUDIO_KEYS else self.scrub_all(v, k in DATA_KEYED)) for k, v in value.items()}
         return value
 
     def view(self) -> dict:

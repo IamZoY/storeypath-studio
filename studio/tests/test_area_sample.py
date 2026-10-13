@@ -114,6 +114,20 @@ def test_nothing_private_is_in_a_sample(project):
     assert s.privacy.leftovers(json.dumps([json.loads(files[n]) for n in ("reading.json", "corrections.json")])) == []
 
 
+def test_a_word_taken_out_as_a_name_leaves_the_samples_own_fields_as_they_are():
+    # A text near the area may hold a word that is also one of the sample's field names
+    # ("OFFICE - FRAME": FRAME may be a name); taken out, it is taken out of the texts,
+    # and the keys a text's lines are read by, but never renames the field ("frame").
+    from storeypath.areasample.private import Privacy
+
+    p = Privacy(["OFFICE - FRAME", "STORE\nFRAME"], [])
+    got = p.scrub_all({"frame": {"extent": [0, 0, 1, 1]}, "texts": [
+        {"text": "OFFICE - FRAME", "lines_read_as": {"STORE": "store", "FRAME": "frame"}}]})
+    assert got["frame"] == {"extent": [0, 0, 1, 1]}
+    assert got["texts"][0]["text"] == "OFFICE - [NAME?]"
+    assert "FRAME" not in got["texts"][0]["lines_read_as"] and "STORE" in got["texts"][0]["lines_read_as"]
+
+
 def test_private_parts_of_texts():
     assert parts_of("OFFICE") == [] and parts_of("MAJLIS") == [] and parts_of("SALAH") == [] and parts_of("WC") == []
     assert parts_of("MEETING ROOM 204") == [] and parts_of("RM-GF-33") == [] and parts_of("+0.45 FFL") == []
