@@ -10,7 +10,7 @@ from shapely.affinity import translate
 from shapely import make_valid
 from shapely.geometry import box, mapping, shape
 
-MAX_SIDE_M = 50.0  # an area is at most this wide and high: a sample is never a whole plan
+MAX_SIDE_M = 300.0  # an area is at most this wide and high: a wing, a courtyard and what is round it
 MIN_SIDE_M = 0.5  # …and at least this
 MARGIN_M = 1.0  # what lies this close around it comes too (a wall on its edge stays whole)
 

@@ -1372,7 +1372,7 @@ def sample_make(
     workspace: WorkspaceArg,
     floor: Annotated[str, typer.Option(help="the floor's ID")],
     area: Annotated[str, typer.Option(help="x0,y0,x1,y1: two opposite corners, the floor's local metres "
-                                           "(at most 50 × 50 m)")],
+                                           "(at most 300 × 300 m)")],
     out: Annotated[Path, typer.Option("-o", "--out", help="the sample file to write, or a folder")] = Path("."),
     note: Annotated[str, typer.Option(help="what went wrong there")] = "",
     keep: Annotated[Optional[list[str]], typer.Option(help="a finding to keep (its id, from --list)")] = None,

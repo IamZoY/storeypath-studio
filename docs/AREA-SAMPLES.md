@@ -1,7 +1,7 @@
 # Area samples
 
 An **area sample** is a small file a person downloads from Studio for one part of one
-floor (at most 50 × 50 m) and sends to the StoreyPath team: the drawing in that area,
+floor (at most 300 × 300 m) and sends to the StoreyPath team: the drawing in that area,
 how Studio read it, and what people corrected there. It lets someone show us what went
 wrong without sending the whole drawing or project, and with nothing private in it.
 This page is for whoever receives one, a person or an AI agent: the format, the
@@ -22,7 +22,7 @@ tests, docs or commit messages, unless the owner says so for that sample.
 
 **In Review** (the 2D view), anyone who may see the floor: the *Share an area* tool
 (A, or the Share menu), then drag a rectangle over the part of the plan to share (its
-size shows as it is dragged; more than 50 m a side, or an empty rectangle, is refused). A dialog
+size shows as it is dragged; more than 300 m a side, or an empty rectangle, is refused). A dialog
 shows the area as drawn and as Studio read it, every text that will be taken out (each
 can be kept) and the other texts (each can be taken out), and a note to write. *Download*
 saves `<id>.spsample` (an 8-letter random id). Nothing is sent anywhere: Studio runs

@@ -181,7 +181,7 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   rest.
 - **Share an area** (the *Share an area* tool, <kbd>A</kbd>, or the Share menu; anyone
   who may see the floor): drag a rectangle over a part of the floor Studio read wrong
-  (at most 50 × 50 m), write what went wrong, look at the preview and download
+  (at most 300 × 300 m), write what went wrong, look at the preview and download
   `<id>.spsample`, a small file to send to the StoreyPath team: the drawing in the area,
   the area as drawn and as Studio read it, what Studio decided there and why, and what
   people corrected. People's names, phone numbers, emails, the project's, site's,

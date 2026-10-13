@@ -147,8 +147,9 @@ def test_private_parts_of_texts():
 
 def test_the_area_is_capped_and_never_empty(project):
     path, f_id, *_ = project
-    with pytest.raises(ValueError, match="at most 50"):
-        Area.of([0, 0, 50.5, 10])
+    with pytest.raises(ValueError, match="at most 300"):
+        Area.of([0, 0, 300.5, 10])
+    assert Area.of([0, 0, 120, 280]).height == 280  # a wing and its courtyard
     with pytest.raises(ValueError, match="empty"):
         Area.of([0, 0, 0.2, 10])
     with pytest.raises(ValueError, match="x0, y0, x1, y1"):

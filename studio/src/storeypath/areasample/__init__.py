@@ -1,5 +1,5 @@
 """Area samples: a small file a person downloads from Review for an area of a floor
-(at most 50 × 50 m) and sends to the StoreyPath team, to show how Studio read it:
+(at most 300 × 300 m) and sends to the StoreyPath team, to show how Studio read it:
 
 - ``drawing.dxf``: the drawing's part in the area (cut.py), moved to (0, 0);
 - ``drawing.png`` and ``reading.png``: the area as drawn, and with Studio's reading

@@ -1,4 +1,4 @@
-// Share an area: a person drags a rectangle over the plan (at most 50 × 50 m), looks
+// Share an area: a person drags a rectangle over the plan (at most 300 × 300 m), looks
 // at what a sample of it would hold (the area as drawn, Studio's reading of it, and what
 // is taken out for privacy, each text switchable) and downloads it, <id>.spsample, to
 // send to the StoreyPath team (Studio's areasample/, docs/AREA-SAMPLES.md). Anyone who
@@ -14,7 +14,7 @@
 import { sentAway } from "../account.js";
 import { PAGE } from "../together.js";
 
-const MAX_SIDE = 50; // metres: as the server (areasample.frame.MAX_SIDE_M)
+const MAX_SIDE = 300; // metres: as the server (areasample.frame.MAX_SIDE_M)
 const MIN_SIDE = 0.5;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const KINDS = { name: "a person's name", "maybe a name": "may be a name", phone: "phone number", email: "email",

@@ -231,7 +231,7 @@ def scrub_drawing(doc, privacy: Privacy) -> None:
 def build(review, floor_id: str, area, *, note: str = "", keep=(), remove=(), models: dict | None = None,
           preview: bool = False, catalogue=None) -> Sample:
     """An area sample of a floor (``review``: the project's Review): ``area`` [x0, y0,
-    x1, y1] in the floor's local metres, at most 50 × 50 m; ``keep``: findings the person
+    x1, y1] in the floor's local metres, at most 300 × 300 m; ``keep``: findings the person
     keeps (ids, from a preview), ``remove``: other texts they take out; ``models``: the
     language, vision and symbols models this Studio uses (names, or None)."""
     area = area if isinstance(area, Area) else Area.of(area)
