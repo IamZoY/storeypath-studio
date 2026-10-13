@@ -870,6 +870,38 @@ def test_buildings_on_the_site_plan(studio, tmp_path):
         manifest = json.loads(zipfile.ZipFile(io.BytesIO(res.read())).read("manifest.json"))
     assert all(pl["placed"] and abs(pl["lat"] - 25.28) < 1e-9 for pl in manifest["placements"].values())
 
+    # Turned to stand as it does, by any degree: the whole building, its plan's up facing
+    # the bearing given; on the site, its place there turned about its middle (the site's
+    # up at 10°), placed by itself, its own placement's; Review is told each building's way
+    from storeypath.history import describe
+
+    labs, admin = (next(b for b in p["locations"][0]["buildings"] if b["name"] == n) for n in ("Labs", "Admin"))
+    ws, loc, _ = site()
+    was = next(x for x in loc.buildings if x.name == "Labs").site
+    status, turned = call(f"{base}/api/projects/{code}/buildings/{labs['id']}/bearing", {"bearing": 402.5})
+    assert status == 200 and turned["bearing"] == 42.5
+    ws, loc, _ = site()
+    now = next(x for x in loc.buildings if x.name == "Labs").site
+    assert (now.x, now.y, now.pivot, now.rotation) == (was.x, was.y, was.pivot, 32.5)  # where it was, turned
+    _, info = call(f"{base}/api/projects/{code}/review")
+    assert info["buildings"][labs["id"]] == {"bearing": 42.5, "on_map": True, "own": False}
+    assert info["buildings"][admin["id"]]["bearing"] == 10
+    call(f"{base}/api/projects/{code}/buildings/{admin['id']}/placement", {"lat": 25.2, "lon": 51.5, "bearing": 5, "x": 1, "y": 2})
+    status, turned = call(f"{base}/api/projects/{code}/buildings/{admin['id']}/bearing", {"bearing": -4.5})
+    assert status == 200 and turned["bearing"] == 355.5
+    ws, loc, _ = site()
+    own = next(x for x in loc.buildings if x.name == "Admin").placement
+    assert (own.lat, own.lon, own.x, own.y, own.bearing) == (25.2, 51.5, 1, 2, 355.5)
+    _, info = call(f"{base}/api/projects/{code}/review")
+    assert info["buildings"][admin["id"]] == {"bearing": 355.5, "on_map": True, "own": True}
+    with urllib.request.urlopen(f"{base}/api/projects/{code}/preview.storeypath") as res:
+        manifest = json.loads(zipfile.ZipFile(io.BytesIO(res.read())).read("manifest.json"))
+    assert manifest["placements"][labs["id"]]["bearing"] == 42.5 and manifest["placements"][admin["id"]]["bearing"] == 355.5
+    status, error = call(f"{base}/api/projects/{code}/buildings/{labs['id']}/bearing", {"bearing": "north"})
+    assert status == 400
+    assert describe({"part": "building", "kind": "bearing", "bearing": 42.5, "building_name": "Labs"}) == \
+        "turned Labs to stand as it does: its plan's up facing 42.5° from north"
+
 
 def test_a_building_whose_first_reading_failed_is_read_again_and_put_beside(studio, tmp_path, monkeypatch):
     # The drawing of a second building, at the first one's origin, fails to read; it

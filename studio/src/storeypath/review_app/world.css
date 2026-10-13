@@ -202,3 +202,19 @@ body.presenting.pointer-moved #stage { cursor: auto; }
 @media (prefers-reduced-motion: reduce) {
   .w-toolbar, .w-card { animation: none; }
 }
+
+/* the compass (world.js): north as the view faces, left of the floors */
+.w-compass {
+  position: absolute; right: calc(var(--sp-3) + 82px); bottom: var(--sp-3); z-index: var(--z-canvas-ui);
+  width: 44px; height: 44px; min-height: 0; padding: 0; border-radius: 50%; display: grid; place-items: center;
+  background: var(--canvas-overlay); border: 1px solid var(--canvas-overlay-border); box-shadow: var(--shadow-canvas);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.w-compass[hidden] { display: none; }
+.w-compass:hover:not(:disabled) { background: var(--canvas-overlay); border-color: rgba(0, 0, 0, .22); }
+.w-compass:disabled { opacity: 1; cursor: default; }
+.w-compass .cp-ring { fill: none; stroke: rgba(0, 0, 0, .12); stroke-width: 1; }
+.w-compass .cp-north { fill: #d64545; }
+.w-compass .cp-south { fill: #9aa0aa; }
+.w-compass .cp-pin { fill: #fff; stroke: #3b3d44; stroke-width: .8; }
+.w-compass .cp-n { fill: #d64545; font: 700 7px/1 var(--font-ui); text-anchor: middle; dominant-baseline: central; }

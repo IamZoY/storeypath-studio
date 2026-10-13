@@ -88,6 +88,11 @@
           <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#scissors"/></svg>
           <span>Cutaway</span>
         </button>
+        <button id="top" type="button" class="w-toggle only-dollhouse" aria-pressed="false"
+                data-tip="Top: straight down, the plan's up at the top; again, tilted back" data-key="u">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#scan-eye"/></svg>
+          <span>Top</span>
+        </button>
         <label id="explode-box" class="w-explode only-dollhouse" data-tip="Explode: lift the floors apart (every floor, or those chosen together)">
           <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/lucide.svg#unfold-vertical"/></svg>
           <span>Explode</span>
@@ -153,6 +158,14 @@
 
     <!-- bottom right: the building's floors, the top one first; All in the dollhouse -->
     <nav id="floor-stack" class="floor-stack" aria-label="The building's floors" hidden></nav>
+    <!-- which way north is, turning as the view turns; a click faces north (the dollhouse) -->
+    <button id="compass" type="button" class="w-compass" aria-label="North" data-tip="North: face north" hidden>
+      <svg viewBox="-20 -20 40 40" width="40" height="40" aria-hidden="true">
+        <circle class="cp-ring" r="18.5"/>
+        <g class="cp-needle"><path class="cp-north" d="M0,-9.5L3.6,0H-3.6Z"/><path class="cp-south" d="M0,9.5L3.6,0H-3.6Z"/><text class="cp-n" x="0" y="-13.2">N</text></g>
+        <circle class="cp-pin" r="1.4"/>
+      </svg>
+    </button>
 
     <div id="loading" class="w-loading" role="status">
       <span class="spinner" aria-hidden="true"></span>

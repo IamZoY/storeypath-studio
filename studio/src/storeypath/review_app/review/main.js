@@ -15,6 +15,7 @@ import { keyMap, keysNow, setupActions, situation } from "./actions.js";
 import { followJob, request } from "./api.js";
 import { emit } from "./bus.js";
 import { allCommands, run } from "./commands.js";
+import { setupCompass } from "./compass.js";
 import { $, el, icon } from "./dom.js";
 import { backCorner, clearPreview, preview, setupDrawing, snapWall, toolClick } from "./drawing.js";
 import * as finish from "./finish.js";
@@ -87,6 +88,7 @@ setupRoomSections();
 setupOtherSections();
 setupInspector();
 setupFloorStack();
+setupCompass();
 setupStatusbar();
 setupHeld();
 

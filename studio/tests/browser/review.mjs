@@ -478,6 +478,53 @@ test("a card reader placed by a door serves it: the line to it drawn, linked to 
   await press("Escape");
 });
 
+test("North: the compass says which way the plan's up faces; turned in its panel by a degree, by 15° or typed, saved for the whole building, and back", async () => {
+  const needle = () => R(() => Number(/rotate\((-?[\d.]+)\)/.exec(document.querySelector("#compass .cp-needle").getAttribute("transform"))?.[1]));
+  const building = await R(() => window.storeypathReview.state.floor.id.split("-").slice(0, 3).join("-"));
+  const bearing = () => R((b) => window.storeypathReview.state.project.buildings[b].bearing, building);
+  const was = await bearing();
+  truly(await R(() => !document.getElementById("compass").hidden && document.getElementById("view3d-ctl").hidden), "the compass on the plan; Top in 3D alone");
+  truly(Math.abs(await needle() + was) < 0.01, `its needle: north as the building stands (${await needle()}, ${was})`);
+  const typed = (v) => R((v) => {
+    const i = document.getElementById("np-bearing");
+    i.value = String(v);
+    i.dispatchEvent(new Event("input"));
+  }, v);
+  await page.click(...await R(() => {
+    const r = document.getElementById("compass").getBoundingClientRect();
+    return [r.left + r.width / 2, r.top + r.height / 2];
+  }));
+  await until(() => document.getElementById("north") && document.activeElement?.id === "np-bearing", "a click: North, its bearing ready to type");
+  truly(Number(await R(() => document.getElementById("np-bearing").value)) === was, "as it stands");
+  await typed(30);
+  truly(Math.abs(await needle() + 30) < 0.01, "typed: the compass turns with it");
+  await R(() => document.querySelector("[data-testid='np-nudge15']").click());
+  await R(() => document.querySelector("[data-testid='np-nudge-1']").click());
+  truly(await R(() => document.getElementById("np-bearing").value === "44" && document.querySelector("#north .np-wind").textContent === "NE"
+    && document.querySelector("#north .np-floor").getAttribute("transform") === "rotate(44)"), "15° on, a degree back: the floor turned on the rose");
+  await press("Escape");
+  await until(() => !document.getElementById("north"), "Esc: put away, nothing saved");
+  truly(Math.abs(await needle() + was) < 0.01 && (await bearing()) === was, "as it was");
+  await R(() => window.storeypathReview.run("building.north"));
+  await until(() => document.getElementById("north"), "from the palette's command too");
+  await typed(372.25);
+  await R(() => document.querySelector("[data-testid='np-save']").click());
+  await until(() => !document.getElementById("north"), "saved");
+  await until((b) => window.storeypathReview.state.project.buildings[b].bearing === 12.3, "the building's bearing", 5000, building);
+  truly(Math.abs(await needle() + 12.3) < 0.01, "the compass as it now stands");
+  const told = await R(async () => (await (await fetch(`/api/projects/${new URLSearchParams(location.search).get("p")}/review`)).json()).buildings);
+  truly(told[building].bearing === 12.3, `the Studio has it: ${JSON.stringify(told)}`);
+  // back as it was
+  await R(() => window.storeypathReview.run("building.north"));
+  await until(() => document.getElementById("north"), "North again");
+  await typed(was);
+  await R(() => document.querySelector("[data-testid='np-save']").click());
+  await until((a) => window.storeypathReview.state.project.buildings[a[0]].bearing === a[1], "back as it was", 5000, [building, was]);
+  await press("u");
+  truly(await R(() => window.storeypathReview.view3d.mode === "2d"), "U on the plan: nothing (3D only)");
+  noErrors("North");
+});
+
 test("the command palette finds a room by its name and runs a command", async () => {
   await press("k", ["mod"]);
   await R(() => {
@@ -736,6 +783,27 @@ test("3D and walking: built without an error, the floor stack offers All, 2 is b
     truly(await R(() => window.storeypathReview.view3d.world.floor === window.storeypathReview.state.floor.id
       && !document.querySelector("#floor-stack .fs-with")), "again: the floor open alone");
   }
+  // the compass turns with the view; U looks straight down, the plan's up at the top, and back; Face north
+  const view = () => R(() => {
+    const w = window.storeypathReview.view3d.world, needle = document.querySelector("#compass .cp-needle").getAttribute("transform");
+    return { top: w.top, facing: w.viewBearing, bearing: w.bearing, needle: Number(/rotate\((-?[\d.]+)\)/.exec(needle)?.[1]),
+      pressed: document.getElementById("top-view").getAttribute("aria-pressed"), shown: !document.getElementById("view3d-ctl").hidden };
+  });
+  const turned = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+  await press("u");
+  await until(() => window.storeypathReview.view3d.world.top && document.getElementById("top-view").getAttribute("aria-pressed") === "true",
+    "U: straight down", 5000);
+  await sleep(800); // (turned there)
+  let v = await view();
+  truly(v.shown && turned(v.facing, v.bearing) < 0.5 && turned(-v.needle, v.facing) < 0.5, `straight down, the plan's up at the top: ${JSON.stringify(v)}`);
+  await R(() => window.storeypathReview.run("view.north"));
+  await sleep(900);
+  v = await view();
+  truly(v.top && turned(v.facing, 0) < 0.5 && Math.abs(v.needle) < 0.5, `facing north, still straight down: ${JSON.stringify(v)}`);
+  await R(() => document.getElementById("top-view").click());
+  await until(() => !window.storeypathReview.view3d.world.top && document.getElementById("top-view").getAttribute("aria-pressed") === "false",
+    "again: tilted back", 5000);
+  truly(await R(() => document.getElementById("map").classList.contains("in3d") && !document.getElementById("compass").hidden), "the compass in 3D");
   truly(await R(() => document.querySelector("#rail [data-tool=wall]").getAttribute("aria-disabled") === "true"), "the Wall tool: not in 3D");
   await press("p");
   truly((await toolNow()) === "paint" && !(await R(() => document.getElementById("tool-options").hidden)), "Paint in 3D, its brushes shown");

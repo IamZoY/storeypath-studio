@@ -214,6 +214,8 @@ ROWS = [
         passes={"admin", "owner", "building_editor"}, hidden=OUTSIDE | {"floor_viewer"}),
     Row("POST", C + "/buildings/{annex}/placement", {}, ok=(400, "is a number"),
         passes={"admin", "owner", "building_editor"}, hidden=OUTSIDE | {"floor_viewer"}),
+    Row("POST", C + "/buildings/{annex}/bearing", {}, ok=(400, "is a number"),
+        passes={"admin", "owner", "building_editor"}, hidden=OUTSIDE | {"floor_viewer"}),
     # the way in a building: view on the whole of it
     Row("GET", C + "/buildings/{annex}/navigation", ok=200, passes={"admin", "owner", "building_editor"},
         hidden=OUTSIDE | {"floor_viewer"}),
@@ -248,6 +250,11 @@ ROWS = [
         passes={"admin", "owner"}, hidden=OUTSIDE | {"building_editor"}),
     Row("POST", C + "/items/{item}", {"x": "far"}, ok=(400, "is a number"), passes={"admin", "owner"},
         hidden=OUTSIDE | {"building_editor"}),
+    # a set placed, and items changed together: edit on their floor, as one alone
+    Row("POST", C + "/floors/{hq0}/sets", {"set": "NOPE", "x": 1, "y": 1}, ok=(400, "no set"),
+        passes={"admin", "owner"}, hidden=OUTSIDE | {"building_editor"}),
+    Row("POST", C + "/items", {"items": [{"id": "{item}", "x": "far"}]}, ok=(400, "is a number"),
+        passes={"admin", "owner"}, hidden=OUTSIDE | {"building_editor"}),
     # an item by its ID as a person typed it: view on its floor
     Row("GET", C + "/items/{item}", ok=200, passes={"admin", "owner", "floor_viewer"},
         hidden=OUTSIDE | {"building_editor"}),

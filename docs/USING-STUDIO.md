@@ -78,6 +78,19 @@ not placed. Moving or turning a building, on the site plan or the map, changes
 nothing in it: its rooms, doors and items keep their IDs and their places in the
 building.
 
+**North, in Review.** The compass on the canvas (bottom right, over the floors) says
+which way north is: on the plan, as the building stands; in 3D and walking, as the view
+faces, turning with it. Click it for *North*: the floor on a compass rose, turned as the
+building stands. Whoever may change the building turns it there to stand as it really
+does, by any degree: type the bearing the plan's up faces, nudge it by 1° or 15°, or drag
+the rose round (<kbd>Shift</kbd>: by 15°), then *Save*. The whole building turns, every
+floor of it (never one floor alone): on its site plan (about its middle) or, placed by
+itself, on the map, and with it in 3D and in its packages. As with every move, its
+rooms, doors and items keep their IDs and their places on the plan.
+
+A void, a floor open to the one below (an atrium, a double-height hall), is the type
+*Open to below*: in 3D its floor has a hole there, through which the floors below show.
+
 ### Review: correct, complete, check
 
 ![Review: the tool rail, the rooms by type, review mode on a room the rules could not type, its likely types in the inspector](images/review.webp)
@@ -143,7 +156,8 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   same place: the floor, what you chose, the panels and the plan's view stay as they
   are, and switching is instant once the building is built. In 3D the floor stack's
   *All* shows every floor of the building, and <kbd>⌘</kbd>-click (<kbd>Ctrl</kbd>-click;
-  a long press on a tablet) shows another floor with the one open. Walking: click the view to look, <kbd>W A S
+  a long press on a tablet) shows another floor with the one open; *Top* (<kbd>U</kbd>)
+  looks straight down, the plan's up at the top as on the plan, and tilts back again. Walking: click the view to look, <kbd>W A S
   D</kbd> to move, <kbd>Esc</kbd> frees the mouse for the panels; the room you're in
   is shown, and you start in the room you chose, or where the 3D view or the plan was
   looking. In 3D and walking you edit as on the plan: a click chooses a room or an
@@ -465,9 +479,9 @@ Auto (Low on integrated, virtual or software graphics), High or Low.
 **Studio's 3D page** (`world.html`: *Walk in 3D* on a project's page, a building's or
 an export's *3D*, Review's *3D window*) shows a building the whole window, read only:
 Studio's top bar (where you are; Dollhouse <kbd>3</kbd> or Walk <kbd>4</kbd>), a
-toolbar over the world (X-ray <kbd>X</kbd>, Cutaway <kbd>C</kbd>, Explode, Labels
+toolbar over the world (X-ray <kbd>X</kbd>, Cutaway <kbd>C</kbd>, Top <kbd>U</kbd>, Explode, Labels
 <kbd>L</kbd>, Items <kbd>I</kbd>, Hidden; walking, the map <kbd>M</kbd> and Auto
-doors; Look and Quality), the floor stack with *All* (<kbd>PgUp</kbd>,
+doors; Look and Quality), a compass (a click faces north), the floor stack with *All* (<kbd>PgUp</kbd>,
 <kbd>PgDn</kbd>; <kbd>⌘</kbd>-click or <kbd>Ctrl</kbd>-click a floor to show it with
 the others shown, the ground floor and the third, say), a room's or an item's details (with *Walk here* and a way to it in
 Review), and a slim status bar that says what the view expects and, walking, the door

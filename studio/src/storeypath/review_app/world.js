@@ -593,7 +593,8 @@ function drawMinimap() {
 // ---- the keys ---------------------------------------------------------------------------------------
 
 const KEYS = [
-  ["View", [["3", "Dollhouse"], ["4", "Walk"], ["x", "X-ray"], ["c", "Cutaway (the dollhouse)"], ["l", "Labels"], ["i", "Items"],
+  ["View", [["3", "Dollhouse"], ["4", "Walk"], ["x", "X-ray"], ["c", "Cutaway (the dollhouse)"], ["u", "Top: straight down, and back (the dollhouse)"],
+    ["l", "Labels"], ["i", "Items"],
     ["pageup pagedown", "A floor up or down"]]],
   ["The mouse, dollhouse", [[`${WITH_OTHERS.split(":")[0]} a floor`, "Show it with the floors shown, or take it away (on a tablet, a long press)"]]],
   ["Walking", [["w a s d", "Move (or the arrows)"], ["shift", "Run, held"], ["e", "Open or close the door under the pointer, or ahead"],
@@ -640,6 +641,7 @@ function onKey(e) {
     Digit4: () => setMode("walk"),
     KeyX: () => setXray($("xray").getAttribute("aria-pressed") !== "true"),
     KeyC: () => !walking && setCutaway($("cutaway").getAttribute("aria-pressed") !== "true"),
+    KeyU: () => !walking && w.topView(!w.top),
     KeyL: () => setLabels(!state.labels),
     KeyI: () => setItems(!w.items),
     KeyM: () => walking && setMap(!state.showMap),
@@ -661,6 +663,8 @@ function wire() {
   for (const b of $("mode").querySelectorAll("button")) b.addEventListener("click", () => setMode(b.dataset.mode));
   $("xray").addEventListener("click", () => setXray($("xray").getAttribute("aria-pressed") !== "true"));
   $("cutaway").addEventListener("click", () => setCutaway($("cutaway").getAttribute("aria-pressed") !== "true"));
+  $("top").addEventListener("click", () => state.world.topView(!state.world.top));
+  $("compass").addEventListener("click", () => state.world.turnTo(0));
   $("labels").addEventListener("click", () => setLabels(!state.labels));
   $("items").addEventListener("click", () => setItems(!state.world.items));
   $("hidden-spaces").addEventListener("click", () => setHidden($("hidden-spaces").getAttribute("aria-pressed") !== "true"));
@@ -746,6 +750,15 @@ function listen(w) {
     renderHint();
   });
   w.addEventListener("lookchange", renderLook);
+  // the compass: north as the view faces (it turns with the view); Top pressed looking straight down
+  w.addEventListener("viewturn", ({ detail: { bearing, top } }) => {
+    const compass = $("compass");
+    compass.hidden = false;
+    compass.querySelector(".cp-needle").setAttribute("transform", `rotate(${(-bearing).toFixed(2)})`);
+    compass.dataset.tip = `North: the view faces ${Math.round(bearing)}°${w.mode === "walk" ? "" : "; click to face north"}`;
+    compass.disabled = w.mode === "walk";
+    pressed("top", top);
+  });
 }
 
 async function start() {

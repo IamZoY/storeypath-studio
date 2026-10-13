@@ -108,9 +108,7 @@ def place_set(code: str, floor_id: str, request: Request, may: May, studio: TheS
 
 @calls.post("/api/projects/{code}/items")
 def change_items(code: str, request: Request, may: May, studio: TheStudio, body: Body):
-    for a in body.get("items") or []:  # (each, as one alone is: edit on its floor)
-        if isinstance(a, dict) and isinstance(a.get("id"), str):
-            may.item(code, a["id"], a)
+    may.items(code, body)  # (each, as one alone is: edit on its floor)
     return answer(request, studio.review(code).change_items(body, by=may.user, editor=may.editor))
 
 

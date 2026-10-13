@@ -328,6 +328,7 @@ export function dirty3d(floors) {
  * taken or given back, another floor walked to. */
 function setup3d(world) {
   world.setLabels(state.showLabels !== false);
+  world.addEventListener("viewturn", ({ detail }) => emit("viewturn", detail)); // (the compass)
   world.addEventListener("select", ({ detail: { id } }) => {
     if (view3d.picking) return; // our own choice, echoed back
     if (id && (state.floor?.items || []).some((a) => a.id === id)) return !state.assets.includes(id) && selectAsset(id);

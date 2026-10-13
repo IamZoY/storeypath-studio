@@ -13,8 +13,8 @@ mostly about Review, for whoever adds to it.
 read only: Review's *3D window* and a project's *Walk in 3D* (and a building's or an
 export's *3D*) open it. It is StoreyPath's world (`/viewer/src/world/world.js`) in Studio's
 frame: the top bar (where you are, Dollhouse or Walk, the keys, presenting, full screen,
-the theme, the account), a toolbar over the world (X-ray, Cutaway, Explode, Labels, Items,
-Hidden; walking, the map and the doors; Look and Quality: `look.js`), the floor stack, a
+the theme, the account), a toolbar over the world (X-ray, Cutaway, Top, Explode, Labels, Items,
+Hidden; walking, the map and the doors; Look and Quality: `look.js`), a compass, the floor stack, a
 room's or an item's details (a click, walking too), walking's map and the room you are in,
 and a status bar (what the view expects, the door <kbd>E</kbd> works, how it is drawn).
 Walking never takes the mouse: a drag looks, a double-click goes there (the world's own,
@@ -30,7 +30,7 @@ in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`
 ┌ top bar ─ where you are · 2D 3D Walk · search · undo redo history · who · Share ┐
 ├ rail ┬ navigator ─┬ the canvas (plan / 3D / walk) ──────────────┬ inspector ─────┤
 │ tools│ Rooms Items│ [lock banner] [review bar] [tool options]   │ what is chosen,│
-│      │ View       │                         floor stack · zoom  │ or the floor   │
+│      │ View       │          compass · floor stack · zoom/Top   │ or the floor   │
 ├──────┴────────────┴─────────────────────────────────────────────┴────────────────┤
 └ status bar ─ the tool's hint · pointer · chosen · who edits · saved ─────────────┘
 ```
@@ -51,6 +51,7 @@ in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`
 | `review/inspector.js` | the inspector and the registry of its sections; `review/sections/*.js` the sections |
 | `review/navigator.js` | Rooms, Items, View |
 | `review/topbar.js`, `statusbar.js`, `floorstack.js`, `layout.js` | the bars, the floor stack and zoom, the panels' widths and hiding |
+| `review/compass.js` | the compass (north, as the plan or the view faces), North (the building turned to stand as it does, to any degree) and Top (3D: straight down) |
 | `review/palette.js` | ⌘K / Ctrl+K: rooms, items, floors and every command |
 | `review/reviewmode.js`, `likely.js` | review mode, and a room's likely types |
 | `review/plan.js`, `pointer.js` | the plan in SVG, its view and labels; the pointer on it |
@@ -192,6 +193,7 @@ ahead).
 | `A` | Share an area tool | — (says why) | Walk (the walker's) |
 | `N` | Next room to review | Next room to review | Next room to review |
 | `Shift+N` | Room before, to review | Room before, to review | Room before, to review |
+| `U` | — (in 3D only) | Look straight down (top view), or tilt back | — (in 3D only) |
 | `Shift+R` | — · *an item chosen:* Turn the item back 90° | — · *an item chosen:* Turn the item back 90° | — · *an item chosen:* Turn the item back 90° |
 | `,` | — · *an item chosen:* Turn the item 15° left | — · *an item chosen:* Turn the item 15° left | — · *an item chosen:* Turn the item 15° left |
 | `.` | — · *an item chosen:* Turn the item 15° right | — · *an item chosen:* Turn the item 15° right | — · *an item chosen:* Turn the item 15° right |
@@ -204,7 +206,7 @@ ahead).
 |---|---|---|
 | `Enter` | the space tool in use | Space: close the shape |
 | `⌫` | the space tool in use | Space: take back the last corner |
-| `Enter` | the stairs tool in use, as an Outline | Stairs and lifts: close the outline |
+| `Enter` | the stairs tool in use | Stairs and lifts: close the outline |
 | `⌫` | the stairs tool in use | Stairs and lifts: take back the last corner |
 | `⌘/Ctrl+G` | items chosen together | Group the items chosen |
 | `⌘/Ctrl+Shift+G` | items chosen together | Ungroup the items chosen |

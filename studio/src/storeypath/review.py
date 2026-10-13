@@ -62,7 +62,7 @@ from .cad import DrawingError, meters_per_unit, read_drawing
 from . import finishes, history
 from .db.store import Changes, Editor, _same, drawing_name, floor_of, who_of
 from .errors import Busy, Conflict, NotFound
-from .export import Units, _label_point, capacity_of, seating, walked_doors as _doors
+from .export import Units, _label_point, capacity_of, placements, seating, walked_doors as _doors
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
 from .ids import normalize_item_id
 from .profile import Profile, load_profile, resolve_profile
@@ -461,10 +461,16 @@ class Review:
                 "converted": f.converted_at is not None,
                 "spaces": len(spaces), "review": sum(1 for r in spaces if ws.review_reasons(r)),
             })
+        # each building's way: the compass bearing its plan's up faces (export.placements), whether
+        # that is on the map (else its site is not placed yet) and whether it is placed by itself
+        own = {f"{ws.id}-{loc.code}-{b.code}": b.placement is not None for loc in ws.locations for b in loc.buildings}
+        buildings = {b_id: {"bearing": round(p.bearing, 3), "on_map": real, "own": own[b_id]}
+                     for b_id, (p, real) in placements(ws).items()}
         return {
             "project": {"id": ws.id, "name": ws.project.name},
             "file": self.source.name,
             "floors": floors,
+            "buildings": buildings,
             "types": [t.value for t in SpaceType],
         }
 
