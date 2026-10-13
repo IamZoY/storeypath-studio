@@ -3,7 +3,9 @@
 // another floor is found too), floors, and every command (commands.js) with its key.
 // Arrows move, Enter runs, Esc closes. Opened to insert (openInsert: the Place tool, I,
 // "Place an item here…"), the same box finds an item type to place: by its name in
-// English or Arabic, its code or its category; the types placed lately first.
+// English or Arabic, its code or its category; the types placed lately first. A category
+// chosen lists its types alone, shown in the box (a chip): back to every category by the
+// chip, the "All categories" row, Backspace in the empty box or Esc.
 
 import { canRun, allCommands, getCommand, whyNot, worksNow } from "./commands.js";
 import { $, el, icon, save, saved } from "./dom.js";
@@ -33,6 +35,7 @@ let active = 0;
 let returnTo = null;
 let mode = "find"; // "find" (⌘K) or "insert" (openInsert): what the box finds
 let place = null; // (insert) what choosing a type does: place(code)
+let within = null; // (insert) the category chosen: its types alone; null, every category
 
 const CATEGORY_NAMES = { furniture: "Furniture", equipment: "Equipment", appliance: "Appliances" };
 const categoryName = (c) => CATEGORY_NAMES[c] || c.replaceAll("_", " ").replace(/^./, (x) => x.toUpperCase());
@@ -46,9 +49,10 @@ const placedLately = () => {
 const rememberPlaced = (code) => save("storeypath.review.placed", JSON.stringify([code, ...placedLately().filter((c) => c !== code)].slice(0, 8)));
 
 /** (insert) The item types to place: with nothing typed, those placed lately, then each
- * category (chosen: its types); else the types that match, best first. */
+ * category (chosen: its types); else the types that match, best first. Within a category,
+ * its types alone (those that match what is typed), after the way back. */
 function typeResults(q) {
-  const live = (state.catalogue || []).filter((t) => !t.retired);
+  const live = (state.catalogue || []).filter((t) => !t.retired && (!within || t.category === within));
   const row = (t, group, sc) => ({ group, score: sc, swatch: t.color || "#8a8a8a", title: t.name_en,
     sub: [t.name_ar, categoryName(t.category), `${t.width} × ${t.depth} m`, t.mount && t.mount !== "floor" ? `on the ${t.mount}` : null]
       .filter(Boolean).join(" · "),
@@ -56,18 +60,20 @@ function typeResults(q) {
       rememberPlaced(t.code);
       place(t.code);
     } });
+  if (within) {
+    const back = { group: categoryName(within), score: 0, icon: "chevron-left", title: "All categories", sub: "Backspace or Esc", keep: true,
+      run: () => goBack() };
+    const found = q ? live.map((t) => [score(q, `${t.name_en} ${t.name_ar || ""} ${t.code} ${t.shape || ""}`), t]).filter(([sc]) => sc > 0)
+      .sort((a, b) => b[0] - a[0]).map(([sc, t]) => t) : [...live].sort((a, b) => a.name_en.localeCompare(b.name_en));
+    return [back, ...found.map((t) => row(t, categoryName(within), 1))];
+  }
   if (!q) {
     const lately = placedLately().map((c) => live.find((t) => t.code === c)).filter(Boolean);
     const counts = new Map();
     for (const t of live) counts.set(t.category, (counts.get(t.category) || 0) + 1);
     return [...lately.map((t) => row(t, "Placed lately", 1)),
       ...[...counts].map(([c, n]) => ({ group: "Categories", score: 0, icon: "layers", title: categoryName(c), sub: `${n} types`, keep: true,
-        run: () => {
-          const input = $("palette-input");
-          input.value = `${categoryName(c)} `;
-          active = 0;
-          render(input.value);
-        } }))];
+        run: () => goInto(c) }))];
   }
   return live.map((t) => [score(q, `${t.name_en} ${t.name_ar || ""} ${t.code} ${categoryName(t.category)} ${t.shape || ""}`), t])
     .filter(([sc]) => sc > 0).sort((a, b) => b[0] - a[0]).slice(0, 14).map(([sc, t]) => row(t, "Item types", sc));
@@ -193,6 +199,37 @@ function render(q) {
   $("palette-input").setAttribute("aria-activedescendant", shown.length ? `pl-${active}` : "");
 }
 
+/** (insert) Into a category: its types alone, the category shown in the box. */
+function goInto(category) {
+  within = category;
+  showWithin();
+  const input = $("palette-input");
+  input.value = "";
+  active = 1; // (its first type, past the way back)
+  render("");
+  input.focus();
+}
+
+/** (insert) Back to every category, from one. */
+function goBack() {
+  if (!within) return;
+  within = null;
+  showWithin();
+  const input = $("palette-input");
+  input.value = "";
+  active = 0;
+  render("");
+  input.focus();
+}
+
+/** The chip in the box saying which category is shown (a click goes back), when one is. */
+function showWithin() {
+  const chip = $("palette-within");
+  chip.hidden = !within;
+  chip.querySelector(".pl-chip-text").textContent = within ? categoryName(within) : "";
+  chip.setAttribute("aria-label", within ? `Back to all categories (from ${categoryName(within)})` : "");
+}
+
 function mark() {
   for (const li of document.querySelectorAll("#palette-list .pl-item")) {
     const on = li.id === `pl-${active}`;
@@ -233,8 +270,11 @@ function open(what) {
   if (!dialog) {
     const input = el("input", { id: "palette-input", type: "text", role: "combobox", "aria-expanded": "true", "aria-controls": "palette-list",
       "aria-autocomplete": "list", autocomplete: "off", spellcheck: "false", placeholder: "Find a room, an item's tag, a floor or a command…" });
+    const chip = el("button", { id: "palette-within", type: "button", class: "pl-chip", hidden: true, title: "Back to all categories" },
+      icon("chevron-left", { size: 14 }), el("span", { class: "pl-chip-text" }));
+    chip.addEventListener("click", () => goBack());
     dialog = el("dialog", { class: "dialog palette", "aria-label": "Search and commands" },
-      el("div", { class: "pl-search" }, icon("search", { size: 16 }), input, el("kbd", {}, "Esc")),
+      el("div", { class: "pl-search" }, icon("search", { size: 16 }), chip, input, el("kbd", {}, "Esc")),
       el("ul", { id: "palette-list", class: "pl-list", role: "listbox", "aria-label": "Found" }),
       el("div", { class: "pl-foot" }, el("span", {}, kbd("arrowup"), kbd("arrowdown"), " move"), el("span", {}, kbd("enter"), " choose"),
         el("span", { class: "pl-hint" }, "Rooms by name, number, type or ID · items by tag")));
@@ -255,7 +295,11 @@ function open(what) {
       } else if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        close();
+        if (within) goBack(); // (out of a category first, then closed)
+        else close();
+      } else if (e.key === "Backspace" && within && !input.value) {
+        e.preventDefault();
+        goBack();
       }
     });
     dialog.addEventListener("close", () => {
@@ -272,6 +316,8 @@ function open(what) {
   dialog.querySelector(".pl-hint").textContent = mode === "insert" ? "Furniture and equipment by name, code or kind"
     : "Rooms by name, number, type or ID · items by tag";
   input.value = "";
+  within = null;
+  showWithin();
   active = 0;
   render("");
   dialog.showModal();
