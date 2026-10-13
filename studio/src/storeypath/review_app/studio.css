@@ -129,6 +129,18 @@ dialog.private-review p { margin: 0; }
 
 /* the site plan: buildings around a centre of the site's own */
 .site-plan { display: block; width: 100%; height: 420px; margin-top: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; touch-action: none; user-select: none; }
+.site-stage { position: relative; }
+/* north (studio.js siteCard): in the plan's corner */
+.site-compass {
+  position: absolute; top: 20px; right: 10px; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--panel); border: 1px solid var(--line); pointer-events: auto;
+}
+.site-compass .cp-ring { fill: none; stroke: var(--line); stroke-width: 1; }
+.site-compass .cp-north { fill: #d64545; }
+.site-compass .cp-south { fill: #9aa0aa; }
+.site-compass .cp-pin { fill: var(--panel); stroke: var(--text); stroke-width: .8; }
+.site-compass .cp-n { fill: #d64545; font: 700 7px/1 var(--font-ui); text-anchor: middle; dominant-baseline: central; }
+.site-fields .site-facing { align-self: flex-end; padding-bottom: 8px; }
 .site-plan .grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .site-plan .centre { pointer-events: none; }
 .site-plan .centre line { stroke: var(--danger); stroke-width: 2; vector-effect: non-scaling-stroke; }

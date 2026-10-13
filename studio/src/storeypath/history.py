@@ -15,7 +15,7 @@ Every change is a row of the project's history in Studio's database (db/store.py
               unlink, as found, finish (an object; finish may be of many rooms at once:
               before and after {"overrides": {id: …}}); add, move, turn, retype, values, carry, delete, restore (an
               item); draw, erase, resize (an edit); read, take over (a floor); create,
-              open, import, floors, align, site, place, bearing, arrange, export, drawing, floor
+              open, import, floors, align, site, place, arrange, export, drawing, floor
               deleted (a building's floor taken away: a barrier on that floor)…
     floors    the floors it changed (none: the building's, or the project's)
     targets   the IDs it changed
@@ -278,21 +278,11 @@ def _describe(e: dict) -> str:
         "floor deleted": f"deleted the floor {e.get('floor_name') or 'a floor'}",
         "export": f"exported {e.get('file') or 'a package'}", "arrange": "set the buildings side by side",
         "site": "moved a building on the site plan",
-        "bearing": f"turned {e.get('building_name') or 'a building'} to stand as it does: its plan's up facing "
-                   f"{_degrees(e.get('bearing'))} from north",
         "answers": "kept what vision saw on a read that did not finish",
         "place": "placed a building on the map" if part == "building" else "placed the site on the map",
         "open": "opened a file into the project" if part == "building" else "opened the project from a file",
     }
     return lines.get(kind) or kind or "changed the project"
-
-
-def _degrees(value) -> str:
-    """A bearing as lines show it: "23.5°"."""
-    try:
-        return f"{round(float(value), 1):g}°"
-    except (TypeError, ValueError):
-        return "another bearing"
 
 
 def _finished(e: dict, it: str) -> str:

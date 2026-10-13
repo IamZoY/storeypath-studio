@@ -187,12 +187,6 @@ def place(code: str, building_id: str, request: Request, may: May, studio: TheSt
     return answer(request, studio.place(code, building_id, body, by=may.user))
 
 
-@calls.post(P + "/buildings/{building_id}/bearing")
-def turn(code: str, building_id: str, request: Request, may: May, studio: TheStudio, body: Body):
-    may.building(code, building_id, "edit")
-    return answer(request, studio.turn(code, building_id, body, by=may.user))
-
-
 @calls.post(P + "/locations/{location_id}/arrange")
 def arrange(code: str, location_id: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.project(code, "edit")

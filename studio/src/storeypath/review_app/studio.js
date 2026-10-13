@@ -898,9 +898,17 @@ function readAgain(code, f) {
 // Where a location's buildings stand relative to each other, around a centre of the
 // site's own (not the map): drag a building to move it, its round handle to turn it
 // (Shift: by 15°), or use the keys (arrows: 1 m, Shift: 10 m; [ and ]: 1°, Shift:
-// 15°). Placing the site on the map places every building on it.
+// 15°), or type where it is and how far it is turned, to any degree. Placing the site on
+// the map places every building on it. A compass in its corner says which way north is
+// (up, until the site is placed on the map with another bearing of up), and the building
+// chosen, which way its plan's up faces: as it really stands, which the 3D views show.
 
 const SITE_STEP_M = 1;
+const WINDS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+const bearingSaid = (deg) => {
+  const d = ((deg % 360) + 360) % 360;
+  return `${+d.toFixed(1)}° (${WINDS[Math.round(d / 22.5) % 16]})`;
+};
 
 function siteCard(code, loc, p) {
   // a building is moved by who may change it; the site's arrangement and its place on
@@ -915,9 +923,19 @@ function siteCard(code, loc, p) {
   svg.setAttribute("aria-label", `Site plan of ${loc.name}: drag a building to move it, its handle to turn it`);
   const x = el("input", { type: "number", step: "0.1" });
   const y = el("input", { type: "number", step: "0.1" });
-  const rot = el("input", { type: "number", step: "1" });
+  const rot = el("input", { type: "number", step: "any" });
   const which = el("strong", {});
+  const facing = el("span", { class: "muted small site-facing" });
   const note = el("p", { class: "muted small" });
+  // north: the site's up faces the bearing it is placed on the map with (none: north is up)
+  const upFaces = loc.placement?.bearing ?? 0;
+  const compass = el("div", { class: "site-compass", role: "img", "data-testid": "site-compass",
+    "aria-label": `North: the site plan's up faces ${bearingSaid(upFaces)}` });
+  compass.title = loc.placement ? `North: the site plan's up faces ${bearingSaid(upFaces)}, as the site is placed on the map`
+    : "North: up on the site plan, until the site is placed on the map with another bearing of up";
+  compass.innerHTML = `<svg viewBox="-20 -20 40 40" width="44" height="44" aria-hidden="true"><circle class="cp-ring" r="18.5"/>`
+    + `<g class="cp-needle" transform="rotate(${-upFaces})"><path class="cp-north" d="M0,-9.5L3.6,0H-3.6Z"/>`
+    + `<path class="cp-south" d="M0,9.5L3.6,0H-3.6Z"/><text class="cp-n" x="0" y="-13.2">N</text></g><circle class="cp-pin" r="1.4"/></svg>`;
 
   const onSite = (b, [px, py]) => {
     const r = (b.site.rotation * Math.PI) / 180;
@@ -992,8 +1010,10 @@ function siteCard(code, loc, p) {
     if (b) {
       x.value = b.site.x.toFixed(2);
       y.value = b.site.y.toFixed(2);
-      rot.value = b.site.rotation.toFixed(1);
+      rot.value = String(+b.site.rotation.toFixed(3));
     }
+    // which way its plan's up faces: its own placement's, else turned on the site, from north
+    facing.textContent = b ? `its plan's up faces ${bearingSaid(b.placement ? b.placement.bearing : upFaces + b.site.rotation)}` : "";
     for (const input of [x, y, rot]) input.disabled = !b || Boolean(b.placement) || b.locked;
     note.textContent = b?.locked ? `${b.name} is not yours to move: you may look at it.`
       : b?.placement
@@ -1106,9 +1126,10 @@ function siteCard(code, loc, p) {
   draw();
   return el("section", { class: "card site-card" },
     el("div", { class: "row" }, el("h2", { class: "grow" }, `Site plan · ${loc.name}`), whole ? sideBySide : null, fitButton),
-    svg,
+    el("div", { class: "site-stage" }, svg, compass),
     buildings.some((b) => !b.locked)
-      ? el("div", { class: "site-fields" }, which, el("label", {}, "x (m)", x), el("label", {}, "y (m)", y), el("label", {}, "turned (°)", rot))
+      ? el("div", { class: "site-fields" }, which, el("label", {}, "x (m)", x), el("label", {}, "y (m)", y), el("label", {}, "turned (°)", rot),
+        facing)
       : null,
     buildings.some((b) => !b.locked) ? note : null,
     el("p", { class: "muted small", style: "margin-top: 12px" }, loc.placement

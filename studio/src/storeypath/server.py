@@ -43,8 +43,6 @@ each call needs is checked first in route() (the table is in studio/README.md):
     POST /api/projects/<code>/floors {drawing, units, plans: [...]}  → job: add, align, convert
     POST /api/projects/<code>/convert          → job
     POST /api/projects/<code>/buildings/<id>/placement {lat, lon, bearing, x?, y?}
-    POST /api/projects/<code>/buildings/<id>/bearing {bearing}  the whole building turned:
-                                               its plan's up facing that compass bearing
     POST /api/projects/<code>/export {building} → job: that building's package (one
                                                building per package)
     GET  /api/projects/<code>/exports/<file>
@@ -628,12 +626,10 @@ class Studio:
 
     def review_project(self, code: str, sight: Sight | None = None) -> dict:
         """The review editor's project: its floors (with ``sight``, those the person may see,
-        each with their level on it, ``can``), its buildings' ways (those seen) and the space
-        types."""
+        each with their level on it, ``can``), and the space types."""
         info = self.review(code).project()
         if sight is not None:
             info["floors"] = [{**f, "can": sight.floor(f["id"])} for f in info["floors"] if sight.floor(f["id"])]
-            info["buildings"] = {b: way for b, way in info["buildings"].items() if sight.sees_building(b)}
             info["can"] = sight.can()
         return info
 
@@ -1272,32 +1268,6 @@ class Studio:
             b.site = SitePosition(x=round(x, 3), y=round(y, 3), rotation=round(rotation % 360, 3), pivot=positions[b.code].pivot)
             self.store.save(ws, floors=[], by=by, part="building", kind="site", targets=[building_id])
         return {"site": b.site.model_dump()}
-
-    def turn(self, code: str, building_id: str, body: dict, by=None) -> dict:
-        """A building turned to stand as it does: ``bearing``, the compass bearing (degrees
-        clockwise from north) its drawings' up faces. The whole building turns, every floor
-        of it: placed on the map by itself, its placement's bearing; else its place on its
-        location's site plan, turned about its middle (the site's up facing the site's
-        bearing; north, when the site is not on the map). Its rooms and items keep their
-        places in its own frame; no other building moves."""
-        from .export import placements, site_positions
-        from .workspace import SitePosition
-
-        bearing = _number(body, "bearing")
-        self._known(code)
-        with self._changing(code):
-            ws = self.store.load(code, floors=[])
-            loc, b = self._building_of(ws, building_id)
-            if b.placement is not None:
-                b.placement = b.placement.model_copy(update={"bearing": round(bearing, 3) % 360})
-            else:
-                pos = _settle(loc, site_positions(loc))[b.code]
-                site = loc.placement.bearing if loc.placement else 0.0
-                b.site = SitePosition(x=pos.x, y=pos.y, rotation=round(bearing - site, 3) % 360, pivot=pos.pivot)
-            now = placements(ws)[building_id][0].bearing
-            self.store.save(ws, floors=[], by=by, part="building", kind="bearing", targets=[building_id],
-                            more={"bearing": now, "building_name": b.name})
-        return {"bearing": now}
 
     def arrange(self, code: str, location_id: str, by=None) -> dict:
         """The location's buildings side by side on its site plan, left to right in the

@@ -68,7 +68,11 @@ Each location has a **site plan**: its buildings drawn from above, where they st
 relative to each other. Drag a building to move it, or its round handle to turn it
 (<kbd>Shift</kbd>: by 15°); with a building chosen, the arrows move it 1 m
 (<kbd>Shift</kbd>: 10 m) and <kbd>[</kbd> <kbd>]</kbd> turn it 1° (<kbd>Shift</kbd>:
-15°), or type its x, y and turn. *Side by side* lines them up 10 m apart.
+15°), or type its x, y and turn, to any degree. *Side by side* lines them up 10 m apart.
+This is where a building is turned to stand as it really does: the whole building, every
+floor of it. The compass in the plan's corner says which way north is (up, until the site
+is placed on the map with another bearing of up), and beside the fields, which way the
+chosen building's plan faces.
 
 **Place on the map** puts the whole site on the earth: the latitude and longitude of
 its centre and the compass bearing of up. Every building goes with it. A building
@@ -77,19 +81,6 @@ then buildings are exported around 0°N 0°E with their true shapes and sizes, m
 not placed. Moving or turning a building, on the site plan or the map, changes
 nothing in it: its rooms, doors and items keep their IDs and their places in the
 building.
-
-**North, in Review.** The compass on the canvas (bottom right, over the floors) says
-which way north is: on the plan, as the building stands; in 3D and walking, as the view
-faces, turning with it. Click it for *North*: the floor on a compass rose, turned as the
-building stands. Whoever may change the building turns it there to stand as it really
-does, by any degree: type the bearing the plan's up faces, nudge it by 1° or 15°, or drag
-the rose round (<kbd>Shift</kbd>: by 15°), then *Save*. The whole building turns, every
-floor of it (never one floor alone): on its site plan (about its middle) or, placed by
-itself, on the map, and with it in 3D and in its packages. As with every move, its
-rooms, doors and items keep their IDs and their places on the plan.
-
-A void, a floor open to the one below (an atrium, a double-height hall), is the type
-*Open to below*: in 3D its floor has a hole there, through which the floors below show.
 
 ### Review: correct, complete, check
 
@@ -125,7 +116,10 @@ and every command with its key; <kbd>?</kbd> lists the keys.
 - **Click a space** (Select, <kbd>V</kbd>) to see in the inspector its ID (copy it),
   the text written in it on the drawing, why it is listed, and to correct its **type,
   name and number**: each is saved when it is changed, and says what was detected and
-  by whom (rules, the language model, vision, a person), with ↺ to go back to it.
+  by whom (rules, the language model, vision, a person), with ↺ to go back to it. A
+  void, where the floor is open to the one below (an atrium, a double-height hall), is
+  the type *Open to below*: in 3D the floor has a hole there, the floors below seen
+  through it.
   *Accept as it is* checks it without a change; *Use detected* takes your corrections
   away. **Capacity**: how many people it is meant to seat (see below). **Delete**
   (<kbd>Del</kbd>) takes what is not a room (a sliver, the outside) out of the plan,
@@ -157,7 +151,8 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   are, and switching is instant once the building is built. In 3D the floor stack's
   *All* shows every floor of the building, and <kbd>⌘</kbd>-click (<kbd>Ctrl</kbd>-click;
   a long press on a tablet) shows another floor with the one open; *Top* (<kbd>U</kbd>)
-  looks straight down, the plan's up at the top as on the plan, and tilts back again. Walking: click the view to look, <kbd>W A S
+  looks straight down, the plan's up at the top as on the plan, and tilts back again. In
+  3D and walking a compass over the floors turns with the view (a click faces north). Walking: click the view to look, <kbd>W A S
   D</kbd> to move, <kbd>Esc</kbd> frees the mouse for the panels; the room you're in
   is shown, and you start in the room you chose, or where the 3D view or the plan was
   looking. In 3D and walking you edit as on the plan: a click chooses a room or an

@@ -230,21 +230,20 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 /* the walking HUD, the menu and the toast above the floor stack's corner */
 body.walking #toast { bottom: calc(var(--status-h) + 112px); }
 
-/* ---- the compass (compass.js): over the floors, in 2D, 3D and walking ---------------------- */
+/* ---- the compass (compass.js): over the floors, in 3D and walking -------------------------- */
 .compass {
   width: 44px; height: 44px; min-height: 0; padding: 0; border-radius: 50%; display: grid; place-items: center;
   background: var(--canvas-overlay); border: 1px solid var(--canvas-overlay-border); box-shadow: var(--shadow-canvas);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); cursor: pointer;
 }
 .compass[hidden] { display: none; }
+.compass:disabled { opacity: 1; cursor: default; } /* (walking: it says, it does not turn the view) */
 .compass:hover:not(:disabled) { background: var(--canvas-overlay); border-color: rgba(0, 0, 0, .22); }
 .compass .cp-ring { fill: none; stroke: rgba(0, 0, 0, .12); stroke-width: 1; }
 .compass .cp-north { fill: #d64545; }
 .compass .cp-south { fill: #9aa0aa; }
 .compass .cp-pin { fill: #fff; stroke: #3b3d44; stroke-width: .8; }
 .compass .cp-n { fill: #d64545; font: 700 7px/1 var(--font-ui); text-anchor: middle; dominant-baseline: central; }
-.compass .cp-needle { transition: transform 80ms linear; }
-#map.in3d .compass .cp-needle { transition: none; } /* (it follows the view, a frame at a time) */
 .view3d-ctl {
   display: flex; padding: 3px; gap: 2px; border-radius: var(--r-lg);
   background: var(--canvas-overlay); border: 1px solid var(--canvas-overlay-border); box-shadow: var(--shadow-canvas);
@@ -257,32 +256,3 @@ body.walking #toast { bottom: calc(var(--status-h) + 112px); }
 }
 .view3d-ctl button:hover:not(:disabled) { background: rgba(0, 0, 0, .06); color: #111; }
 .view3d-ctl button[aria-pressed="true"] { background: #1f2329; color: #fff; }
-
-/* North: which way the building stands, and turned (compass.js) */
-.north-panel {
-  position: absolute; right: calc(var(--sp-3) + 56px); bottom: var(--sp-3); z-index: var(--z-canvas-ui);
-  width: 288px; max-width: calc(100% - 2 * var(--sp-3) - 56px); padding: var(--sp-3);
-  display: flex; flex-direction: column; gap: var(--sp-2);
-  background: var(--surface-1); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
-  box-shadow: var(--shadow-md); font-size: var(--fs-md); animation: rise var(--dur) var(--ease);
-}
-.north-panel .np-head { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; }
-.north-panel .np-meta { color: var(--text-muted); font-size: var(--fs-sm); }
-.north-panel .np-dial { align-self: center; touch-action: none; user-select: none; }
-.north-panel .np-dial.turnable { cursor: grab; }
-.north-panel .np-dial.turnable:active { cursor: grabbing; }
-.np-dial .np-ring { fill: var(--surface-2); stroke: var(--border-strong); stroke-width: 1; }
-.np-dial .np-tick { stroke: var(--text-faint); stroke-width: 1; }
-.np-dial .np-tick.main { stroke: var(--text-muted); stroke-width: 1.5; }
-.np-dial .np-letter { fill: var(--text-muted); font: var(--fw-semibold) 11px/1 var(--font-ui); text-anchor: middle; dominant-baseline: central; }
-.np-dial .np-letter.n { fill: #d64545; font-weight: 700; }
-.np-dial .np-shape { fill: color-mix(in srgb, var(--accent) 22%, transparent); fill-rule: evenodd; stroke: var(--accent); stroke-width: 1.2; }
-.np-dial .np-up { fill: var(--accent); }
-.np-dial .np-pin { fill: var(--text-muted); }
-.north-panel .np-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
-.north-panel .np-row input { width: 84px; min-height: 30px; font-variant-numeric: tabular-nums; }
-.north-panel .np-wind { min-width: 3ch; font-weight: var(--fw-semibold); color: var(--text-muted); }
-.north-panel .np-nudges button { min-width: 52px; }
-.north-panel .np-note { margin: 0; color: var(--text-muted); font-size: var(--fs-sm); }
-.north-panel .np-actions { display: flex; align-items: center; gap: var(--sp-2); }
-.north-panel .np-actions .grow { flex: 1; }

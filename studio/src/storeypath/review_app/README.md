@@ -30,7 +30,7 @@ in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`
 ┌ top bar ─ where you are · 2D 3D Walk · search · undo redo history · who · Share ┐
 ├ rail ┬ navigator ─┬ the canvas (plan / 3D / walk) ──────────────┬ inspector ─────┤
 │ tools│ Rooms Items│ [lock banner] [review bar] [tool options]   │ what is chosen,│
-│      │ View       │          compass · floor stack · zoom/Top   │ or the floor   │
+│      │ View       │      (3D: compass) · floor stack · zoom/Top │ or the floor   │
 ├──────┴────────────┴─────────────────────────────────────────────┴────────────────┤
 └ status bar ─ the tool's hint · pointer · chosen · who edits · saved ─────────────┘
 ```
@@ -51,7 +51,7 @@ in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`
 | `review/inspector.js` | the inspector and the registry of its sections; `review/sections/*.js` the sections |
 | `review/navigator.js` | Rooms, Items, View |
 | `review/topbar.js`, `statusbar.js`, `floorstack.js`, `layout.js` | the bars, the floor stack and zoom, the panels' widths and hiding |
-| `review/compass.js` | the compass (north, as the plan or the view faces), North (the building turned to stand as it does, to any degree) and Top (3D: straight down) |
+| `review/compass.js` | in 3D and walking, the compass (north as the view faces; a click faces north) and Top (straight down) |
 | `review/palette.js` | ⌘K / Ctrl+K: rooms, items, floors and every command |
 | `review/reviewmode.js`, `likely.js` | review mode, and a room's likely types |
 | `review/plan.js`, `pointer.js` | the plan in SVG, its view and labels; the pointer on it |
