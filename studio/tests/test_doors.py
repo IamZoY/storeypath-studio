@@ -150,6 +150,24 @@ def test_a_side_light_drawn_as_a_frame_between_a_pier_and_a_door_closes_its_gap(
     assert len(got) == 1 and abs(got[0].length - 1.3) < 0.01 and abs(got[0].centroid.x - 0.155) < 0.01
 
 
+def test_glazing_between_wide_piers_closes_against_their_jambs_up_to_a_bay():
+    # A glass front's bay between two piers wider than the glass is reached for: no face of
+    # either runs along the glass near its ends, only the jambs square across it; drawn as
+    # lines, it closes the gap, up to a bay (6 m), not further
+    from shapely.geometry import LineString, box
+    from shapely.ops import unary_union
+
+    from storeypath.profile import WallsConfig
+    from storeypath.walls import _connectors
+
+    bay = WallsConfig().max_glazing
+    for gap in (2.0, 4.6, bay + 0.5):
+        piers = unary_union([box(-1.8, 0.0, 0.0, 0.9), box(gap, 0.0, gap + 1.8, 0.9)])
+        glass = LineString([(0.0, 0.45), (gap, 0.45)])
+        got = _connectors(piers, [glass], bay)
+        assert got == ([glass] if gap <= bay else []), gap
+
+
 def test_a_tag_says_whether_an_opening_is_a_door_or_a_window(tmp_path):
     _, door = _glazed_doorway(tmp_path, "D2")
     assert (door.source, door.tag, door.issues) == ("door", "D2", [])

@@ -9,8 +9,8 @@ are then closed:
 - where a line on a door or window layer runs from one wall to another: glazing
   (straight or curved) or a door leaf drawn closed;
 - where a wall stops and another wall faces its end within ``max_doorway``: a
-  doorway or window with nothing drawn in it; or within ``max_opening`` with
-  glazing drawn in the gap: a window;
+  doorway or window with nothing drawn in it; or within ``max_glazing`` with
+  glazing drawn in the gap: a window (glazing from wall to wall closes that much too);
 - around the outside, wider gaps up to ``max_opening`` are spanned by the building
   envelope, so the room behind a missing door is not lost.
 
@@ -85,7 +85,7 @@ def read_fabric(lines: list, fills: list, doors: list[DoorShape], opening_lines:
     for d in doors:
         _door_bars(d, mass)  # sets span and width
     near_door = shapely.union_all([d.box.buffer(0.3) for d in doors]) if doors else Polygon()
-    glass = [ln for ln in _connectors(mass, opening_lines, cfg.max_opening) if not ln.intersects(near_door)] \
+    glass = [ln for ln in _connectors(mass, opening_lines, cfg.max_glazing) if not ln.intersects(near_door)] \
         if opening_lines else []
     return Fabric(walls, _one_per_window(glass))
 
@@ -159,11 +159,11 @@ def spaces_from_walls(
     built = mass
     # glazing from wall to wall, or to a door (a side light beside an entrance's doors)
     against = unary_union([mass, *seals]) if seals else mass
-    seals += list(shapely.buffer(_connectors(against, opening_lines, cfg.max_opening), SNAP_M)) if opening_lines else []
+    seals += list(shapely.buffer(_connectors(against, opening_lines, cfg.max_glazing), SNAP_M)) if opening_lines else []
     mass = unary_union([mass, *seals]) if seals else mass
     mass = _bridge_door_boxes(mass, [d.box for d in doors if not d.swings], cfg.max_thickness)
     openings = shapely.union_all(opening_lines) if opening_lines else None
-    mass, bridges = _bridge_wall_ends(mass, cfg.max_doorway, cfg.max_opening, cfg.max_thickness, openings)
+    mass, bridges = _bridge_wall_ends(mass, cfg.max_doorway, cfg.max_glazing, cfg.max_thickness, openings)
     near_door = shapely.union_all([d.box.buffer(0.2) for d in doors]) if doors else Polygon()
     doorways = [b for b, glazed in bridges if not glazed and not b.intersects(near_door)]
     glazed_gaps = [b for b, glazed in bridges if glazed]
@@ -311,9 +311,9 @@ GLASS_FRAME_M = 0.35  # a closed shape on an opening layer this thin, and long, 
 def _connectors(mass, lines: list, max_length: float) -> list:
     """Lines that carry a wall across a gap: glazing (straight or curved, or a pane drawn
     as a thin closed frame: its middle line, end to end) or a door leaf drawn closed.
-    Both ends sit on a wall and run in line with it; the middle is clear of walls.
-    Lines that meet walls at an angle (a cross marking a lift car, a counter edge) and
-    other closed shapes do not qualify."""
+    Both ends sit on a wall, each running in line with it or square against its jamb; the
+    middle is clear of walls. Lines that meet walls at an angle (a cross marking a lift car)
+    and other closed shapes do not qualify."""
     shapely.prepare(mass)
     out = []
     for ln in lines:
@@ -331,9 +331,30 @@ def _connectors(mass, lines: list, max_length: float) -> list:
             continue
         if mass.contains(ln.interpolate(0.5, normalized=True)):
             continue
-        if _in_line(mass, c[0], c[1] - c[0]) and _in_line(mass, c[-1], c[-2] - c[-1]):
+        # each end continues the wall, or stands against its jamb: the wall's face square across
+        # it (a pier wider than reach, or a wall meeting the facade beside a window, has short
+        # faces along); a line meeting a wall at an angle (a lift car's cross) does neither
+        ends = ((c[0], c[1] - c[0]), (c[-1], c[-2] - c[-1]))
+        if all(_in_line(mass, p, d) or _jamb(mass, p, d) for p, d in ends):
             out.append(ln)
     return out
+
+
+def _jamb(mass, point, direction) -> bool:
+    """Whether a face of the wall across ``direction`` (within 25° of square to it), at
+    least 0.1 m long, stands within 0.06 m of ``point``: the jamb a pane ends against."""
+    x, y = point
+    edges = shapely.simplify(shapely.clip_by_rect(mass.boundary, x - 0.3, y - 0.3, x + 0.3, y + 0.3), 0.005)
+    norm = float(np.hypot(*direction)) or 1.0
+    here = Point(x, y)
+    for part in shapely.get_parts(edges):
+        c = np.asarray(part.coords)
+        for p, q in zip(c[:-1], c[1:]):
+            length = float(np.hypot(*(q - p)))
+            if length >= 0.1 and abs(np.dot(q - p, direction)) / (length * norm) <= np.sin(np.radians(25.0)) \
+                    and LineString([p, q]).distance(here) <= 0.06:
+                return True
+    return False
 
 
 def _pane(ring) -> LineString | None:
@@ -358,9 +379,10 @@ def _in_line(mass, point, direction, tolerance_deg: float = 25.0) -> bool:
     """Whether a line leaving ``point`` along ``direction`` continues the wall there:
     parallel to a face of the wall within reach of the point. Beside a window the
     wall may be a short stub whose end face, across the wall, is its longest edge
-    there; its faces along the wall still show the way it runs."""
+    there; its faces along the wall still show the way it runs. A face drawn in many short
+    pieces (a fill's edge) is taken as the straight run they make."""
     x, y = point
-    edges = shapely.clip_by_rect(mass.boundary, x - 0.3, y - 0.3, x + 0.3, y + 0.3)
+    edges = shapely.simplify(shapely.clip_by_rect(mass.boundary, x - 0.3, y - 0.3, x + 0.3, y + 0.3), 0.005)
     norm = float(np.hypot(*direction)) or 1.0
     for part in shapely.get_parts(edges):
         c = np.asarray(part.coords)
