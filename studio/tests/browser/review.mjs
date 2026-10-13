@@ -277,7 +277,7 @@ test("tools of one family share a place on the rail: right-clicked or held, it o
   noErrors("the paint tools");
 });
 
-test("Measure: two points clicked, the distance between them", async () => {
+test("Measure: two points clicked, the distance between them; in feet and inches too", async () => {
   await press("m");
   const p = await roomAt((await officeNamed("001")).id), q = await roomAt((await officeNamed("003")).id);
   await page.click(...p);
@@ -285,6 +285,13 @@ test("Measure: two points clicked, the distance between them", async () => {
   await press("Enter");
   const said = await R(() => document.getElementById("measure-result")?.textContent || "");
   truly(/^\d+(\.\d+)? m$/.test(said), `measured: ${said}`);
+  const units = (u) => R((u) => [...document.querySelectorAll("#tool-options .units-switch button")].find((b) => b.textContent === u).click(), u);
+  await units("ft");
+  const feet = await R(() => document.getElementById("measure-result")?.textContent || "");
+  const [, ft, inch] = /^(\d+)' (\d+)"$/.exec(feet) || [];
+  truly(ft && Math.abs((Number(ft) * 12 + Number(inch)) * 0.0254 - Number(said.split(" ")[0])) < 0.03, `in feet: ${feet} (${said})`);
+  await units("m");
+  truly(await R(() => document.getElementById("measure-result")?.textContent) === said, "back in metres");
   await press("Escape");
   await press("Escape");
 });

@@ -1,7 +1,8 @@
 // The Measure tool (M), on the plan: a distance along points clicked, or an area and its
-// perimeter, in metres. Points snap to the walls' corners and edges (and square up) as a
-// wall's ends do. Nothing is saved: a measure stays shown until another is started, the
-// tool is put down or Esc.
+// perimeter, in metres or in feet and inches (../units.js: the switch in its options,
+// remembered in this browser). Points snap to the walls' corners and edges (and square up)
+// as a wall's ends do. Nothing is saved: a measure stays shown until another is started,
+// the tool is put down or Esc.
 
 import { emit } from "./bus.js";
 import { $, el, svg } from "./dom.js";
@@ -9,11 +10,11 @@ import { snapWall } from "./drawing.js";
 import { onViewChange } from "./plan.js";
 import { state } from "./state.js";
 import { tool } from "./tools.js";
+import { areaSaid, lengthSaid, onUnits, unitsSwitch } from "../units.js";
 
 const m = { mode: "distance", points: [], live: null, done: false };
 
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
-const metres = (v) => `${v < 10 ? v.toFixed(2) : v.toFixed(1)} m`;
 
 function length(points, closed = false) {
   let total = 0;
@@ -37,8 +38,8 @@ export function measured() {
 
 function summary() {
   const r = measured();
-  if (m.mode === "area") return r.points >= 3 ? `${r.area.toFixed(r.area < 100 ? 2 : 1)} m² · perimeter ${metres(r.perimeter)}` : "—";
-  return r.points >= 2 ? metres(r.distance) : "—";
+  if (m.mode === "area") return r.points >= 3 ? `${areaSaid(r.area)} · perimeter ${lengthSaid(r.perimeter)}` : "—";
+  return r.points >= 2 ? lengthSaid(r.distance) : "—";
 }
 
 function closesArea(p) {
@@ -88,13 +89,13 @@ function placeLabels() {
   for (let i = 1; i < sides.length; i++) {
     const a = sides[i - 1], b = sides[i];
     if (dist(a, b) * k < 46) continue; // too short to write on
-    tags.push(tag([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], metres(dist(a, b))));
+    tags.push(tag([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], lengthSaid(dist(a, b))));
   }
   if (m.mode === "area" && pts.length >= 3) {
     const c = pts.reduce((acc, p) => [acc[0] + p[0] / pts.length, acc[1] + p[1] / pts.length], [0, 0]);
-    tags.push(tag(c, `${area(pts).toFixed(1)} m²`, "m-total"));
+    tags.push(tag(c, areaSaid(area(pts)), "m-total"));
   } else if (m.mode === "distance" && pts.length >= 3) {
-    tags.push(tag(pts.at(-1), `${metres(length(pts))} in all`, "m-total"));
+    tags.push(tag(pts.at(-1), `${lengthSaid(length(pts))} in all`, "m-total"));
   }
   layer.replaceChildren(...tags);
 }
@@ -116,6 +117,7 @@ function finish() {
 
 export function setupMeasure() {
   onViewChange(placeLabels);
+  onUnits(() => draw());
   tool({
     id: "measure", label: "Measure", icon: "ruler", key: "m", group: "measure", keepsSelection: true,
     words: "distance length area perimeter size",
@@ -135,7 +137,7 @@ export function setupMeasure() {
         }));
       const reset = el("button", { type: "button", class: "btn-sm btn-ghost", disabled: !m.points.length }, "Clear");
       reset.addEventListener("click", clear);
-      return [modes, el("span", { class: "to-value", "aria-live": "polite", id: "measure-result" }, summary()), reset];
+      return [modes, el("span", { class: "to-value", "aria-live": "polite", id: "measure-result" }, summary()), unitsSwitch(el), reset];
     },
     plan: {
       hover: (p) => {

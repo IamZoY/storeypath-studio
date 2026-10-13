@@ -141,6 +141,19 @@ dialog.private-review p { margin: 0; }
 .site-compass .cp-pin { fill: var(--panel); stroke: var(--text); stroke-width: .8; }
 .site-compass .cp-n { fill: #d64545; font: 700 7px/1 var(--font-ui); text-anchor: middle; dominant-baseline: central; }
 .site-fields .site-facing { align-self: flex-end; padding-bottom: 8px; }
+.site-plan.measuring, .site-plan.measuring .building path { cursor: crosshair; }
+.site-plan .measure { pointer-events: none; }
+.site-plan .measure line { stroke: var(--danger); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.site-plan .measure circle { fill: var(--danger); }
+.site-plan .measure text { fill: var(--text); font-weight: 600; text-anchor: middle; dominant-baseline: text-after-edge;
+  paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.site-zoom { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 2px; padding: 3px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line); }
+.site-zoom button { width: 30px; height: 30px; min-height: 0; padding: 0; font-size: 18px; line-height: 1; }
+.site-scale { position: absolute; left: 10px; bottom: 10px; padding: 2px 8px; border-radius: 6px; font-size: 12px;
+  color: var(--muted); background: var(--panel); border: 1px solid var(--line); pointer-events: none; }
+.site-measured { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+.site-measured:empty { display: none; }
 .site-plan .grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .site-plan .centre { pointer-events: none; }
 .site-plan .centre line { stroke: var(--danger); stroke-width: 2; vector-effect: non-scaling-stroke; }

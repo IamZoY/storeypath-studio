@@ -13,6 +13,7 @@ import { openShare } from "./share.js";
 import { ProjectStream } from "./stream.js";
 import { avatar } from "./together.js";
 import { usersPage } from "./users.js";
+import { lengthSaid, onUnits, roundStep, unitsSwitch } from "./units.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const $ = (id) => document.getElementById(id);
@@ -902,6 +903,10 @@ function readAgain(code, f) {
 // the map places every building on it. A compass in its corner says which way north is
 // (up, until the site is placed on the map with another bearing of up), and the building
 // chosen, which way its plan's up faces: as it really stands, which the 3D views show.
+// − and + zoom (and ⌘ or Ctrl with the wheel, a pinch, at the pointer; − and + keys), an
+// empty place dragged moves the plan, Fit takes it all in; its grid is of a round length
+// (it says which). Measure: two points clicked, the distance between them (snapped to the
+// buildings' corners and the centre), in metres or feet (units.js).
 
 const SITE_STEP_M = 1;
 const WINDS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
@@ -953,6 +958,31 @@ function siteCard(code, loc, p) {
     const pad = Math.max(10, 0.08 * Math.max(x1 - x0, y1 - y0));
     view = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
   };
+  /** The plan zoomed by ``k`` (2: twice as near) about ``at`` (site metres; the middle):
+   * from 5 m across to 50 km. */
+  const zoom = (k, at = null) => {
+    const [x0, y0, x1, y1] = view;
+    const [cx, cy] = at ?? [(x0 + x1) / 2, (y0 + y1) / 2];
+    const f = Math.min(Math.max((x1 - x0) / k, 5), 50000) / (x1 - x0);
+    view = [cx - (cx - x0) * f, cy - (cy - y0) * f, cx + (x1 - cx) * f, cy + (y1 - cy) * f];
+    draw();
+  };
+  // measuring: on, its points (two: done) and where the pointer is; snapped to what is near
+  const ruler = { on: false, points: [], live: null };
+  const perPixel = () => { // metres a pixel of the plan
+    const r = svg.getBoundingClientRect();
+    return Math.max((view[2] - view[0]) / (r.width || 1), (view[3] - view[1]) / (r.height || 1));
+  };
+  const snapped = (p) => { // a building's corner or the centre within 10 pixels, else where it is
+    let best = null, reach = 10 * perPixel();
+    for (const q of [[0, 0], ...buildings.flatMap((b) => b.footprint.flat().map((c) => onSite(b, c)))]) {
+      const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (d <= reach) [best, reach] = [q, d];
+    }
+    return best ?? p;
+  };
+  const scale = el("div", { class: "site-scale", "aria-live": "polite" });
+  const measured = el("span", { class: "site-measured", "aria-live": "polite" });
   const toSite = (e) => { // a pointer's place on the site (metres, y up)
     const pt = svg.createSVGPoint();
     pt.x = e.clientX;
@@ -965,7 +995,8 @@ function siteCard(code, loc, p) {
     svg.setAttribute("viewBox", `${vx0} ${-vy1} ${vx1 - vx0} ${vy1 - vy0}`);
     // the grid, 10 m, beyond the view too: the box is seldom its shape
     const parts = [];
-    const step = 10, w = vx1 - vx0, h = vy1 - vy0;
+    const grid = roundStep((vx1 - vx0) / 25), step = grid.metres, w = vx1 - vx0, h = vy1 - vy0;
+    scale.textContent = `grid ${grid.said}`;
     const [gx0, gy0, gx1, gy1] = [vx0 - 2 * w, vy0 - 2 * h, vx1 + 2 * w, vy1 + 2 * h];
     for (let gx = Math.ceil(gx0 / step) * step; gx <= gx1; gx += step) parts.push(`<line class="grid" x1="${gx}" y1="${-gy1}" x2="${gx}" y2="${-gy0}"/>`);
     for (let gy = Math.ceil(gy0 / step) * step; gy <= gy1; gy += step) parts.push(`<line class="grid" x1="${gx0}" y1="${-gy}" x2="${gx1}" y2="${-gy}"/>`);
@@ -1005,6 +1036,25 @@ function siteCard(code, loc, p) {
     }
     const c = Math.max(2, (vx1 - vx0) / 60); // the centre, over the buildings
     svg.insertAdjacentHTML("beforeend", `<g class="centre"><line x1="${-c}" y1="0" x2="${c}" y2="0"/><line x1="0" y1="${-c}" x2="0" y2="${c}"/><circle r="${c / 3}"/></g>`);
+    // the measure: its line, its ends, and how long it is, over its middle
+    const [ma, mb] = [ruler.points[0], ruler.points[1] ?? ruler.live];
+    svg.classList.toggle("measuring", ruler.on);
+    measured.textContent = ma && mb ? `${lengthSaid(Math.hypot(mb[0] - ma[0], mb[1] - ma[1]))}` : ruler.on ? "Click two points" : "";
+    if (ma) {
+      const g = document.createElementNS(SVG_NS, "g");
+      g.classList.add("measure");
+      const dot = (p) => `<circle cx="${p[0]}" cy="${-p[1]}" r="${(vx1 - vx0) / 220}"/>`;
+      g.innerHTML = mb ? `<line x1="${ma[0]}" y1="${-ma[1]}" x2="${mb[0]}" y2="${-mb[1]}"/>${dot(ma)}${dot(mb)}` : dot(ma);
+      if (mb) {
+        const t = document.createElementNS(SVG_NS, "text");
+        t.setAttribute("x", (ma[0] + mb[0]) / 2);
+        t.setAttribute("y", -(ma[1] + mb[1]) / 2);
+        t.setAttribute("font-size", ((vx1 - vx0) / 50).toFixed(2));
+        t.textContent = lengthSaid(Math.hypot(mb[0] - ma[0], mb[1] - ma[1]));
+        g.append(t);
+      }
+      svg.append(g);
+    }
     const b = buildings.find((o) => o.id === chosen);
     which.textContent = b ? b.name : "";
     if (b) {
@@ -1033,9 +1083,26 @@ function siteCard(code, loc, p) {
 
   let drag = null;
   svg.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    if (ruler.on) { // a point of the measure (a third: a new measure)
+      const p = snapped(toSite(e));
+      ruler.points = ruler.points.length === 1 ? [ruler.points[0], p] : [p];
+      ruler.live = null;
+      return draw();
+    }
     const id = e.target.dataset?.turn || e.target.closest?.("[data-id]")?.dataset.id;
     const b = buildings.find((o) => o.id === id);
-    if (!b) return;
+    if (!b) { // an empty place: the plan moved with the pointer
+      e.preventDefault();
+      svg.setPointerCapture(e.pointerId);
+      const inv = svg.getScreenCTM().inverse(); // (as it is now: the plan moves under it)
+      const at = (ev) => {
+        const q = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(inv);
+        return [q.x, -q.y];
+      };
+      drag = { pan: true, at, from: at(e), view: [...view] };
+      return;
+    }
     chosen = b.id;
     if (b.placement || b.locked) return draw();
     e.preventDefault();
@@ -1044,7 +1111,16 @@ function siteCard(code, loc, p) {
     draw();
   });
   svg.addEventListener("pointermove", (e) => {
+    if (ruler.on && ruler.points.length === 1) {
+      ruler.live = snapped(toSite(e));
+      return draw();
+    }
     if (!drag) return;
+    if (drag.pan) {
+      const [px, py] = drag.at(e), dx = px - drag.from[0], dy = py - drag.from[1];
+      view = [drag.view[0] - dx, drag.view[1] - dy, drag.view[2] - dx, drag.view[3] - dy];
+      return draw();
+    }
     const p = toSite(e);
     if (drag.turn) {
       let deg = (Math.atan2(p[0] - drag.b.site.x, p[1] - drag.b.site.y) * 180) / Math.PI;
@@ -1058,13 +1134,25 @@ function siteCard(code, loc, p) {
   });
   const drop = () => {
     if (!drag) return;
-    const b = drag.b;
+    const { b, pan } = drag;
     drag = null;
-    save(b);
+    if (!pan) save(b);
   };
+  svg.addEventListener("wheel", (e) => { // ⌘ or Ctrl and the wheel (a pinch): zoomed at the pointer; else the page scrolls
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const by = -e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.01); // (a wheel's notch: at most half again)
+    zoom(Math.exp(Math.min(Math.max(by, -0.4), 0.4)), toSite(e));
+  }, { passive: false });
   svg.addEventListener("pointerup", drop);
   svg.addEventListener("pointercancel", drop);
   svg.addEventListener("keydown", (e) => {
+    const zoomed = { "+": 1.25, "=": 1.25, "-": 0.8, "_": 0.8 }[e.key];
+    if (zoomed) {
+      e.preventDefault();
+      return zoom(zoomed);
+    }
+    if (e.key === "Escape" && ruler.on) return setMeasuring(false);
     const b = buildings.find((o) => o.id === (e.target.dataset?.id || chosen));
     if (!b || b.placement || b.locked) return;
     const step = e.shiftKey ? 10 : SITE_STEP_M, turn = e.shiftKey ? 15 : 1;
@@ -1102,8 +1190,19 @@ function siteCard(code, loc, p) {
       toast(e.message, true);
     }
   });
-  const fitButton = el("button", { type: "button" }, "Fit");
+  const fitButton = el("button", { type: "button", title: "Every building in view" }, "Fit");
   fitButton.addEventListener("click", () => { fit(); draw(); });
+  const zoomButton = (k, label, text) => el("button", { type: "button", class: "btn-icon", "aria-label": label, title: label,
+    onclick: () => zoom(k) }, text);
+  const measureButton = el("button", { type: "button", "aria-pressed": "false", "data-testid": "site-measure",
+    title: "Measure: click two points for the distance between them (snapped to the buildings' corners); Esc stops" }, "Measure");
+  const setMeasuring = (on) => {
+    Object.assign(ruler, { on, points: [], live: null });
+    measureButton.setAttribute("aria-pressed", String(on));
+    draw();
+  };
+  measureButton.addEventListener("click", () => setMeasuring(!ruler.on));
+  const offUnits = onUnits(() => (svg.isConnected ? draw() : offUnits()));
 
   // the site on the map
   const pl = loc.placement || {};
@@ -1125,8 +1224,10 @@ function siteCard(code, loc, p) {
   fit();
   draw();
   return el("section", { class: "card site-card" },
-    el("div", { class: "row" }, el("h2", { class: "grow" }, `Site plan · ${loc.name}`), whole ? sideBySide : null, fitButton),
-    el("div", { class: "site-stage" }, svg, compass),
+    el("div", { class: "row" }, el("h2", { class: "grow" }, `Site plan · ${loc.name}`), measured, measureButton, unitsSwitch(el),
+      whole ? sideBySide : null, fitButton),
+    el("div", { class: "site-stage" }, svg, compass, scale,
+      el("div", { class: "site-zoom", role: "group", "aria-label": "Zoom" }, zoomButton(0.8, "Zoom out", "−"), zoomButton(1.25, "Zoom in", "+"))),
     buildings.some((b) => !b.locked)
       ? el("div", { class: "site-fields" }, which, el("label", {}, "x (m)", x), el("label", {}, "y (m)", y), el("label", {}, "turned (°)", rot),
         facing)

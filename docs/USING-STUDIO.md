@@ -72,7 +72,13 @@ relative to each other. Drag a building to move it, or its round handle to turn 
 This is where a building is turned to stand as it really does: the whole building, every
 floor of it. The compass in the plan's corner says which way north is (up, until the site
 is placed on the map with another bearing of up), and beside the fields, which way the
-chosen building's plan faces.
+chosen building's plan faces. **−** and **+** in the corner zoom (as do <kbd>-</kbd> and
+<kbd>+</kbd>, and <kbd>⌘</kbd> or <kbd>Ctrl</kbd> with the wheel, or a pinch), dragging an
+empty place moves the plan, and *Fit* shows every building again; the grid's spacing is
+written in the other corner. **Measure** gives the distance between two points clicked,
+snapped to the buildings' corners and the centre: the gap between two buildings, say, to
+set them as far apart as they really are. Lengths read in metres or in feet and inches
+(*m* / *ft*); Studio keeps metres either way.
 
 **Place on the map** puts the whole site on the earth: the latitude and longitude of
 its centre and the compass bearing of up. Every building goes with it. A building
@@ -137,7 +143,7 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   | *Divide* (<kbd>D</kbd>) | a line right across a space with no wall: it becomes two zones |
   | *Door, window, opening* (<kbd>O</kbd>) | a click on a wall: a door 0.9 m, a window 1.2 m, an opening (a way through, no door) 1.0 m wide, or the width given in its options |
   | *Stairs and lifts* (<kbd>L</kbd>) | stairs, a lift or an escalator: a click on two opposite corners for a rectangle (sent with the second), or, as an *Outline*, a click on each corner; added typed, then linked to the floors it serves |
-  | *Measure* (<kbd>M</kbd>) | a distance, or an area and its perimeter |
+  | *Measure* (<kbd>M</kbd>) | a distance, or an area and its perimeter, in metres or feet and inches (*m* / *ft*, remembered in your browser) |
 
   A door, window or opening chosen shows its **width, sill and height**; *Size as
   drawn* goes back. <kbd>Del</kbd> deletes a door, window or opening of the drawing
