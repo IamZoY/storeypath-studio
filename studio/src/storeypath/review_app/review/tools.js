@@ -199,8 +199,8 @@ function dress(b, t, kin) {
     b.setAttribute("aria-haspopup", "menu");
     b.setAttribute("aria-expanded", String(flyout?.button === b));
   }
-  b.replaceChildren(icon(t.icon, { size: 19 }), t.key ? el("span", { class: "rail-key", "aria-hidden": "true" }, keyText(t.key)) : null,
-    more.length ? el("span", { class: "rail-more", "aria-hidden": "true" }) : null);
+  b.replaceChildren(...[icon(t.icon, { size: 19 }), t.key ? el("span", { class: "rail-key", "aria-hidden": "true" }, keyText(t.key)) : null,
+    more.length ? el("span", { class: "rail-more", "aria-hidden": "true" }) : null].filter(Boolean)); // (as el: none left out, not "null")
 }
 
 /** A family's place on the rail as the tool of it used last. */

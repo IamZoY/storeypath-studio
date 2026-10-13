@@ -205,6 +205,9 @@ test("tools of one family share a place on the rail: right-clicked or held, it o
   const flyout = () => R(() => [...document.querySelectorAll(".rail-flyout .menu-item")].map((b) => b.dataset.tool));
   truly(await R(() => ["paint", "paint-wall", "dropper"].filter((id) => document.querySelector(`#rail [data-tool="${id}"]`)).length === 1),
     "the paint tools: one place on the rail");
+  const words = await R(() => [...document.querySelectorAll("#rail button")].filter((b) => /null|undefined/.test(b.textContent))
+    .map((b) => `${b.dataset.tool}: ${b.textContent}`));
+  truly(!words.length, `the rail's buttons: their icons and keys, no stray words: ${words.join("; ")}`);
   const at = await R(() => {
     const r = document.querySelector('#rail [data-family="paint"]').getBoundingClientRect();
     return [r.left + r.width / 2, r.top + r.height / 2];
