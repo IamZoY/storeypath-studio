@@ -98,6 +98,40 @@ def test_a_row_of_panes_round_a_room_with_no_door_is_windows(tmp_path):
     assert len(glass) == 3 and {o.source for o in glass} == {"window"}
 
 
+def _window_blocks(tmp_path, panes, door):
+    """As _glazed_panes, each pane drawn as a window block (its glass on layer 0, as a
+    block's lines are drawn: they take the layer the block is placed on), placed on a
+    window layer; as thin as a door leaf."""
+    cells = office_floor(1)
+    i = next(i for i, c in enumerate(cells) if c.number == "101")
+    y = cells[i].door.y
+    cells[i] = replace(cells[i], door=cells[i].door if door else None,
+                       doors=[Door(x, y, "h", -1, 0.8, block=False) for x in panes])
+
+    def glaze(doc):
+        doc.layers.add("WINDOW PANES")
+        pane = doc.blocks.new("PANE 800")
+        for dy in (-WALL / 2, 0, WALL / 2):
+            pane.add_line((-400, dy * 1000), (400, dy * 1000))
+        for x in panes:
+            doc.modelspace().add_blockref("PANE 800", _mm(x, y), dxfattribs={"layer": "WINDOW PANES"})
+
+    ex = _plan(tmp_path, cells, glaze)
+    office = next(k for k, s in enumerate(ex.spaces) if s.number == "101")
+    return [o for o in ex.doors if office in o.connects and len(o.connects) == 2], ex
+
+
+def test_windows_drawn_as_blocks_close_their_gaps_as_windows(tmp_path):
+    # Windows drawn as blocks on a window layer: their glass is read, each gap a window,
+    # never a doorway (between columns onto a courtyard, a room would join it) nor a door
+    # (a window block as thin as a door leaf is no door on a layer named for windows)
+    for door, at in ((True, [8.8, 11.2]), (False, [8.8, 10.0, 11.2])):
+        ways, ex = _window_blocks(tmp_path, at, door=door)
+        panes = [o for o in ways if o.source != "door"]
+        assert len(panes) == len(at) and {o.source for o in panes} == {"window"}, [(o.source, o.point) for o in ways]
+        assert len([o for o in ways if o.source == "door"]) == (1 if door else 0)
+
+
 def test_a_tag_says_whether_an_opening_is_a_door_or_a_window(tmp_path):
     _, door = _glazed_doorway(tmp_path, "D2")
     assert (door.source, door.tag, door.issues) == ("door", "D2", [])

@@ -460,8 +460,15 @@ def gather_plan(doc: Drawing, profile: Profile, units: str | None = None,
     layer_counts: Counter[str] = Counter()
     loose_door_entities = 0
 
-    def expand(insert, layer) -> bool:  # a door block is read whole, not its lines
-        return not profile.door_layers.fullmatch(layer)
+    from .analyse import name_hint  # (analyse reads plans as this does)
+
+    # A door block is read whole, not its lines; any other block on a door or window layer
+    # (a window, drawn as a block) is read for its lines: the glazing that closes its gap.
+    # Each such block's reading (gather's INSERT, before its lines): a door, else None.
+    door_blocks: dict[int, DoorShape | None] = {}
+
+    def expand(insert, layer) -> bool:
+        return not profile.door_layers.fullmatch(layer) or door_blocks.pop(id(insert), None) is None
 
     is_dashed = dashed_lines(doc)
 
@@ -478,7 +485,8 @@ def gather_plan(doc: Drawing, profile: Profile, units: str | None = None,
             continue
         if kind == "INSERT":
             if profile.door_layers.fullmatch(layer):
-                if (shape := _door_block(e, scale)) is not None:
+                shape = door_blocks[id(e)] = _door_block(e, scale, window=name_hint(layer) == "window")
+                if shape is not None:
                     door_shapes.append(shape)
             elif profile.block_layers.fullmatch(layer):
                 c = _center(e)
@@ -1100,9 +1108,11 @@ def _door_swing(e, scale: float) -> DoorShape | None:
     return DoorShape(box(min(xs), min(ys), max(xs), max(ys)), [DoorSwing(hinge, (Point(pts[0]), Point(pts[-1])))])
 
 
-def _door_block(e, scale: float) -> DoorShape | None:
+def _door_block(e, scale: float, window: bool = False) -> DoorShape | None:
     """A door block: its extent, and the swing arcs drawn in it. None for a block
-    that is no door (a basin or a car on a door layer), or one that cannot be read."""
+    that is no door (a basin or a car on a door layer; on a layer named for windows
+    (``window``), one with no swing and no door's name: a window, however thin), or
+    one that cannot be read."""
     try:
         ext = ezdxf.bbox.extents([e], fast=True)
     except Exception:  # a block the drawing does not define, broken content
@@ -1118,6 +1128,8 @@ def _door_block(e, scale: float) -> DoorShape | None:
         pass
     footprint = box(ext.extmin.x * scale, ext.extmin.y * scale, ext.extmax.x * scale, ext.extmax.y * scale)
     if not swings and not DOOR_NAME.search(e.dxf.name):
+        if window:
+            return None
         x0, y0, x1, y1 = footprint.bounds
         long, thick = max(x1 - x0, y1 - y0), min(x1 - x0, y1 - y0)
         if not (DOOR_LEAF_M[0] <= long <= DOOR_LEAF_M[1] and thick <= DOOR_LEAF_THICK_M):
