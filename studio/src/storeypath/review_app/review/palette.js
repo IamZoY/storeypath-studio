@@ -47,11 +47,26 @@ const placedLately = () => {
 };
 const rememberPlaced = (code) => save("storeypath.review.placed", JSON.stringify([code, ...placedLately().filter((c) => c !== code)].slice(0, 8)));
 
-/** (insert) The item types to place: with nothing typed, those placed lately, then each
- * category (chosen: its types); else the types that match, best first. Within a category,
- * its types alone (those that match what is typed), after the way back. */
+const SETS = "sets"; // (within: every set, by category)
+
+/** (insert) A set's pieces in words: "a desk, a chair, a pedestal", "a table, 8 chairs". */
+function piecesSaid(set) {
+  const counts = new Map();
+  for (const p of set.pieces) {
+    const name = (typeOf(p.type)?.name_en || p.type).toLowerCase();
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  return [...counts].map(([name, n]) => (n === 1 ? name : `${n} × ${name}`)).join(", ");
+}
+
+/** (insert) What to place: with nothing typed, what was placed lately, every set, then each
+ * category (chosen: its sets, then its types); else the sets and types that match, best
+ * first. Within a category, its own alone (those that match what is typed), after the way
+ * back. A set placed is its pieces, each an item of its own, one group. */
 function typeResults(q) {
-  const live = (state.catalogue || []).filter((t) => !t.retired && (!within || categoryOf(t.category).key === within));
+  const inside = (category) => !within || within === SETS || categoryOf(category).key === within;
+  const live = (state.catalogue || []).filter((t) => !t.retired && within !== SETS && inside(t.category));
+  const sets = (state.sets || []).filter((s) => inside(s.category));
   const row = (t, group, sc) => ({ group, score: sc, swatch: t.color || "#8a8a8a", title: t.name_en,
     sub: [t.name_ar, categoryName(t.category), `${t.width} × ${t.depth} m`, t.mount && t.mount !== "floor" ? `on the ${t.mount}` : null]
       .filter(Boolean).join(" · "),
@@ -59,28 +74,48 @@ function typeResults(q) {
       rememberPlaced(t.code);
       place(t.code);
     } });
+  const setRow = (s, group, sc) => ({ group, score: sc, icon: "layers", title: s.name_en,
+    sub: [s.name_ar, `${s.pieces.length} items: ${piecesSaid(s)}`].filter(Boolean).join(" · "),
+    run: () => {
+      rememberPlaced(`set:${s.code}`);
+      place({ set: s.code });
+    } });
+  const setWords = (s) => `${s.name_en} ${s.name_ar || ""} ${s.code} set ${categoryName(s.category)} ${categoryOf(s.category).ar} ${piecesSaid(s)}`;
   if (within) {
-    const back = { group: categoryName(within), score: 0, icon: "chevron-left", title: "All categories", sub: "Backspace or Esc", keep: true,
+    const name = within === SETS ? "Sets" : categoryName(within);
+    const back = { group: name, score: 0, icon: "chevron-left", title: "All categories", sub: "Backspace or Esc", keep: true,
       run: () => goBack() };
-    const found = q ? live.map((t) => [score(q, `${t.name_en} ${t.name_ar || ""} ${t.code} ${t.shape || ""}`), t]).filter(([sc]) => sc > 0)
-      .sort((a, b) => b[0] - a[0]).map(([sc, t]) => t) : [...live].sort((a, b) => a.name_en.localeCompare(b.name_en));
-    return [back, ...found.map((t) => row(t, categoryName(within), 1))];
+    const best = (list, words, by) => (q ? list.map((x) => [score(q, words(x)), x]).filter(([sc]) => sc > 0).sort((a, b) => b[0] - a[0])
+      .map(([, x]) => x) : by(list));
+    const foundSets = best(sets, setWords, (l) => l);
+    const found = best(live, (t) => `${t.name_en} ${t.name_ar || ""} ${t.code} ${t.shape || ""}`,
+      (l) => [...l].sort((a, b) => a.name_en.localeCompare(b.name_en)));
+    return [back, ...foundSets.map((x) => setRow(x, within === SETS ? categoryName(x.category) : "Sets", 1)),
+      ...found.map((t) => row(t, foundSets.length ? "Types" : name, 1))];
   }
   if (!q) {
-    const lately = placedLately().map((c) => live.find((t) => t.code === c)).filter(Boolean);
-    const counts = new Map();
+    const lately = placedLately().map((c) => (c.startsWith("set:") ? sets.find((x) => `set:${x.code}` === c)
+      : live.find((t) => t.code === c))).filter(Boolean);
+    const counts = new Map(), setCounts = new Map();
     for (const t of live) counts.set(categoryOf(t.category).key, (counts.get(categoryOf(t.category).key) || 0) + 1);
+    for (const x of sets) setCounts.set(categoryOf(x.category).key, (setCounts.get(categoryOf(x.category).key) || 0) + 1);
     // the categories in their order (one a later format adds, after), under furniture or equipment
     const order = [...CATEGORIES.map((c) => c.key), ...[...counts.keys()].filter((k) => !CATEGORIES.some((c) => c.key === k))];
-    return [...lately.map((t) => row(t, "Placed lately", 1)),
-      ...order.filter((k) => counts.has(k)).map((k) => {
-        const c = categoryOf(k), n = counts.get(k);
-        return { group: SIDES[c.side], score: 0, icon: c.icon, title: c.name, sub: [`${n} type${n === 1 ? "" : "s"}`, c.ar].filter(Boolean).join(" · "),
+    const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+    return [...lately.map((x) => (x.pieces ? setRow(x, "Placed lately", 1) : row(x, "Placed lately", 1))),
+      ...(sets.length ? [{ group: "Sets", score: 0, icon: "layers", title: "All sets",
+        sub: `${plural(sets.length, "set")}: each piece an item of its own, placed together`, keep: true, run: () => goInto(SETS) }] : []),
+      ...order.filter((k) => counts.has(k) || setCounts.has(k)).map((k) => {
+        const c = categoryOf(k), n = counts.get(k) || 0, m = setCounts.get(k) || 0;
+        return { group: SIDES[c.side], score: 0, icon: c.icon, title: c.name,
+          sub: [[n ? plural(n, "type") : null, m ? plural(m, "set") : null].filter(Boolean).join(", "), c.ar].filter(Boolean).join(" · "),
           keep: true, run: () => goInto(k) };
       })];
   }
-  return live.map((t) => [score(q, `${t.name_en} ${t.name_ar || ""} ${t.code} ${categoryName(t.category)} ${categoryOf(t.category).ar} ${t.shape || ""}`), t])
-    .filter(([sc]) => sc > 0).sort((a, b) => b[0] - a[0]).slice(0, 14).map(([sc, t]) => row(t, "Item types", sc));
+  const found = [...sets.map((x) => [score(q, setWords(x)), setRow, x]),
+    ...live.map((t) => [score(q, `${t.name_en} ${t.name_ar || ""} ${t.code} ${categoryName(t.category)} ${categoryOf(t.category).ar} ${t.shape || ""}`), row, t])];
+  return found.filter(([sc]) => sc > 0).sort((a, b) => b[0] - a[0]).slice(0, 16)
+    .map(([sc, make, x]) => make(x, make === setRow ? "Sets" : "Item types", sc));
 }
 
 /** How well ``q`` matches ``text``: its words found at the start of words score most, in
@@ -230,8 +265,9 @@ function goBack() {
 function showWithin() {
   const chip = $("palette-within");
   chip.hidden = !within;
-  chip.querySelector(".pl-chip-text").textContent = within ? categoryName(within) : "";
-  chip.setAttribute("aria-label", within ? `Back to all categories (from ${categoryName(within)})` : "");
+  const name = within === SETS ? "Sets" : within ? categoryName(within) : "";
+  chip.querySelector(".pl-chip-text").textContent = name;
+  chip.setAttribute("aria-label", within ? `Back to all categories (from ${name})` : "");
 }
 
 function mark() {
@@ -317,7 +353,7 @@ function open(what) {
   input.placeholder = mode === "insert" ? "Find what to place: its name, in English or Arabic, or its kind…"
     : "Find a room, an item's tag, a floor or a command…";
   dialog.setAttribute("aria-label", mode === "insert" ? "Place an item" : "Search and commands");
-  dialog.querySelector(".pl-hint").textContent = mode === "insert" ? "Furniture and equipment by name, code or kind"
+  dialog.querySelector(".pl-hint").textContent = mode === "insert" ? "Sets, furniture and equipment by name, code or kind"
     : "Rooms by name, number, type or ID · items by tag";
   input.value = "";
   within = null;

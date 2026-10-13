@@ -321,6 +321,78 @@ test("an item placed with the Place tool, chosen, turned with R, deleted with De
   await press("Escape");
 });
 
+test("a set placed in one go: each piece an item of its own, one group; a click chooses the group, a double-click one piece; turned, moved, ungrouped, grouped and deleted together, undone as one", async () => {
+  const items = () => R(() => window.storeypathReview.state.floor.items.filter((a) => !a.retired).map((a) => ({ ...a })));
+  const at = (a) => R((a) => {
+    const v = window.storeypathReview.state.view, b = document.getElementById("svg").getBoundingClientRect();
+    return [b.left + a.x * v.k + v.tx, b.top - a.y * v.k + v.ty];
+  }, a);
+  const kind = () => R(() => document.getElementById("inspector").dataset.kind);
+  await press("i");
+  await chooseType("workstation junior", /Workstation, junior staff/);
+  const before = (await items()).length;
+  await page.click(...await roomAt((await officeNamed("002")).id));
+  await until((n) => window.storeypathReview.state.floor.items.filter((a) => !a.retired).length === n + 3, "the set's three items placed", 8000, before);
+  await press("Escape");
+  const placed = (await items()).slice(-3), group = placed[0].group;
+  truly(group && placed.every((a) => a.group === group) && new Set(placed.map((a) => a.id)).size === 3
+    && placed.map((a) => a.type).join() === "DESK-JUNIOR,CHAIR-TASK,PEDESTAL", `one group, an ID each: ${JSON.stringify(placed.map((a) => [a.type, a.id, a.group]))}`);
+  const desk = placed[0], chair = placed[1];
+  // placed, the set is chosen: a group, the inspector says so and lists its items
+  await until((ids) => JSON.stringify(window.storeypathReview.state.assets.slice().sort()) === JSON.stringify(ids.slice().sort())
+    && document.getElementById("inspector").dataset.kind === "assets", "the set chosen", 5000, placed.map((a) => a.id));
+  truly(await R(() => document.querySelectorAll("#inspector .group-item").length) === 3, "its three items listed");
+  // R turns them together, about their middle; the arrow moves them together
+  await press("r");
+  await until((id) => Math.round(window.storeypathReview.state.floor.items.find((x) => x.id === id).rotation) === 90,
+    "R turned the group", 5000, desk.id);
+  const turned = Object.fromEntries((await items()).map((a) => [a.id, a]));
+  truly(Math.round(turned[desk.id].rotation) === 90 && Math.round(turned[chair.id].rotation) === 270, `turned: ${turned[desk.id].rotation} ${turned[chair.id].rotation}`);
+  await press("ArrowRight");
+  await until((d) => Math.abs(window.storeypathReview.state.floor.items.find((x) => x.id === d.id).x - (d.x + 0.1)) < 1e-6,
+    "the arrow moved the group", 5000, turned[desk.id]);
+  const moved = Object.fromEntries((await items()).map((a) => [a.id, a]));
+  truly(Math.abs(moved[chair.id].x - (turned[chair.id].x + 0.1)) < 1e-6, "the chair moved with the desk");
+  // a click on the chair: the group; a double-click: the chair alone
+  await press("Escape");
+  await page.click(...await at(moved[chair.id]));
+  await until(() => window.storeypathReview.state.assets.length === 3, "a click on one of the group: the group", 5000);
+  const [cx, cy] = await at(moved[chair.id]);
+  await Promise.all([ // (sent together: one after another, they may come too slowly to be a double-click)
+    () => page.mouse("mouseMoved", cx, cy),
+    () => page.mouse("mousePressed", cx, cy, { down: true }), () => page.mouse("mouseReleased", cx, cy),
+    () => page.mouse("mousePressed", cx, cy, { down: true, params: { clickCount: 2 } }),
+    () => page.mouse("mouseReleased", cx, cy, { params: { clickCount: 2 } })].map((call) => call()));
+  await until((id) => window.storeypathReview.state.asset === id && document.getElementById("inspector").dataset.kind === "asset",
+    "a double-click: the chair alone", 5000, chair.id);
+  // ungrouped (⌘⇧G), each alone; two Shift-clicked and grouped again (⌘G)
+  await page.click(...await at(moved[desk.id]));
+  await until(() => window.storeypathReview.state.assets.length === 3, "the group chosen again", 5000);
+  await press("g", ["mod", "shift"]);
+  await until((ids) => ids.every((id) => !window.storeypathReview.state.floor.items.find((x) => x.id === id).group),
+    "ungrouped", 5000, placed.map((a) => a.id));
+  await press("Escape");
+  await page.click(...await at(moved[desk.id]));
+  await until((id) => window.storeypathReview.state.asset === id, "the desk alone now", 5000, desk.id);
+  await page.click(...await at(moved[chair.id]), { shiftKey: true });
+  await until(() => window.storeypathReview.state.assets.length === 2, "the chair Shift-clicked: two chosen", 5000);
+  truly(await kind() === "assets", "two items chosen: the inspector of several");
+  await press("g", ["mod"]);
+  await until((ids) => {
+    const g = ids.map((id) => window.storeypathReview.state.floor.items.find((x) => x.id === id).group);
+    return g[0] && g[0] === g[1];
+  }, "grouped again", 5000, [desk.id, chair.id]);
+  // deleted together (Del), and undone as one (⌘Z)
+  await press("Delete");
+  await until((ids) => ids.every((id) => window.storeypathReview.state.floor.items.find((x) => x.id === id).retired),
+    "Del deleted the two together", 5000, [desk.id, chair.id]);
+  await press("z", ["mod"]);
+  await until((ids) => ids.every((id) => !window.storeypathReview.state.floor.items.find((x) => x.id === id).retired),
+    "⌘Z brought both back", 8000, [desk.id, chair.id]);
+  noErrors("a set, its group");
+  await press("Escape");
+});
+
 test("the command palette finds a room by its name and runs a command", async () => {
   await press("k", ["mod"]);
   await R(() => {
@@ -1048,11 +1120,12 @@ async function keysTable() {
   }
   const lines = rows.map((r) => `| ${r.keys.map((c) => `\`${written(c)}\``).join(" ")} | ${r.cells.join(" | ")} |`);
   // the keys of the tools in use, and of review mode
-  const scoped = await R(() => window.storeypathReview.keys().filter((b) => b.scope.startsWith("tool:") || b.scope === "review")
+  const scoped = await R(() => window.storeypathReview.keys().filter((b) => b.scope.startsWith("tool:") || b.scope === "review" || b.scope === "items")
     .map((b) => ({ ...b, title: window.storeypathReview.commands().find((c) => c.id === b.id)?.title })));
   // (review mode's 1 to 9 said as one)
   const digits = scoped.filter((b) => /^review\.type-\d$/.test(b.id));
-  const others = scoped.filter((b) => !digits.includes(b)).map((b) => `| \`${written(b.chord)}\` | ${b.scope === "review" ? "review mode" : `the ${b.scope.slice(5)} tool in use`} | ${b.title} |`);
+  const others = scoped.filter((b) => !digits.includes(b)).map((b) => `| \`${written(b.chord)}\` | ${b.scope === "review" ? "review mode"
+    : b.scope === "items" ? "items chosen together" : `the ${b.scope.slice(5)} tool in use`} | ${b.title} |`);
   if (digits.length) others.push(`| \`1\`–\`9\` | review mode | Set one of the room's likely types |`);
   return ["| Key | 2D | 3D | Walk |", "|---|---|---|---|", ...lines, "", "| Key | While | Does |", "|---|---|---|", ...others].join("\n");
 }

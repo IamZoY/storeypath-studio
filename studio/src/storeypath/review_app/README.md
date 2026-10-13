@@ -56,7 +56,9 @@ in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`
 | `review/plan.js`, `pointer.js` | the plan in SVG, its view and labels; the pointer on it |
 | `review/drawing.js` | Wall, Space, Divide, Door/window/opening (tools), and what is drawn here |
 | `review/items.js` | furniture and equipment, the Place tool, an item's keys |
+| `review/groups.js` | sets placed in one go, items chosen together: moved, turned, deleted, grouped and let go as one change |
 | `fit.js`, `itemshape.js` | where an item may stand and the magnet; how a type is drawn (`shapeOf`) and its symbol on a plan (the Item types page draws the same) |
+| `categories.js` | the item types' categories in their order, their names in English and Arabic and their icons (the Item types page and the box to find what to place) |
 | `review/measure.js` | the Measure tool |
 | `review/vertical.js`, `finish.js`, `sample.js` | Stairs and lifts, the paint tools, Share an area: each its own tool (or tools) and parts |
 | `review/view3d.js` | 3D and walking (StoreyPath's world, `/viewer/src/world/world.js`): the pointer, what a click would do marked under it, the ghost, items carried, the HUD |
@@ -204,6 +206,8 @@ ahead).
 | `⌫` | the space tool in use | Space: take back the last corner |
 | `Enter` | the stairs tool in use, as an Outline | Stairs and lifts: close the outline |
 | `⌫` | the stairs tool in use | Stairs and lifts: take back the last corner |
+| `⌘/Ctrl+G` | items chosen together | Group the items chosen |
+| `⌘/Ctrl+Shift+G` | items chosen together | Ungroup the items chosen |
 | `Enter` | the measure tool in use | Measure: finish the measure |
 | `⌫` | the measure tool in use | Measure: take back the last point |
 | `N` | review mode | Next room to review |

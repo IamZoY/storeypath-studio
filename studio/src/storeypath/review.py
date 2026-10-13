@@ -243,7 +243,7 @@ def _dump(model) -> dict | None:
 # ---- what history keeps to say a change in words (history.describe) ------------------
 
 LINE_KEYS = ("label", "what", "was", "now", "changes", "to_name", "new_label", "list", "floor_to", "wall_to", "wall_one_to",
-             "rooms")
+             "rooms", "count")
 
 
 def _type_name(cat, code: str) -> str:
@@ -346,6 +346,25 @@ def _inverse(ws: Workspace, entry: dict, ch: Changes, refused) -> None:
         ch.before, ch.after = {"override": _dump(have)}, {"override": _dump(new)}
         if not _same(have, new):
             ch.overrides[target] = new
+    elif part == "item" and "items" in (entry["after"] or {}):  # many at once (a set placed, a group moved)
+        afters, befores = entry["after"]["items"], (entry["before"] or {}).get("items") or {}
+        floors = {f for *_, f in ws.iter_floors()}
+        ch.before, ch.after = {"items": {}}, {"items": {}}
+        for target, want in afters.items():
+            have = ws.items.get(target)
+            if have is None or want is None or not _same(Item.model_validate(want), have):
+                raise refused()
+            back = befores.get(target)
+            if back is None:  # it was added: retired, its ID never given again
+                new = have.model_copy(deep=True)
+                new.status, new.retired_at = "retired", utcnow()
+            else:
+                new = Item.model_validate(back)
+            if new.floor_id not in floors:
+                raise refused()
+            ch.floors |= {f for f in (have.floor_id, new.floor_id) if f}
+            ch.before["items"][target], ch.after["items"][target] = _dump(have), _dump(new)
+            ch.items[target] = new
     elif part == "item":
         have = ws.items.get(target)
         want = (entry["after"] or {}).get("item")
@@ -577,7 +596,7 @@ class Review:
     def _item(self, it, cat=None) -> dict:
         t = (cat or self.catalogue()).get(it.type)
         return {"id": it.id, "type": it.type, "floor_id": it.floor_id, "x": it.x, "y": it.y, "rotation": it.rotation,
-                "values": it.values, "retired": it.status == "retired",
+                "values": it.values, "retired": it.status == "retired", "group": it.group,
                 "name_en": t.name_en if t else it.type, "name_ar": t.name_ar if t else "",
                 "category": t.category if t else "furniture", "color": t.color if t else "#8a8a8a",
                 "width": t.width if t else 1.0, "depth": t.depth if t else 0.6, "mount": t.mount if t else "floor"}
@@ -632,6 +651,112 @@ class Review:
             return ch, it
 
         return self._item(self._change(fn, by, editor), cat)
+
+    def _new_group(self, ws: Workspace) -> str:
+        """A key for a new group of items: G and eight random symbols (Crockford's base32,
+        never an asset's tag), no group of the project's items has."""
+        import secrets
+
+        used = {it.group for it in ws.items.values() if it.group}
+        while True:
+            key = "G" + "".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(8))
+            if key not in used:
+                return key
+
+    def place_set(self, floor_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
+        """A set placed on a floor (catalogue.py sets_of): ``{set, x, y, rotation?}``, where
+        its middle goes and its turn (local metres, degrees). Each piece an item of its own,
+        with a new ID, where the set puts it; the pieces one new group. One change: undone,
+        all of them are taken away."""
+        from .catalogue import sets_of
+
+        cat = self.catalogue()
+        s = next((x for x in sets_of(cat) if x.code == body.get("set")), None)
+        if s is None:
+            raise ValueError(f"no set {body.get('set')} in the catalogue")
+        x0, y0, turn = _number(body, "x"), _number(body, "y"), _number(body, "rotation", 0.0) % 360
+        c, sn = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+        taken = getattr(self.source, "item_taken", None)
+
+        def fn(ws: Workspace):
+            self._floor(ws, floor_id)
+            group = self._new_group(ws)
+            ch = Changes(part="item", kind="add", targets=[], floors={floor_id}, before={"items": {}}, after={"items": {}},
+                         more={"label": s.name_en, "changes": ["add"], "count": len(s.pieces)})
+            made = []
+            for piece in s.pieces:
+                it = Item(id=ws.new_item_id(lambda i: i in ch.items or (taken is not None and taken(i))), type=piece.type,
+                          floor_id=floor_id, x=round(x0 + piece.x * c - piece.y * sn, 4),
+                          y=round(y0 + piece.x * sn + piece.y * c, 4), rotation=round((piece.rotation + turn) % 360, 4),
+                          group=group)
+                ch.items[it.id] = it
+                ch.targets.append(it.id)
+                ch.before["items"][it.id], ch.after["items"][it.id] = None, _dump(it)
+                made.append(it)
+            return ch, made
+
+        made = self._change(fn, by, editor)
+        return {"items": [self._item(it, cat) for it in made], "group": made[0].group}
+
+    def change_items(self, body: dict, by=None, editor: Editor | None = None) -> dict:
+        """Several items changed as one change, undone as one (a group moved, turned or
+        taken away; items grouped, or let go of their group): ``{items: [{id, x?, y?,
+        rotation?, retired?}], group?}``, each moved, turned, taken away or brought back as
+        given; with ``group``, all of them one new group ("new", two or more) or none
+        (null). All that is asked, or (when any of it cannot be) nothing."""
+        cat = self.catalogue()
+        asked = body.get("items")
+        if not isinstance(asked, list) or not asked or not all(isinstance(a, dict) and isinstance(a.get("id"), str)
+                                                                 for a in asked):
+            raise ValueError("items: a list of {id, …}, one or more")
+        if len({a["id"] for a in asked}) != len(asked):
+            raise ValueError("an item is given twice")
+        regroup = "group" in body
+        if regroup and body["group"] not in ("new", None):
+            raise ValueError('group is "new" (one new group) or null (none)')
+        if regroup and body["group"] == "new" and len(asked) < 2:
+            raise ValueError("a group is of two items or more")
+
+        def fn(ws: Workspace):
+            group = self._new_group(ws) if regroup and body["group"] == "new" else None
+            ch = Changes(part="item", kind="change", targets=[a["id"] for a in asked], before={"items": {}},
+                         after={"items": {}})
+            kinds, out = [], []
+            for a in asked:
+                it = ws.items.get(a["id"])
+                if it is None:
+                    raise NotFound(f"no item {a['id']}")
+                new = it.model_copy(deep=True)
+                if "retired" in a:
+                    if not isinstance(a["retired"], bool):
+                        raise ValueError("retired is true or false")
+                    new.status = "retired" if a["retired"] else "active"
+                    new.retired_at = utcnow() if a["retired"] else None
+                    kinds.append("delete" if a["retired"] else "restore")
+                for key in ("x", "y"):
+                    if key in a:
+                        setattr(new, key, _number(a, key))
+                if "x" in a or "y" in a:
+                    kinds.append("move")
+                if "rotation" in a:
+                    new.rotation = _number(a, "rotation") % 360
+                    kinds.append("turn")
+                if regroup:
+                    new.group = group
+                    kinds.append("group" if group else "ungroup")
+                ch.before["items"][it.id], ch.after["items"][it.id] = _dump(it), _dump(new)
+                ch.floors |= {f for f in (it.floor_id, new.floor_id) if f}
+                if not _same(new, it):
+                    ch.items[it.id] = new
+                out.append(new)
+            kinds = list(dict.fromkeys(kinds))  # (each once, in order)
+            ch.kind = kinds[0] if kinds else "change"
+            first = ws.items[asked[0]["id"]]
+            ch.more = {"label": _type_name(cat, first.type) if len(asked) == 1 else f"{len(asked)} items", "changes": kinds,
+                       "count": len(asked)}
+            return ch, out
+
+        return {"items": [self._item(it, cat) for it in self._change(fn, by, editor)]}
 
     def find_item(self, text: str) -> dict:
         """An item by its ID as a person typed it (7k2q xm9f 4dp: either case, O for 0, I

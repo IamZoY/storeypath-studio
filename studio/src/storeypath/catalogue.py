@@ -34,7 +34,8 @@ _CODE_RE = re.compile(r"^[A-Z0-9]+(-[A-Z0-9]+)*$")
 SOFA_COLOR = "#8a837a"  # a warm grey
 # what older Studios gave their default types where this one gives otherwise: never a
 # person's choice, so a catalogue still saying it takes this Studio's (the sofa was purple)
-OLD_DEFAULTS = {"SOFA": {"color": {"#7d6a8f"}}}
+# (the desk return, first 1 by 0.5 m: it crowded its workstation's chair)
+OLD_DEFAULTS = {"SOFA": {"color": {"#7d6a8f"}}, "DESK-RETURN": {"width": {1.0}, "depth": {0.5}}}
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 # who a desk is for, highest first: a room takes the grade of the highest desk in it
 GRADES = ("president", "c_level", "director", "manager", "section_head", "senior", "junior")
@@ -218,7 +219,7 @@ def default_catalogue() -> Catalogue:
         _desk("DESK-SENIOR", "Senior staff desk", "مكتب موظف أول", 1.4, 0.7, "#b8955f", "senior"),
         _desk("DESK-JUNIOR", "Junior staff desk", "مكتب موظف", 1.2, 0.6, "#c6a674", "junior"),
         # an L-shaped desk's side part, at its user's side
-        _t("DESK-RETURN", "Desk return", "ملحق جانبي للمكتب", "workstations", (1.0, 0.5, 0.75), "#9b7444", shape="desk"),
+        _t("DESK-RETURN", "Desk return", "ملحق جانبي للمكتب", "workstations", (0.8, 0.45, 0.75), "#9b7444", shape="desk"),
         _t("DESK-BENCH-4", "Bench desk, 4 places", "مكتب جماعي، 4 أماكن", "workstations", (2.8, 1.6, 0.75), "#c6a674",
            shape="desk", workplaces=4),
         _t("RECEPTION-DESK", "Reception desk", "مكتب استقبال", "workstations", (2.4, 0.8, 1.1), "#8a6238", shape="desk",
@@ -359,6 +360,112 @@ def default_catalogue() -> Catalogue:
     ])
 
 
+# ---- sets: pieces placed together, each an item of its own -------------------------------
+
+class SetPiece(BaseModel):
+    """One piece of a set: a type, where it stands from the set's middle in the set's own
+    frame (metres; the set's front its -y, as an item's), and its turn (degrees counter-
+    clockwise, as an item's: 0 its front the set's -y, 90 its +x, 180 its +y)."""
+
+    type: str
+    x: float = 0.0
+    y: float = 0.0
+    rotation: float = 0.0
+
+
+class ItemSet(BaseModel):
+    """Pieces placed together in one go (format 0.10): a workstation (a desk, its chair, its
+    pedestal…), a meeting table and its chairs. Each piece is an item of its own, with its
+    own ID; placed, they are a group (Item.group), moved and turned together until it is
+    undone. Studio's own: a package holds the items and their group, never the sets."""
+
+    code: str
+    name_en: str
+    name_ar: str = ""
+    category: Category
+    pieces: list[SetPiece]
+
+
+def _table_chairs(w: float, d: float) -> list[tuple[float, float, float]]:
+    """Chairs round a table ``w`` long and ``d`` across, as fit.js tableChairs seats it: one
+    in each 0.65 m of its long sides (its ends' 0.1 m aside), one at each end of a table
+    at least 0.8 m across; each 0.35 m out from its edge, facing it: [(x, y, rotation)]."""
+    n, out = max(1, int((w - 0.2) / 0.65 + 1e-9)), 0.35
+    at = []
+    for i in range(n):
+        x = (i - (n - 1) / 2) * (w / n)
+        at += [(x, d / 2 + out, 0.0), (x, -d / 2 - out, 180.0)]  # (facing the table: -y, +y)
+    if d >= 0.8 - 1e-9:
+        at += [(w / 2 + out, 0.0, 270.0), (-w / 2 - out, 0.0, 90.0)]  # (facing -x, +x)
+    return [(round(x, 4), round(y, 4), r) for x, y, r in at]
+
+
+def _workstation(grade: str, en: str, ar: str, desk: str, w: float, d: float) -> ItemSet:
+    """A desk of a grade and what goes with it: its user's chair before it (its front, the
+    plan's -y), a drawer pedestal under it at its user's right (an executive's desk has its
+    own), a return at that side (an L, from senior staff up), a credenza behind the chair
+    (from director up), visitors' chairs across it (one for a head of section, two from
+    manager up: the president's, armchairs)."""
+    executive, ret = grade in ("director", "c_level", "president"), grade != "junior"
+    chair = "CHAIR-EXECUTIVE" if executive else "CHAIR-TASK"
+    pieces = [SetPiece(type=desk)]
+    pieces.append(SetPiece(type=chair, x=-0.1 if ret else 0.0, y=-(d / 2 + (0.45 if executive else 0.4)), rotation=180))
+    if not executive:
+        pieces.append(SetPiece(type="PEDESTAL", x=round(w / 2 - 0.3, 4), y=round(-d / 2 + 0.33, 4)))
+    if ret:  # 0.8 m out from the desk's front at its user's right, its own front towards the chair
+        pieces.append(SetPiece(type="DESK-RETURN", x=round(w / 2 - 0.225, 4), y=round(-d / 2 - 0.4, 4), rotation=270))
+    if executive:
+        pieces.append(SetPiece(type="CREDENZA", y=round(-(d / 2 + 1.175), 4), rotation=180))
+    visitors = {"section_head": 1, "manager": 2, "director": 2, "c_level": 2, "president": 2}.get(grade, 0)
+    if visitors:
+        arm = grade == "president"
+        half = max(0.45, min(w / 4, 0.62)) if arm else max(0.33, min(w / 4, 0.6))
+        y = d / 2 + (0.575 if arm else 0.4)
+        for x in ([0.0] if visitors == 1 else [-half, half]):
+            pieces.append(SetPiece(type="ARMCHAIR" if arm else "CHAIR-VISITOR", x=round(x, 4), y=round(y, 4)))
+    return ItemSet(code=f"SET-WORKSTATION-{grade.upper().replace('_', '-')}", name_en=en, name_ar=ar, category="workstations",
+                   pieces=pieces)
+
+
+def default_sets() -> list[ItemSet]:
+    """What a Studio offers to place together: a workstation for each grade, a meeting table
+    for 4 to 16 with its chairs (a board table's, 12 and more, high-backed), a lounge, a
+    dining table for four, a bench desk for four. Sizes as the default types have them."""
+    types = {t.code: t for t in default_catalogue().types}
+    out = [_workstation(g, en, ar, desk, types[desk].width, types[desk].depth) for g, en, ar, desk in (
+        ("junior", "Workstation, junior staff", "محطة عمل، موظف", "DESK-JUNIOR"),
+        ("senior", "Workstation, senior staff", "محطة عمل، موظف أول", "DESK-SENIOR"),
+        ("section_head", "Workstation, head of section", "محطة عمل، رئيس قسم", "DESK-SECTION-HEAD"),
+        ("manager", "Workstation, manager", "محطة عمل، مدير إدارة", "DESK-MANAGER"),
+        ("director", "Workstation, director", "محطة عمل، مدير", "DESK-DIRECTOR"),
+        ("c_level", "Workstation, C-level", "محطة عمل، الإدارة العليا", "DESK-CLEVEL"),
+        ("president", "Workstation, president", "محطة عمل، الرئيس", "DESK-PRESIDENT"))]
+    for seats in (4, 6, 8, 10, 12, 14, 16):
+        t = types[f"MEETING-TABLE-{seats}"]
+        chair = "CHAIR-BOARD" if seats >= 12 else "CHAIR-MEETING"
+        ar = f"{seats} مقاعد" if seats <= 10 else f"{seats} مقعدًا"
+        out.append(ItemSet(code=f"SET-MEETING-{seats}", name_en=f"Meeting set, {seats} seats",
+                           name_ar=f"طقم اجتماعات، {ar}", category="tables",
+                           pieces=[SetPiece(type=t.code)] + [SetPiece(type=chair, x=x, y=y, rotation=r)
+                                                             for x, y, r in _table_chairs(t.width, t.depth)]))
+    out.append(ItemSet(code="SET-DINING-4", name_en="Dining set, 4 seats", name_ar="طقم طعام، 4 مقاعد", category="tables",
+                       pieces=[SetPiece(type="TABLE-DINING-4")] + [SetPiece(type="CHAIR-VISITOR", x=x, y=y, rotation=r)
+                                                                   for x in (-0.3, 0.3) for y, r in ((0.7, 0.0), (-0.7, 180.0))]))
+    out.append(ItemSet(code="SET-LOUNGE", name_en="Lounge set", name_ar="طقم جلوس", category="soft_seating", pieces=[
+        SetPiece(type="TABLE-COFFEE"), SetPiece(type="SOFA", y=0.95),
+        SetPiece(type="ARMCHAIR", x=1.0, rotation=270), SetPiece(type="ARMCHAIR", x=-1.0, rotation=90)]))
+    out.append(ItemSet(code="SET-BENCH-4", name_en="Bench desk, 4 places", name_ar="مكتب جماعي، 4 أماكن", category="workstations",
+                       pieces=[SetPiece(type="DESK-BENCH-4")] + [SetPiece(type="CHAIR-TASK", x=x, y=y, rotation=r)
+                                                                 for x in (-0.7, 0.7) for y, r in ((-1.2, 180.0), (1.2, 0.0))]))
+    return out
+
+
+def sets_of(cat: Catalogue) -> list[ItemSet]:
+    """The sets a catalogue can place: those whose every piece is a type of it, not retired."""
+    live = {t.code for t in cat.types if not t.retired}
+    return [s for s in default_sets() if all(p.type in live for p in s.pieces)]
+
+
 def load(folder: str | Path) -> Catalogue:
     """The Studio's catalogue (in ``folder``, its data folder): written with the
     default types the first time, and given the default types a newer Studio brings
@@ -414,7 +521,8 @@ def read(text: str) -> tuple[Catalogue, bool]:
             if key not in t:
                 t[key], filled = getattr(d, key), True
         for key, olds in OLD_DEFAULTS.get(d.code, {}).items():
-            if isinstance(t.get(key), str) and t[key].lower() in olds:
+            v = t.get(key)
+            if (v.lower() if isinstance(v, str) else v) in olds and not isinstance(v, bool):
                 t[key], filled = getattr(d, key), True
     return Catalogue.model_validate(raw), filled
 

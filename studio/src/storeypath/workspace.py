@@ -288,6 +288,9 @@ class Item(BaseModel):
     y: float
     rotation: float = 0.0  # degrees, counter-clockwise: the way its front faces, from the plan's +x
     values: dict[str, str | float] = Field(default_factory=dict)  # its StoreyPath fields
+    # the group it was placed or grouped with (a workstation's desk, chair and pedestal; a
+    # meeting table and its chairs; format 0.10): a key its group's items share; None: none
+    group: str | None = None
     status: Literal["active", "retired"] = "active"
     created_at: datetime = Field(default_factory=utcnow)
     retired_at: datetime | None = None

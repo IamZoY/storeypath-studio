@@ -8,6 +8,7 @@ import { addOpening, deleteItem, drawnNear, drawnSpaceAt, openingAt, openingMeta
   sizeForm, startLine, startSpace, takeAway } from "./drawing.js";
 import * as finish from "./finish.js";
 import { assetAt, changeAsset, placeAsset, turnAsset } from "./items.js";
+import { deleteAssets, groupOf, turnAssets, ungroupAssets } from "./groups.js";
 import { openInsert } from "./palette.js";
 import { keyNow, keyText } from "./keys.js";
 import { finishOf } from "/viewer/src/finishes.js";
@@ -65,6 +66,16 @@ export function menuItem(label, action, { danger = false, disabled = false, hint
 const heading = (text, meta) => [el("div", { class: "menu-heading" }, text), meta ? el("div", { class: "menu-meta" }, meta) : null];
 
 /** The menu on the plan, at ``p`` (plan metres) shown at (cx, cy) on the page. */
+/** What can be done to an item's group: turned, let go of, deleted (one change each). */
+function groupItems(asset, { heading: said = true } = {}) {
+  const all = groupOf(asset), t = typeOf(asset.type), out = [];
+  if (said) out.push(...heading(`A group of ${all.length} items`, `${t ? t.name_en : asset.type} and ${all.length - 1} more, together`));
+  out.push(menuItem("Turn the group 90°", () => turnAssets(all, 90), { hint: said ? key("item.turn") : "", ico: "rotate-ccw" }));
+  out.push(menuItem("Ungroup", () => ungroupAssets(all), { hint: said ? key("item.ungroup") : "", ico: "square-split-horizontal" }));
+  out.push(menuItem("Delete the group", () => deleteAssets(all), { danger: true, hint: said ? key("edit.delete") : "", ico: "trash-2" }));
+  return out;
+}
+
 export function openMenu(cx, cy, p) {
   if (state.tool) setTool(null);
   const items = [];
@@ -72,13 +83,18 @@ export function openMenu(cx, cy, p) {
   const d = asset ? null : openingNear(p);
   const line = d || asset ? null : drawnNear(p);
   const s = d || line || asset ? null : spaceAt(...p);
-  if (asset) {
+  if (asset && groupOf(asset).length > 1 && !(state.asset === asset.id)) { // one of a group: the group (chosen whole)
     selectAsset(asset.id);
+    items.push(...groupItems(asset));
+    items.push(el("hr"));
+  } else if (asset) {
+    if (state.asset !== asset.id) selectAsset(asset.id);
     const t = typeOf(asset.type);
     items.push(...heading(t ? t.name_en : asset.type, asset.id));
     items.push(menuItem("Turn 90°", () => turnAsset(asset, asset.rotation + 90), { hint: key("item.turn"), ico: "rotate-ccw" }));
     items.push(menuItem(asset.retired ? "Restore" : "Delete", () => changeAsset(asset, { retired: !asset.retired }),
       { danger: !asset.retired, hint: asset.retired ? "" : key("edit.delete"), ico: asset.retired ? "rotate-cw" : "trash-2" }));
+    if (asset.group) items.push(menuItem("Choose its group", () => selectAsset(asset.id), { ico: "layers" }));
     items.push(el("hr"));
   } else if (d) {
     selectItem({ kind: "door", id: d.id });
@@ -166,7 +182,13 @@ export function menu3d(cx, cy, p = null) {
     const t = typeOf(asset.type);
     items.push(...heading(t ? t.name_en : asset.type, asset.id));
   } else if (unit) items.push(...heading(title(unit), on.wall ? "Its walls" : typeLabel(unit.type)));
-  if (asset) {
+  if (asset && groupOf(asset).length > 1) { // one of a group: chosen whole, or alone
+    const whole = state.assets.includes(asset.id) && state.assets.length > 1;
+    items.push(menuItem("Choose the group", () => selectAsset(asset.id), { ico: "layers", disabled: whole }));
+    items.push(menuItem("Choose this one alone", () => selectAsset(asset.id, { alone: true }), { ico: "mouse-pointer-2",
+      disabled: state.asset === asset.id }));
+    if (may) items.push(...groupItems(asset, { heading: false }));
+  } else if (asset) {
     items.push(menuItem("Select", () => selectAsset(asset.id), { ico: "mouse-pointer-2", disabled: state.asset === asset.id }));
     if (may) { // (its keys said when it is the item chosen: they are its then)
       const chosen = state.asset === asset.id;

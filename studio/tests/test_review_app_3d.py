@@ -32,7 +32,7 @@ const elements = {};
 const $ = (id) => (elements[id] ||= { textContent: "", hidden: true });
 const BASE = "projects/P";
 const at = "2026-10-09T10:00:00";
-const state = { floor: { id: "P-SITE-A-F00", converted_at: at }, selected: null, asset: null, showHidden: false };
+const state = { floor: { id: "P-SITE-A-F00", converted_at: at }, selected: null, asset: null, assets: [], showHidden: false };
 const view3d = { world: null, building: null, stale: true, shown: true, mode: "3d", busy: null, again: false, picking: false,
   dirty: new Set(), allFloors: false, together: [] };
 const buildingOf = (id) => id.split("-").slice(0, 3).join("-");

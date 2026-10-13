@@ -4,10 +4,12 @@
 // again. An item stays in the room it was placed in and lines up with walls and items
 // (fit.js); Alt places or drags it freely.
 //
-// The Place tool (I): choose a type in its options, click where it goes (in 3D and
-// walking, on the floor under the pointer: its ghost follows it). An item chosen, in every
-// view and whatever the tool: R turns it 90° (Shift: back), , and . by 15°, Del deletes it;
-// the arrows move it (Shift: further), but walking, where they walk (drag it instead).
+// The Place tool (I): choose a type, or a set (groups.js: a workstation, a meeting table and
+// its chairs, each piece an item of its own), in its options, click where it goes (in 3D
+// and walking, on the floor under the pointer: its ghost follows it). An item chosen, or
+// items chosen together (a group), in every view and whatever the tool: R turns it 90°
+// (Shift: back), , and . by 15°, Del deletes it; the arrows move it (Shift: further), but
+// walking, where they walk (drag it instead); ⌘G groups items chosen, ⌘⇧G lets them go.
 
 import { editable, roomTaken, viewOnly, whyNotEditable } from "./access.js";
 import { request } from "./api.js";
@@ -20,6 +22,7 @@ import { openInsert } from "./palette.js";
 import { centerOn, floorBounds, scaleFor } from "./plan.js";
 import { fits, inRings, itemBox, ringsOf, roomAt, settle } from "../fit.js";
 import { assetShape } from "../itemshape.js";
+import { groupAssets, moveAssets, placeSet, setBox, setGhost, setOf, turnAssets, ungroupAssets } from "./groups.js";
 import { selectAsset } from "./selection.js";
 import { BASE, round4, state, typeOf, visible, view3d } from "./state.js";
 import { setTool, tool } from "./tools.js";
@@ -27,7 +30,9 @@ import { aimSoon, update3d } from "./view3d.js";
 
 export async function loadCatalogue() {
   try {
-    state.catalogue = (await request("catalogue")).types.filter((t) => !t.retired);
+    const got = await request("catalogue");
+    state.catalogue = got.types.filter((t) => !t.retired);
+    state.sets = got.sets || []; // what is placed together (catalogue.py default_sets)
   } catch (e) {
     toast(`No item types: ${e.message}`, true);
   }
@@ -51,7 +56,7 @@ export function renderAssets() {
     if (a.retired && !state.showHidden) continue;
     const g = assetShape(a, typeOf(a.type) || a, "asset");
     g.dataset.asset = a.id;
-    g.classList.toggle("chosen", a.id === state.asset);
+    g.classList.toggle("chosen", state.assets.includes(a.id));
     g.classList.toggle("retired", a.retired);
     g.append(svg("title", {}));
     g.lastChild.textContent = `${typeOf(a.type)?.name_en || a.type} · ${a.id}`;
@@ -94,6 +99,9 @@ export function placing(at, type, exceptId = null, rot = 0, reach = Math.max(0.1
   return { room, rings: held ? rings : [], others, box, mount, reach };
 }
 
+/** Whether items are all one group (and none is in no group). */
+export const sameGroup = (list) => list.length > 0 && Boolean(list[0].group) && list.every((a) => a.group === list[0].group);
+
 export const roomName = (room) => (room ? [room.name, room.number].filter(Boolean).join(" ") || "this room" : "this room");
 
 /** The room an item stands in (its ID), as it is placed; the item itself when it stands in
@@ -108,7 +116,30 @@ export function drawGuides(lines = []) {
   $("guides").replaceChildren(...lines.map(([a, b]) => svg("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1] })));
 }
 
-export async function placeAsset(type, p, free = state.alt, reach = undefined) {
+/** What the box to find what to place chose, placed at ``p``: a type's item, or a set
+ * ({set: code}): its pieces, each an item of its own, one group. */
+export function placeAsset(choice, p, free = state.alt, reach = undefined) {
+  return choice?.set ? placeSetAt(choice.set, p, free, reach) : placeItem(choice, p, free, reach);
+}
+
+/** Where a set would go at ``p``: its pieces' box held in the room and drawn to its walls
+ * and items (fit.js), as an item's is; null where it does not fit. */
+export function settleSet(set, p, free = state.alt, reach = undefined, rot = 0) {
+  const ctx = { ...placing(p, set.pieces[0].type, null, rot, reach), box: setBox(set) };
+  return { ctx, got: settle({ want: { at: p, rot }, last: null, ...ctx, free }) };
+}
+
+async function placeSetAt(code, p, free, reach) {
+  const set = setOf(code);
+  if (!set || viewOnly()) return;
+  const { ctx, got } = settleSet(set, p, free, reach);
+  if (ctx.room && roomTaken(ctx.room.id)) return;
+  drawGuides();
+  if (!got) return toast(`It does not fit in ${roomName(ctx.room)}. To put it anywhere, hold Alt as you click.`, true);
+  await placeSet(code, got.at, got.rot);
+}
+
+async function placeItem(type, p, free = state.alt, reach = undefined) {
   if (!type || viewOnly()) return;
   const ctx = placing(p, type, null, 0, reach);
   if (ctx.room && roomTaken(ctx.room.id)) return;
@@ -151,8 +182,11 @@ export async function changeAsset(a, body) {
   }
 }
 
-/** The item chosen (or null). */
+/** The item chosen alone (or null). */
 export const chosenAsset = () => (state.floor?.items || []).find((x) => x.id === state.asset) || null;
+
+/** The items chosen (one, or a group, or several), as the floor has them. */
+export const chosenAll = () => state.assets.map((id) => (state.floor?.items || []).find((x) => x.id === id)).filter(Boolean);
 
 /** The chosen item moved by ``dx``, ``dy`` metres, held in its room (the magnet off). */
 export function nudgeAsset(a, dx, dy) {
@@ -216,7 +250,10 @@ export async function copyId(id) {
 
 // ---- the Place tool ----------------------------------------------------------------------
 
-export function placeType(code) {
+/** What the Place tool places: a type's code, or a set ({set: code}). */
+export function placeType(choice) {
+  state.placeSet = choice?.set ? setOf(choice.set) : null;
+  const code = choice?.set ? null : choice;
   state.placeType = code;
   if (state.tool !== "place") setTool("place");
   emit("tool-options");
@@ -225,20 +262,26 @@ export function placeType(code) {
 }
 
 function placeOptions() {
-  const t = typeOf(state.placeType);
+  const t = typeOf(state.placeType), set = state.placeSet;
   const chooser = el("button", { type: "button", class: "type-chooser", "aria-haspopup": "listbox", "data-tip": "What to place" },
-    t ? el("span", { class: "swatch", style: `background:${t.color || "#8a8a8a"}` }) : null,
-    el("span", {}, t ? t.name_en : "Choose what to place…"), icon("chevron-down", { size: 14 }));
+    t ? el("span", { class: "swatch", style: `background:${t.color || "#8a8a8a"}` }) : set ? icon("layers", { size: 14 }) : null,
+    el("span", {}, t ? t.name_en : set ? set.name_en : "Choose what to place…"), icon("chevron-down", { size: 14 }));
   chooser.addEventListener("click", () => openInsert(placeType));
-  return [chooser, t ? el("span", { class: "to-note" }, `${t.width} × ${t.depth} m · Alt: anywhere, as it is`) : null];
+  const note = t ? `${t.width} × ${t.depth} m · Alt: anywhere, as it is`
+    : set ? `${set.pieces.length} items, each with its own ID, one group · Alt: anywhere, as it is` : null;
+  return [chooser, note ? el("span", { class: "to-note" }, note) : null];
 }
 
+/** What the Place tool places now, as words (a type's name, a set's), or null. */
+const placingName = () => typeOf(state.placeType)?.name_en || state.placeSet?.name_en || null;
+
 /** The item chosen, its keys (the "item" scope: while one is chosen, whatever the tool or
- * the view: what is chosen wins). */
-function itemCommand(id, title, keys, fn, repeat = false) {
+ * the view: what is chosen wins); ``many``, the same for items chosen together (a group). */
+function itemCommand(id, title, keys, fn, repeat = false, many = null) {
   command({ id, title, group: "Item", scope: "item", keys, palette: false, repeat,
-    when: () => Boolean(chosenAsset()) && editable(), why: () => (chosenAsset() ? whyNotEditable() : "Choose an item first"),
-    run: () => fn(chosenAsset()) });
+    when: () => (chosenAsset() || (many && chosenAll().length > 1)) && editable(),
+    why: () => (chosenAsset() || chosenAll().length ? whyNotEditable() : "Choose an item first"),
+    run: () => (chosenAsset() ? fn(chosenAsset()) : many?.(chosenAll())) });
 }
 
 export function setupItems() {
@@ -246,15 +289,15 @@ export function setupItems() {
     id: "place", label: "Place an item", icon: "armchair", key: "i", group: "place", views: ["2d", "3d", "walk"], edits: true,
     words: "furniture equipment desk asset item add",
     hint: (view) => {
-      const t = typeOf(state.placeType);
-      if (!t) return "Choose what to place in the options above";
-      return view === "walk" ? `Click on the floor where the ${t.name_en} goes (its ghost follows the pointer) · Alt-click: as it is · drag to look`
-        : view === "3d" ? `Click on the floor where the ${t.name_en} goes · it lines up as on the plan · Alt-click: as it is`
-          : `Click in a room where the ${t.name_en} goes · it lines up with walls and items · Alt-click: anywhere, as it is`;
+      const name = placingName();
+      if (!name) return "Choose what to place in the options above";
+      return view === "walk" ? `Click on the floor where the ${name} goes (its ghost follows the pointer) · Alt-click: as it is · drag to look`
+        : view === "3d" ? `Click on the floor where the ${name} goes · it lines up as on the plan · Alt-click: as it is`
+          : `Click in a room where the ${name} goes · it lines up with walls and items · Alt-click: anywhere, as it is`;
     },
     options: placeOptions,
     start: () => {
-      if (!state.placeType) requestAnimationFrame(() => openInsert(placeType));
+      if (!state.placeType && !state.placeSet) requestAnimationFrame(() => openInsert(placeType));
     },
     stop: () => {
       drawGuides();
@@ -263,7 +306,13 @@ export function setupItems() {
     },
     plan: {
       hover: (p) => {
-        const t = typeOf(state.placeType);
+        const t = typeOf(state.placeType), set = state.placeSet;
+        if (set && !state.busy) { // a set: its pieces where they would stand, drawn to the room's walls as one
+          const { got } = settleSet(set, p, state.alt);
+          drawGuides(got?.guides);
+          for (const id of ["preview", "preview-print"]) $(id).replaceChildren(setGhost(set, got?.at ?? p, got?.rot ?? 0, got ? "asset-ghost" : "asset-ghost refused"));
+          return;
+        }
         if (!t || state.busy) return;
         const got = settle({ want: { at: p, rot: 0 }, last: null, ...placing(p, t.code), free: state.alt });
         drawGuides(got?.guides);
@@ -272,17 +321,30 @@ export function setupItems() {
         for (const id of ["preview", "preview-print"]) $(id).replaceChildren(ghost());
       },
       click: (p, e) => {
+        if (state.placeSet) return placeAsset({ set: state.placeSet.code }, p, e.altKey);
         if (!state.placeType) return toast("Choose what to place first", true);
         placeAsset(state.placeType, p, e.altKey);
       },
     },
   });
-  itemCommand("item.turn", "Turn the item 90°", ["r"], (a) => turnAsset(a, a.rotation + 90));
-  itemCommand("item.turn-back", "Turn the item back 90°", ["shift+r"], (a) => turnAsset(a, a.rotation + 270));
-  itemCommand("item.turn-left", "Turn the item 15° left", [","], (a) => turnAsset(a, a.rotation + 15), true);
-  itemCommand("item.turn-right", "Turn the item 15° right", ["."], (a) => turnAsset(a, a.rotation + 345), true);
+  itemCommand("item.turn", "Turn the item 90°", ["r"], (a) => turnAsset(a, a.rotation + 90), false, (l) => turnAssets(l, 90));
+  itemCommand("item.turn-back", "Turn the item back 90°", ["shift+r"], (a) => turnAsset(a, a.rotation + 270), false, (l) => turnAssets(l, -90));
+  itemCommand("item.turn-left", "Turn the item 15° left", [","], (a) => turnAsset(a, a.rotation + 15), true, (l) => turnAssets(l, 15));
+  itemCommand("item.turn-right", "Turn the item 15° right", ["."], (a) => turnAsset(a, a.rotation + 345), true, (l) => turnAssets(l, -15));
   for (const [key, dx, dy] of [["arrowleft", -1, 0], ["arrowright", 1, 0], ["arrowup", 0, 1], ["arrowdown", 0, -1]]) {
-    itemCommand(`item.move-${key.slice(5)}`, `Move the item ${key.slice(5)}`, [key], (a) => nudgeAsset(a, dx * 0.1, dy * 0.1), true);
-    itemCommand(`item.move-${key.slice(5)}-far`, `Move the item ${key.slice(5)} 1 m`, [`shift+${key}`], (a) => nudgeAsset(a, dx, dy), true);
+    itemCommand(`item.move-${key.slice(5)}`, `Move the item ${key.slice(5)}`, [key], (a) => nudgeAsset(a, dx * 0.1, dy * 0.1), true,
+      (l) => moveAssets(l, dx * 0.1, dy * 0.1));
+    itemCommand(`item.move-${key.slice(5)}-far`, `Move the item ${key.slice(5)} 1 m`, [`shift+${key}`], (a) => nudgeAsset(a, dx, dy), true,
+      (l) => moveAssets(l, dx, dy));
   }
+  // items chosen together: made one group, or let go of theirs
+  command({ id: "item.group", title: "Group the items chosen", group: "Item", scope: "items", keys: ["mod+g"], words: "group together set",
+    when: () => chosenAll().length > 1 && !sameGroup(chosenAll()) && editable(),
+    why: () => (chosenAll().length > 1 ? (sameGroup(chosenAll()) ? "They are one group already" : whyNotEditable())
+      : "Choose two items or more first (Shift-click each)"),
+    run: () => groupAssets(chosenAll()) });
+  command({ id: "item.ungroup", title: "Ungroup the items chosen", group: "Item", scope: "items", keys: ["mod+shift+g"], words: "ungroup split apart set",
+    when: () => chosenAll().some((a) => a.group) && editable(),
+    why: () => (chosenAll().some((a) => a.group) ? whyNotEditable() : "Choose a group first"),
+    run: () => ungroupAssets(chosenAll().filter((a) => a.group)) });
 }

@@ -4,8 +4,9 @@
 //   review   reviewing a floor's rooms one by one (1–9 a type, Enter accept, N / P)
 //   walk     walking: W A S D, the arrows and Shift are the walker's (reserved for it);
 //            E a door (the world's, first), else up the stairs; Q down
-//   item     an item chosen: R and , . turn it, the arrows move it (walking: R , . only) —
-//            whatever tool is in use: what is chosen wins over the tool
+//   item     an item chosen (or items chosen together): R and , . turn it, the arrows move
+//            it (walking: R , . only) — whatever tool is in use: what is chosen wins over the tool
+//   items    items chosen together (a group, or several): ⌘G groups them, ⌘⇧G lets them go
 //   tool     the tool in use (as "tool:space": Enter closes a space, Backspace a corner)
 //   3d       in 3D and walking: 2 shows the place under the pointer on the plan
 //   2d       on the plan: Space held moves it (pointer.js's, reserved here)
@@ -25,7 +26,7 @@
 
 import { el } from "./dom.js";
 
-export const SCOPES = ["review", "walk", "item", "tool", "3d", "2d", "global"];
+export const SCOPES = ["review", "walk", "item", "items", "tool", "3d", "2d", "global"];
 export const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 const bindings = new Map(); // scope (or "tool:<id>") → chord → command id (null: reserved for another's handler)

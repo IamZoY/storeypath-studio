@@ -11,7 +11,8 @@ import { $, el, icon, save, saved } from "./dom.js";
 import * as finish from "./finish.js";
 import { openFloor, reconvert } from "./floor.js";
 import { buildingFloors } from "./floorstack.js";
-import { changeAsset, chosenAsset, copyId, renderAssets } from "./items.js";
+import { changeAsset, chosenAll, chosenAsset, copyId, renderAssets } from "./items.js";
+import { deleteAssets } from "./groups.js";
 import { effectiveMap, kbd, reserve, scopesApplying, setupKeys } from "./keys.js";
 import { panelShown, showPanel } from "./layout.js";
 import { closeMenu, menuOpen, openMenu } from "./menu.js";
@@ -37,7 +38,8 @@ function scopes() {
   const list = [];
   if (reviewing()) list.push("review");
   if (view3d.mode === "walk") list.push("walk");
-  if (state.asset) list.push("item");
+  if (state.assets.length) list.push("item"); // (an item, or items chosen together)
+  if (state.assets.length > 1) list.push("items");
   if (state.tool) list.push(`tool:${state.tool}`);
   list.push(view3d.shown ? "3d" : "2d");
   list.push("global");
@@ -68,6 +70,8 @@ async function deleteChosen() {
   } else if (sel.kind === "asset") {
     const a = chosenAsset();
     if (a) return changeAsset(a, { retired: !a.retired });
+    const all = chosenAll(); // a group, or items chosen together: one change
+    if (all.length) return deleteAssets(all, !all.every((x) => x.retired));
   } else if (sel.kind === "opening" || sel.kind === "drawn") return deleteItem();
 }
 
@@ -128,6 +132,7 @@ export function situation() {
   const parts = [VIEW_NAMES[view3d.mode]];
   if (reviewing()) parts.push("reviewing");
   if (state.asset) parts.push("an item chosen");
+  else if (state.assets.length) parts.push("items chosen");
   else if (sel.kind === "space") parts.push(chosenSpaces().length > 1 ? "rooms chosen" : "a room chosen");
   else if (sel.kind) parts.push("a door or line chosen");
   const t = activeTool();

@@ -100,6 +100,20 @@ def add_item(code: str, floor_id: str, request: Request, may: May, studio: TheSt
     return answer(request, studio.review(code).add_item(floor_id, body, by=may.user, editor=may.editor))
 
 
+@calls.post(F + "/sets")
+def place_set(code: str, floor_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    may.floor(code, floor_id, "edit")
+    return answer(request, studio.review(code).place_set(floor_id, body, by=may.user, editor=may.editor))
+
+
+@calls.post("/api/projects/{code}/items")
+def change_items(code: str, request: Request, may: May, studio: TheStudio, body: Body):
+    for a in body.get("items") or []:  # (each, as one alone is: edit on its floor)
+        if isinstance(a, dict) and isinstance(a.get("id"), str):
+            may.item(code, a["id"], a)
+    return answer(request, studio.review(code).change_items(body, by=may.user, editor=may.editor))
+
+
 @calls.get("/api/projects/{code}/items/{item_id}")
 def find_item(code: str, item_id: str, request: Request, may: May, studio: TheStudio):
     may.find_item(code, item_id)  # (as a person typed it: 7k2q xm9f 4dp)

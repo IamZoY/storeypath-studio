@@ -23,7 +23,8 @@ import { emit, on } from "./bus.js";
 import { $, save, saved, svg } from "./dom.js";
 import { clearPreview } from "./drawing.js";
 import * as finish from "./finish.js";
-import { changeAsset, drawGuides, placeAsset, placing, renderAssets } from "./items.js";
+import { changeAsset, chosenAll, drawGuides, placeAsset, placing, renderAssets, settleSet } from "./items.js";
+import { changeAssets, groupOf, setPieces } from "./groups.js";
 import { lookOptions } from "../look.js";
 import { closeMenu, menu3d, menuOpen } from "./menu.js";
 import { say, toast } from "./notify.js";
@@ -186,7 +187,7 @@ export async function build3d() {
       view3d.world.setFloors(view3d.mode === "3d" ? floors3d() : [state.floor.id]);
       update3d();
     }
-    pick3d(state.selected || state.asset || null, { go: false });
+    pick3d(state.selected || (state.assets.length > 1 ? state.assets : state.asset) || null, { go: false });
     say("");
     applyMode();
     return true;
@@ -329,8 +330,8 @@ function setup3d(world) {
   world.setLabels(state.showLabels !== false);
   world.addEventListener("select", ({ detail: { id } }) => {
     if (view3d.picking) return; // our own choice, echoed back
-    if (id && (state.floor?.items || []).some((a) => a.id === id)) return id !== state.asset && selectAsset(id);
-    if (id === null && state.asset) return selectAsset(null);
+    if (id && (state.floor?.items || []).some((a) => a.id === id)) return !state.assets.includes(id) && selectAsset(id);
+    if (id === null && state.assets.length) return selectAsset(null);
     // all floors shown: a room of another floor opens that floor, with it chosen
     const floor = id && id.split("-").slice(0, 4).join("-");
     if (id && !state.byId.has(id) && floor !== state.floor?.id && state.project?.floors.some((f) => f.id === floor)) {
@@ -346,11 +347,11 @@ function setup3d(world) {
       world.mark(null);
       return;
     }
-    if (state.tool !== "place" || !state.placeType) return;
+    if (state.tool !== "place" || !(state.placeType || state.placeSet)) return;
     e.preventDefault(); // placed, not chosen
     const p = e.detail;
     if (!p.local || p.floor !== state.floor?.id) return toast("Click on this floor's floor, where it goes", true);
-    placeAsset(state.placeType, p.local, p.altKey || state.alt, REACH_3D);
+    placeAsset(state.placeSet ? { set: state.placeSet.code } : state.placeType, p.local, p.altKey || state.alt, REACH_3D);
   });
   world.addEventListener("itemdragstart", ({ detail }) => carryStart(detail));
   world.addEventListener("itemdrag", ({ detail }) => carryMove(detail));
@@ -425,7 +426,7 @@ function markUnder(p) {
     view3d.painted = null;
     return w.mark(target);
   }
-  w.mark(p.item && !p.door && p.item !== state.asset ? { item: p.item } : null); // (the item chosen: lit already)
+  w.mark(p.item && !p.door && !state.assets.includes(p.item) ? { item: p.item } : null); // (the item chosen: lit already)
 }
 
 /** Walking: E. The door under the pointer, else the nearest ahead (the world takes E first
@@ -460,10 +461,16 @@ export function aimSoon() {
 function aim3d() {
   const w = view3d.world;
   if (!w || !view3d.shown) return;
-  const t = state.tool === "place" ? typeOf(state.placeType) : null;
-  const p = t && view3d.pointer ? w.pointAt(...view3d.pointer) : null;
+  const t = state.tool === "place" ? typeOf(state.placeType) : null, set = state.tool === "place" ? state.placeSet : null;
+  const p = (t || set) && view3d.pointer ? w.pointAt(...view3d.pointer) : null;
   if (!p?.local || p.floor !== state.floor?.id) {
     w.ghost(null);
+    return;
+  }
+  if (set) { // a set: its pieces where they would stand, drawn to the room as one
+    const { got } = settleSet(set, p.local, state.alt, REACH_3D);
+    const pieces = setPieces(set, got?.at ?? p.local, got?.rot ?? 0).map((x) => given3d(x));
+    w.ghost({ pieces, ok: Boolean(got), guides: got?.guides || [] });
     return;
   }
   const got = settle({ want: { at: p.local, rot: 0 }, last: null, ...placing(p.local, t.code, null, 0, REACH_3D), free: state.alt });
@@ -513,6 +520,7 @@ function walkKeys() {
   if (state.tool === "paint-wall") return "Click a wall: paint that wall alone · Alt-click: take up its finish · Esc: stop painting";
   if (finish.painting()) return "Click a floor or a wall: paint it · Alt-click: take up its finish · Esc: stop painting";
   if (state.asset && may) return "R , . turn it · Del delete · drag it to move it · Esc: let it go";
+  if (state.assets.length > 1 && may) return "R , . turn them · Del delete them · drag one to move them all · Esc: let them go";
   return "Drag to look · W A S D to move · double-click to go there";
 }
 
@@ -590,6 +598,14 @@ export const carry = { asset: null };
 function carryStart({ id, local }) {
   const a = (state.floor?.items || []).find((x) => x.id === id);
   if (!a || !local || !editable()) return;
+  // one of items chosen together, or of a group: all of them carried as one (as they are: no magnet)
+  const together = state.assets.length > 1 && state.assets.includes(a.id) ? chosenAll() : groupOf(a);
+  if (together.length > 1) {
+    Object.assign(carry, { asset: a, many: together.map((x) => ({ a: x, from: [x.x, x.y] })), start: local, moved: null });
+    view3d.world.setFloorItems(state.floor.id, state.floor.items.filter((x) => !x.retired && !together.includes(x)).map(given3d));
+    return;
+  }
+  carry.many = null;
   const rot = a.rotation || 0;
   Object.assign(carry, { asset: a, from: [a.x, a.y], start: local, rot0: rot,
     fit: { ...placing([a.x, a.y], a.type, a.id, rot, REACH_3D), last: { at: [a.x, a.y], rot } } });
@@ -599,6 +615,12 @@ function carryStart({ id, local }) {
 function carryMove({ local, altKey }) {
   const a = carry.asset;
   if (!a || !local) return;
+  if (carry.many) {
+    const d = [local[0] - carry.start[0], local[1] - carry.start[1]];
+    carry.moved = d;
+    view3d.world.ghost({ pieces: carry.many.map(({ a: x, from }) => given3d({ ...x, x: from[0] + d[0], y: from[1] + d[1] })), ok: true });
+    return;
+  }
   const f = carry.fit;
   const want = { at: [carry.from[0] + local[0] - carry.start[0], carry.from[1] + local[1] - carry.start[1]], rot: carry.rot0 };
   const got = settle({ want, last: f.last, ...f, free: altKey });
@@ -608,10 +630,18 @@ function carryMove({ local, altKey }) {
 }
 
 function carryEnd({ cancelled }) {
-  const a = carry.asset;
-  carry.asset = null;
+  const a = carry.asset, many = carry.many;
+  carry.asset = carry.many = null;
   view3d.world?.ghost(null);
   if (!a) return;
+  if (many) {
+    const d = carry.moved;
+    if (cancelled || !d || Math.hypot(d[0], d[1]) < 1e-4) return update3d();
+    for (const { a: x, from } of many) [x.x, x.y] = [from[0] + d[0], from[1] + d[1]]; // shown there now; saved (or put back)
+    update3d();
+    renderAssets();
+    return changeAssets(many.map(({ a: x }) => ({ id: x.id, x: round4(x.x), y: round4(x.y) })));
+  }
   const { at, rot } = carry.fit.last;
   if (cancelled || (Math.hypot(at[0] - a.x, at[1] - a.y) < 1e-4 && rot === carry.rot0)) return update3d();
   [a.x, a.y, a.rotation] = [at[0], at[1], rot]; // shown there now; saved (or put back as saved)

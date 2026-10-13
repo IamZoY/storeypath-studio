@@ -46,7 +46,10 @@ def status(request: Request, may: May, studio: TheStudio):
 @calls.get("/api/catalogue")
 def catalogue(request: Request, may: May, studio: TheStudio):
     may.logged_in()
-    return answer(request, studio.catalogue().model_dump())
+    from ..catalogue import sets_of
+
+    cat = studio.catalogue()  # and the sets it can place (Review's box to find what to place)
+    return answer(request, {**cat.model_dump(), "sets": [s.model_dump() for s in sets_of(cat)]})
 
 
 @calls.post("/api/catalogue")

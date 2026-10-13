@@ -12,10 +12,12 @@ import { el, icon } from "../dom.js";
 import { deleteItem, drawnLength, openingMeta, openingName, sizeForm } from "../drawing.js";
 import * as finish from "../finish.js";
 import { categories, changeAsset, copyId, turnAsset } from "../items.js";
+import { deleteAssets, groupAssets, groupOf, turnAssets, ungroupAssets } from "../groups.js";
+import { categoryName } from "../../categories.js";
 import { kbd, keysOf, keyText } from "../keys.js";
 import { toast } from "../notify.js";
 import { accept, correct, forEach, setFlag } from "../rooms.js";
-import { select } from "../selection.js";
+import { select, selectAsset } from "../selection.js";
 import { color, readable, state, title, typeName, typeOf, units, view3d, within } from "../state.js";
 import { roomHistory } from "./history.js";
 
@@ -98,7 +100,7 @@ function itemMain({ asset: a, editable: may }) {
   if (!a) return null;
   const t = typeOf(a.type);
   const type = el("select", { id: "as-type", "aria-label": "Type", disabled: !may || null },
-    ...categories().map(([category, types]) => el("optgroup", { label: category[0].toUpperCase() + category.slice(1) },
+    ...categories().map(([category, types]) => el("optgroup", { label: categoryName(category) },
       ...types.map((x) => el("option", { value: x.code }, x.name_en)))));
   type.value = a.type;
   type.addEventListener("change", () => changeAsset(a, { type: type.value }));
@@ -149,6 +151,67 @@ function itemWhere({ asset: a }) {
   const go = room ? el("button", { type: "button", class: "btn-link" }, title(room)) : el("span", { class: "muted" }, "Outside every room");
   go.addEventListener?.("click", () => room && select(room.id, { fly: true }));
   return [row("In", go), row("At", el("code", { class: "value" }, `${a.x.toFixed(2)}, ${a.y.toFixed(2)} m`))];
+}
+
+/** An item of a group, chosen alone: the group it is part of, to choose it whole, or to
+ * take this item out of it (it keeps its ID). */
+function itemGroup({ asset: a, editable: may }) {
+  if (!a?.group) return null;
+  const all = groupOf(a);
+  const whole = el("button", { type: "button", class: "btn-sm" }, icon("layers", { size: 14 }), "Choose the group");
+  whole.addEventListener("click", () => selectAsset(a.id));
+  const out = el("button", { type: "button", class: "btn-sm", disabled: !may || null,
+    "data-tip": "Out of its group: moved and turned alone from now on; its ID stays" }, "Take it out");
+  out.addEventListener("click", () => ungroupAssets([a]));
+  return [el("p", { class: "hint" }, `One of a group of ${all.length} items, placed or grouped together: a click chooses them all, a double-click this one alone.`),
+    el("div", { class: "sec-actions" }, whole, el("span", { class: "grow" }), out)];
+}
+
+// ---- items chosen together: a group, or several ---------------------------------------------
+
+function itemsHeader({ assets, group }) {
+  if (!assets.length) return null;
+  const kinds = new Map();
+  for (const a of assets) {
+    const name = typeOf(a.type)?.name_en || a.type;
+    kinds.set(name, (kinds.get(name) || 0) + 1);
+  }
+  return [el("div", { class: "ih-top" }, icon("layers", { size: 18, cls: "ih-icon" }),
+    el("h2", { class: "ih-title" }, group ? `A group of ${assets.length} items` : `${assets.length} items chosen`),
+    assets.some((a) => a.retired) ? el("div", { class: "ih-flags" }, el("span", { class: "badge danger" }, "Deleted")) : null),
+  el("div", { class: "ih-sub" }, [...kinds].map(([name, n]) => (n > 1 ? `${n} × ${name}` : name)).join(" · ")),
+  el("div", { class: "ih-sub" }, group ? "Each with its own ID: moved, turned and deleted together"
+    : "Each with its own ID: grouped, they move and turn together")];
+}
+
+/** The items chosen, each: a click chooses it alone. */
+function itemsList({ assets }) {
+  if (!assets.length) return null;
+  return el("ul", { class: "group-list" }, assets.map((a) => {
+    const t = typeOf(a.type);
+    const b = el("button", { type: "button", class: "group-item", "data-tip": "Choose this item alone" },
+      el("span", { class: "swatch", style: `background:${t?.color || "#8a8a8a"}` }), el("span", { class: "grow" }, t ? t.name_en : a.type),
+      el("code", { class: "tag" }, a.id));
+    b.addEventListener("click", () => selectAsset(a.id, { alone: true }));
+    return el("li", {}, b);
+  }));
+}
+
+function itemsActions({ assets, group, editable: may }) {
+  if (!assets.length || !may) return null;
+  const btn = (label, ico, fn, attrs = {}) => {
+    const b = el("button", { type: "button", class: "btn-sm", ...attrs }, icon(ico, { size: 14 }), label);
+    b.addEventListener("click", fn);
+    return b;
+  };
+  const deleted = assets.every((a) => a.retired);
+  return el("div", { class: "sec-actions" },
+    group ? btn("Ungroup", "square-split-horizontal", () => ungroupAssets(assets), { "data-key": keysOf("item.ungroup")[0] || null })
+      : btn("Group", "layers", () => groupAssets(assets), { "data-key": keysOf("item.group")[0] || null }),
+    btn("Turn 90°", "rotate-ccw", () => turnAssets(assets, 90)),
+    el("span", { class: "grow" }),
+    btn(deleted ? "Restore" : "Delete", deleted ? "rotate-cw" : "trash-2", () => deleteAssets(assets, !deleted),
+      { class: deleted ? "btn-sm" : "btn-sm btn-danger", "data-key": "delete" }));
 }
 
 function itemActions({ asset: a, editable: may }) {
@@ -216,7 +279,12 @@ export function setupOtherSections() {
   section({ id: "item.details", kinds: ["asset"], title: "Details", order: 20, render: itemDetails });
   section({ id: "item.where", kinds: ["asset"], title: "Where it stands", order: 30, render: itemWhere });
   section({ id: "item.history", kinds: ["asset"], title: "History", order: 40, open: false, render: ({ asset }) => asset && roomHistory(asset.id) });
+  section({ id: "item.group", kinds: ["asset"], title: "Its group", order: 35, render: itemGroup });
   section({ id: "item.actions", kinds: ["asset"], title: "", order: 90, bare: true, render: itemActions });
+
+  header({ kind: "assets", render: itemsHeader });
+  section({ id: "items.list", kinds: ["assets"], title: "Items", order: 10, render: itemsList });
+  section({ id: "items.actions", kinds: ["assets"], title: "", order: 90, bare: true, render: itemsActions });
 
   header({ kind: "opening", render: openingHeader });
   section({ id: "opening.size", kinds: ["opening"], title: "Size", order: 10, render: openingSize });

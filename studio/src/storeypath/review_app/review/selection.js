@@ -2,7 +2,8 @@
 // time:
 //
 //   space    one space or zone, or several (Shift- or ⌘-click, a band dragged with Shift)
-//   asset    an item (furniture or equipment)
+//   asset    an item (furniture or equipment), or several: a group (a click on one of it;
+//            a double-click, that item alone), or items Shift- or ⌘-clicked
 //   opening  a door, window or opening
 //   drawn    a wall or dividing line drawn here ({kind: "wall" | "divider", at, line})
 //
@@ -18,11 +19,12 @@ import { flyToSpace, renderPlan, styleSpace } from "./plan.js";
 import { pathData, state } from "./state.js";
 import { pick3d } from "./view3d.js";
 
-export const sel = { kind: null, ids: [], line: null };
+export const sel = { kind: null, ids: [], line: null, group: null }; // (group: the items' group, chosen whole)
 
 Object.defineProperties(state, {
   selected: { get: () => (sel.kind === "space" && sel.ids.length === 1 ? sel.ids[0] : null), configurable: true },
-  asset: { get: () => (sel.kind === "asset" ? sel.ids[0] : null), configurable: true },
+  asset: { get: () => (sel.kind === "asset" && sel.ids.length === 1 ? sel.ids[0] : null), configurable: true },
+  assets: { get: () => (sel.kind === "asset" ? sel.ids : []), configurable: true },
   item: {
     get: () => (sel.kind === "opening" ? { kind: "door", id: sel.ids[0] } : sel.kind === "drawn" ? sel.line : null),
     configurable: true,
@@ -34,12 +36,13 @@ export const chosenSpaces = () => (sel.kind === "space" ? sel.ids.map((id) => st
 export const isChosen = (id) => sel.kind === "space" && sel.ids.includes(id);
 export const count = () => (sel.kind === "drawn" ? 1 : sel.ids.length);
 
-function set(kind, ids, line = null) {
+function set(kind, ids, line = null, group = null) {
   const before = new Set(sel.kind === "space" ? sel.ids : []);
   const wasItem = sel.kind === "opening" || sel.kind === "drawn";
   sel.kind = ids.length || line ? kind : null;
   sel.ids = ids;
   sel.line = line;
+  sel.group = kind === "asset" && ids.length > 1 ? group : null;
   const now = new Set(sel.kind === "space" ? sel.ids : []);
   for (const id of new Set([...before, ...now])) {
     const s = state.byId.get(id);
@@ -98,8 +101,10 @@ export function selectItem(item) {
   pick3d(null);
 }
 
-/** An item (furniture or equipment) chosen, by its ID (null: none). */
-export function selectAsset(id) {
+/** An item (furniture or equipment) chosen, by its ID (null: none): with its group, unless
+ * ``alone`` (a double-click; a piece named in the inspector); ``add``: added to the items
+ * chosen, or taken out of them when it is one (Shift- or ⌘-click). */
+export function selectAsset(id, { alone = false, add = false } = {}) {
   if (!id) {
     if (sel.kind === "asset") {
       set(null, []);
@@ -107,8 +112,27 @@ export function selectAsset(id) {
     }
     return;
   }
+  const items = state.floor?.items || [];
+  const a = items.find((x) => x.id === id);
+  if (add && sel.kind === "asset") {
+    const ids = sel.ids.includes(id) ? sel.ids.filter((x) => x !== id) : [...sel.ids, id];
+    return selectAssets(ids);
+  }
+  if (!alone && a?.group) {
+    const ids = items.filter((x) => x.group === a.group && (!x.retired || state.showHidden || x.id === id)).map((x) => x.id);
+    if (ids.length > 1) return selectAssets([id, ...ids.filter((x) => x !== id)], { group: a.group });
+  }
   set("asset", [id]);
   pick3d(id);
+}
+
+/** Several items chosen together (``group``: the group they are, chosen whole); one: alone. */
+export function selectAssets(ids, { group = null } = {}) {
+  const on = new Set((state.floor?.items || []).map((x) => x.id));
+  ids = [...new Set(ids)].filter((x) => on.has(x));
+  if (!ids.length) return selectAsset(null);
+  set("asset", ids, null, group);
+  pick3d(ids.length > 1 ? ids : ids[0]);
 }
 
 export function clearSelection() {
@@ -123,7 +147,10 @@ export function keepChosen() {
   if (sel.kind === "space") {
     const ids = sel.ids.filter((id) => state.byId.has(id));
     if (ids.length !== sel.ids.length) return set(ids.length ? "space" : null, ids);
-  } else if (sel.kind === "asset" && !(state.floor?.items || []).some((a) => a.id === sel.ids[0])) return set(null, []);
+  } else if (sel.kind === "asset") {
+    const on = new Set((state.floor?.items || []).map((a) => a.id)), ids = sel.ids.filter((id) => on.has(id));
+    if (ids.length !== sel.ids.length) return set(ids.length ? "asset" : null, ids, null, sel.group);
+  }
   else if (sel.kind === "opening" && !(state.floor?.doors || []).some((d) => d.id === sel.ids[0])) return set(null, []);
   else if (sel.kind === "drawn") {
     const list = sel.line.kind === "wall" ? state.floor?.edits?.walls : state.floor?.edits?.dividers;

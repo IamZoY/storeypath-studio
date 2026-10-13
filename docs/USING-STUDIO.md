@@ -197,17 +197,35 @@ changes — refused, naming who, when someone else changed the same thing since 
 
 ### Furniture and equipment
 
-Desks, meeting tables, photocopiers, access points, sofas, TVs, beds, kiosks: **items** are placed on
-the floors in review.
+Furniture and the building's equipment whose place matters: **items** are placed on the
+floors in review, each piece an item of its own with its own ID (a desk's chair too).
 
-- **The catalogue** of item types is the organization's: the same for every project.
-  A new Studio starts with desks by grade (president, C-level, director, manager,
-  head of section, senior and junior staff), meeting tables for 4 to 16, a central
-  photocopier, a wireless access point, a sofa, a TV screen, king- and queen-size
-  beds and a wayfinding kiosk, each with a code, English and Arabic names, a size, how
-  it is mounted (floor, wall, ceiling), a colour and how it is drawn (a desk with its
-  chairs, a meeting table with as many chairs as it seats, a sofa, a screen, a copier,
-  a bed, a kiosk, an access point, or a plain box).
+- **The catalogue** of item types is the organization's: the same for every project,
+  in categories. Furniture: workstations (desks by grade, from president to junior staff,
+  a desk return, a bench desk, a reception desk), seating (office, executive, meeting,
+  boardroom and visitor chairs), tables (meeting tables for 4 to 16, training, dining,
+  coffee and side tables), storage (drawer pedestals, credenzas, filing cabinets,
+  cupboards, bookcases, lockers, safes), soft seating, beds. The building's equipment:
+  security (CCTV cameras, card readers, door controllers, exit buttons, intercoms, alarm
+  keypads, motion sensors, panic buttons, turnstiles), fire and life safety (smoke and
+  heat detectors, call points, alarm panels and sounders, extinguishers, hose reels,
+  fire blankets, emergency lights, exit signs, first aid, defibrillators), IT and AV
+  (access points, network racks, data points, floor boxes, copiers, printers, screens,
+  video bars, projectors, digital signs, room booking panels, wayfinding kiosks),
+  building services (air-conditioning units, thermostats, electrical panels, water
+  heaters, hand dryers) and appliances. Each type has a code, English and Arabic names,
+  a size, how it is mounted (floor, wall, ceiling), a colour and how it is drawn (a desk
+  or a table alone, an office chair, a visitor's chair, an armchair, a sofa, storage, a
+  screen, a copier, a bed, a kiosk, an access point, a camera, or a plain box).
+- **Sets** place pieces together in one go: a workstation for each grade (the desk, its
+  chair, a pedestal, a return, a credenza, visitors' chairs, as the grade has them), a
+  meeting table for 4 to 16 with its chairs, a dining set, a lounge, a bench desk with
+  its four chairs. Each piece becomes an item of its own, with its own ID, and the pieces
+  are one **group**: a click on any of them chooses the group, which moves, turns (about
+  its middle) and is deleted as one, and is undone as one; a double-click (or a piece
+  named in the inspector) chooses that piece alone. *Ungroup* (<kbd>⌘⇧G</kbd>) lets the
+  pieces go (each keeps its ID); Shift- or ⌘-click items to choose several, and *Group*
+  (<kbd>⌘G</kbd>) makes them one.
 - **Item types** (in your menu, top right, and on the Projects page) lists them. Admins,
   and those an admin lets, add a type (its code is its identity for good), change one,
   *Copy as new*, or *Retire* one no longer used (never removed: its code stays with
@@ -235,8 +253,9 @@ the floors in review.
   are only read by their own programs: Studio says how to export them (as FBX, OBJ,
   Collada or glTF). A compressed glTF (Draco, meshopt) is refused: export it again
   without compression.
-- **Place** one with the *Place* tool (<kbd>I</kbd>): choose its type in the tool's
-  options and click where it goes (or right-click, *Place an item here…*). Drag it to
+- **Place** one with the *Place* tool (<kbd>I</kbd>): find its type or set in the box at
+  the top (type its name in English or Arabic, or open a category; the chip, Backspace or
+  Esc goes back) and click where it goes (or right-click, *Place an item here…*). Drag it to
   move it; <kbd>R</kbd> turns it 90°, <kbd>,</kbd> and <kbd>.</kbd> by 15°, the arrows
   move it (Shift: further), <kbd>Del</kbd> deletes it. The inspector changes its type,
   its turn, its floor (carry it to another floor or building) and its details; the
@@ -245,8 +264,8 @@ the floors in review.
   in (right-clicked or clicked in): dragged, nudged or turned, it stops at that room's
   walls (a zone has no walls: the whole space holds it). Near a wall it turns square to
   it and moves up against it, into a corner too; near another item it lines up with it
-  (desks into rows); a TV goes on the nearest wall, its screen into the room. A desk
-  counts what is drawn round it (its cabinet goes against the wall, not through it).
+  (desks into rows); a TV goes on the nearest wall, its screen into the room. A set is
+  held and lined up as one, by the box round its pieces; a group dragged goes as it is.
   Hold <kbd>Alt</kbd> to place or drag it freely, or into another room.
 - **Desks show who they are for.** Each grade's desk has its own size and shade, and
   is drawn (in review, on the plan and in 3D) with what goes with it: a junior's

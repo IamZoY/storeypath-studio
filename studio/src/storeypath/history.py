@@ -191,6 +191,8 @@ def subject(e: dict) -> str:
         article = "an" if what[:1] in "aeiou" else "a"
         return f"{article} {what} {short(target)}".strip()
     if part == "item":
+        if (e.get("count") or 1) > 1:  # many at once: a set, or "4 items"
+            return e.get("label") or f"{e['count']} items"
         return f"{e.get('label') or 'an item'} {short(target)}".strip()
     if part == "edit":
         return _drawn(e)
@@ -244,8 +246,10 @@ def _describe(e: dict) -> str:
                 "as found": f"linked {it} through the floors as found"}.get(kind, f"changed {it}")
     if part == "item":
         verbs = {"add": "placed", "move": "moved", "turn": "turned", "values": "changed the details of",
-                 "delete": "deleted", "restore": "restored"}
+                 "delete": "deleted", "restore": "restored", "group": "grouped", "ungroup": "ungrouped"}
         changes = e.get("changes") or [kind]
+        if (e.get("count") or 1) > 1 and "add" in changes:  # a set placed
+            return f"placed {it} ({e['count']} items)"
         if "carry" in changes:
             return f"carried {it} to {e.get('to_name') or 'another floor'}"
         if "retype" in changes:

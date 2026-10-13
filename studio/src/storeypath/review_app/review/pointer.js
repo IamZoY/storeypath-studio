@@ -9,7 +9,8 @@ import { editable, viewOnly, whyNotRoom } from "./access.js";
 import { emit } from "./bus.js";
 import { drawnNear, openingNear } from "./drawing.js";
 import { $ } from "./dom.js";
-import { assetOf, changeAsset, drawGuides, itemRoom, placing, renderAssets } from "./items.js";
+import { assetOf, changeAsset, chosenAll, drawGuides, itemRoom, placing, renderAssets } from "./items.js";
+import { changeAssets, groupOf } from "./groups.js";
 import { closeMenu, openMenu } from "./menu.js";
 import { planPoint, showCursor, spaceAt, stopFlight, updateView, zoomAt } from "./plan.js";
 import { settle } from "../fit.js";
@@ -20,6 +21,8 @@ import { activeTool } from "./tools.js";
 let spaceHeld = false;
 const typing = (t) => t?.closest?.("input, select, textarea, [contenteditable]");
 
+
+const DOUBLE_MS = 450; // two clicks this near in time are a double-click
 export function setupPointer() {
   for (const pane of [$("svg"), $("svg-print")]) bindPane(pane);
   // Space held: the hand, for a moment (while drawing too)
@@ -56,6 +59,7 @@ function bindPane(pane) {
   };
   const band = $("band");
   let drag = null;
+  let lastPick = { id: null, at: 0 }; // the item clicked last, and when (a double-click: DOUBLE_MS)
   pane.addEventListener("pointerdown", (e) => {
     stopFlight();
     const [sx, sy] = local(e);
@@ -76,8 +80,8 @@ function bindPane(pane) {
       pane.setPointerCapture(e.pointerId);
       return;
     }
-    if (!state.tool && e.shiftKey && pane === $("svg")) { // a band over the rooms to choose
-      drag = { mode: "band", from: [sx, sy], moved: false };
+    if (!state.tool && e.shiftKey && pane === $("svg")) { // a band over the rooms to choose (a Shift-click: an item added)
+      drag = { mode: "band", from: [sx, sy], moved: false, picked: assetOf(e.target) };
       pane.setPointerCapture(e.pointerId);
       return;
     }
@@ -86,7 +90,12 @@ function bindPane(pane) {
     const asset = picked && editable() && !whyNotRoom(itemRoom(picked)) ? picked : null;
     drag = { mode: "press", x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty, moved: false, target: e.target,
       asset, picked, from: asset ? [asset.x, asset.y] : null };
-    if (asset) { // its room holds it; walls and other items draw it (fit.js)
+    // one of items chosen together, or of a group: all of them carried as one (as they are: no magnet)
+    const together = asset && (state.assets.length > 1 && state.assets.includes(asset.id) ? chosenAll() : groupOf(asset));
+    if (asset && together.length > 1 && !(e.metaKey || e.ctrlKey)) {
+      if (together.some((a) => whyNotRoom(itemRoom(a)))) drag.asset = null;
+      else drag.many = together.map((a) => ({ a, from: [a.x, a.y] }));
+    } else if (asset) { // its room holds it; walls and other items draw it (fit.js)
       const rot = asset.rotation || 0;
       drag.fit = { ...placing(drag.from, asset.type, asset.id, rot), rot0: rot, last: { at: drag.from, rot } };
     }
@@ -115,6 +124,11 @@ function bindPane(pane) {
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     drag.moved = true;
     pane.classList.add("dragging");
+    if (drag.many) { // items carried together: each as far as the pointer went
+      for (const { a, from } of drag.many) [a.x, a.y] = [from[0] + dx / state.view.k, from[1] - dy / state.view.k];
+      renderAssets();
+      return;
+    }
     if (drag.asset) { // an item carried across the plan: it follows the pointer, held in its room
       const f = drag.fit;
       const want = { at: [drag.from[0] + dx / state.view.k, drag.from[1] - dy / state.view.k], rot: f.rot0 };
@@ -149,20 +163,31 @@ function bindPane(pane) {
     if (d.mode === "band") {
       band.hidden = true;
       if (d.moved) return selectSpaces(roomsIn(pane, d.from, local(e)), { add: true });
+      if (d.picked) return selectAsset(d.picked.id, { add: true }); // a Shift-click on an item: added to those chosen
       // a Shift-click: the room added to those chosen
       const s = spaceAt(...p);
       if (s) select(s.id, { add: true });
       return;
     }
     drawGuides();
-    const { moved, target, asset, picked, fit } = d;
+    const { moved, target, asset, picked, fit, many } = d;
+    if (many && moved) {
+      return changeAssets(many.map(({ a }) => ({ id: a.id, x: round4(a.x), y: round4(a.y) })));
+    }
     if (asset && moved) {
       const turned = (asset.rotation || 0) !== fit.rot0 ? { rotation: round4(asset.rotation) } : {};
       return changeAsset(asset, { x: round4(asset.x), y: round4(asset.y), ...turned });
     }
     if (moved) return;
     if (state.tool) return t?.plan?.click?.(p, e);
-    if (picked) return selectAsset(picked.id);
+    if (picked) {
+      // a second click on one of a group, at once: that one alone (counted here: a click redraws
+      // the items, so the page's own dblclick never comes)
+      const now = performance.now(), again = lastPick.id === picked.id && now - lastPick.at < DOUBLE_MS;
+      lastPick = { id: picked.id, at: now }; // (a third at once: alone still)
+      if (again && picked.group && !(e.metaKey || e.ctrlKey)) return selectAsset(picked.id, { alone: true });
+      return selectAsset(picked.id, { add: e.metaKey || e.ctrlKey });
+    }
     const door = openingNear(p);
     if (door) return selectItem({ kind: "door", id: door.id });
     const line = drawnNear(p);

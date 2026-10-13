@@ -369,6 +369,7 @@ def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units) -> 
         "heading": round((bearing + math.degrees(math.atan2(fx, fy))) % 360, 2),
         "width_m": w, "depth_m": d, "height_m": t.height if t else 0.75, "mount": mount,
         "elevation_m": elevation, "values": {k: v for k, v in it.values.items() if k in own},
+        "group": it.group,
     })
 
 

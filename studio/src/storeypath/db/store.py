@@ -467,7 +467,7 @@ def _override_row(code: str, object_id: str, o: Override, by) -> tuple:
 
 
 def _item_row(code: str, it: Item, by) -> tuple:
-    return (code, it.id, it.floor_id or "", it.type, it.x, it.y, it.rotation, _j(dict(it.values)), it.status,
+    return (code, it.id, it.floor_id or "", it.type, it.x, it.y, it.rotation, _j(dict(it.values)), it.group, it.status,
             it.created_at, it.retired_at, by)
 
 
@@ -506,7 +506,7 @@ SELECT p.version, json_build_object(
       ORDER BY v.position) FROM overrides v WHERE v.project = p.code AND {{scope_v}}), '{{{{}}}}'),
   'items', COALESCE((SELECT json_object_agg(i.id, json_build_object(
       'id', i.id, 'type', i.type, 'floor_id', i.floor, 'x', i.x, 'y', i.y, 'rotation', i.rotation,
-      'values', i.details, 'status', i.status, 'created_at', i.created_at, 'retired_at', i.retired_at)
+      'values', i.details, 'group', i.group_key, 'status', i.status, 'created_at', i.created_at, 'retired_at', i.retired_at)
       ORDER BY i.position) FROM items i WHERE i.project = p.code AND {{scope_i}}), '{{{{}}}}'),
   'readings', COALESCE((SELECT json_object_agg(r.text, json_build_object(
       'type', r.type, 'source', r.source, 'rooms_only', r.rooms_only, 'asked', r.asked) ORDER BY r.position)
@@ -872,10 +872,11 @@ class ProjectStore:
                     raise Conflict(f"item {other[0]} is an item of another project here: an item's ID is one "
                                    "project's. Nothing was changed")
                 cur.executemany(
-                    "INSERT INTO items (project, id, floor, type, x, y, rotation, details, status, created_at, "
-                    "retired_at, changed_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "INSERT INTO items (project, id, floor, type, x, y, rotation, details, group_key, status, created_at, "
+                    "retired_at, changed_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     "ON CONFLICT (id) DO UPDATE SET floor = EXCLUDED.floor, type = EXCLUDED.type, "
                     "x = EXCLUDED.x, y = EXCLUDED.y, rotation = EXCLUDED.rotation, details = EXCLUDED.details, "
+                    "group_key = EXCLUDED.group_key, "
                     "status = EXCLUDED.status, created_at = EXCLUDED.created_at, retired_at = EXCLUDED.retired_at, "
                     "changed_by = EXCLUDED.changed_by, changed_at = now(), version = items.version + 1 "
                     "WHERE items.project = EXCLUDED.project", put)

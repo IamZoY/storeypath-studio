@@ -198,3 +198,48 @@ def test_the_history_says_who_did_what_and_what_was_undone(team):
     _, whole = team("sara", "GET", "history?n=3")
     assert whole["entries"][0]["line"] == f"hid {office(team, team.hq1).name} {office(team, team.hq1).number}"
     assert whole["entries"][0]["mine"] is True and whole["undo"]["seq"] == whole["entries"][0]["seq"]
+
+
+def test_a_set_placed_is_its_pieces_each_an_item_one_group_and_undone_as_one(team):
+    """A set placed (catalogue.py default_sets): each piece an item with its own ID, where the
+    set puts it turned with it, all one group; moved together, grouped and let go as one
+    change each; undone as one: a set placed and undone, every piece retired."""
+    import math
+
+    from storeypath.catalogue import default_sets
+
+    junior = next(s for s in default_sets() if s.code == "SET-WORKSTATION-JUNIOR")
+    status, placed = team("khalid", "POST", f"floors/{team.hq0}/sets",
+                          {"set": "SET-WORKSTATION-JUNIOR", "x": 12, "y": 4, "rotation": 90})
+    assert status == 200, placed
+    items, group = placed["items"], placed["group"]
+    assert [i["type"] for i in items] == [p.type for p in junior.pieces] and len({i["id"] for i in items}) == len(items)
+    assert group and all(i["group"] == group for i in items)
+    for i, p in zip(items, junior.pieces):  # turned 90°: the set's +x is the plan's +y
+        assert math.isclose(i["x"], 12 - p.y, abs_tol=1e-6) and math.isclose(i["y"], 4 + p.x, abs_tol=1e-6)
+        assert math.isclose(i["rotation"], (p.rotation + 90) % 360)
+    ws = team.studio.workspace(team.code)
+    assert all(ws.items[i["id"]].group == group for i in items)
+    # one line of history; moved together, then let go of the group, then grouped again
+    _, h = team("khalid", "GET", f"history?floor={team.hq0}&n=1")
+    assert h["entries"][0]["line"] == f"placed Workstation, junior staff ({len(items)} items)"
+    moved = [{"id": i["id"], "x": i["x"] + 1, "y": i["y"]} for i in items]
+    status, got = team("khalid", "POST", "items", {"items": moved})
+    assert status == 200 and [i["x"] for i in got["items"]] == [m["x"] for m in moved]
+    assert team("khalid", "GET", f"history?floor={team.hq0}&n=1")[1]["entries"][0]["line"] == f"moved {len(items)} items"
+    ids = [{"id": i["id"]} for i in items]
+    assert team("khalid", "POST", "items", {"items": ids, "group": None})[0] == 200
+    assert all(team.studio.workspace(team.code).items[i["id"]].group is None for i in items)
+    status, got = team("khalid", "POST", "items", {"items": ids[:2], "group": "new"})
+    assert status == 200 and got["items"][0]["group"] and got["items"][0]["group"] == got["items"][1]["group"] != group
+    assert team("khalid", "POST", "items", {"items": ids[:1], "group": "new"})[0] == 400  # (a group is two or more)
+    # each undone back, as one: grouped, let go, moved; then the set placed: every piece retired
+    for want in (None, group, group):
+        assert team("khalid", "POST", "undo", {"floor": team.hq0})[0] == 200
+        assert {team.studio.workspace(team.code).items[i["id"]].group for i in items} == {want}
+    ws = team.studio.workspace(team.code)
+    assert [ws.items[i["id"]].x for i in items] == [i["x"] for i in items]
+    status, done = team("khalid", "POST", "undo", {"floor": team.hq0})
+    assert status == 200 and done["line"] == f"placed Workstation, junior staff ({len(items)} items)"
+    assert all(team.studio.workspace(team.code).items[i["id"]].status == "retired" for i in items)
+    assert team("khalid", "POST", f"floors/{team.hq0}/sets", {"set": "SET-NOTHING", "x": 1, "y": 1})[0] == 400

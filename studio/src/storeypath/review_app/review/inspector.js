@@ -19,7 +19,7 @@
 //     summary: (ctx) => "text",     said in its heading when it is closed (optional)
 //   })
 //
-// ctx: { kind, space, spaces, asset, opening, drawn, floor, editable }. A section's
+// ctx: { kind, space, spaces, asset, assets, group, opening, drawn, floor, editable }. A section's
 // render is called again whenever what it shows may have changed; while a field in the
 // inspector is being typed in, the inspector is not drawn again under it (it is when the
 // field is left), unless what it shows was changed by someone else.
@@ -50,12 +50,17 @@ export function header(spec) {
 export function context() {
   const spaces = chosenSpaces();
   const kind = sel.kind === "space" ? (spaces.length > 1 ? "spaces" : spaces.length ? "space" : "floor")
-    : sel.kind === "asset" ? "asset" : sel.kind === "opening" ? "opening" : sel.kind === "drawn" ? "drawn" : "floor";
+    : sel.kind === "asset" ? (sel.ids.length > 1 ? "assets" : "asset") : sel.kind === "opening" ? "opening"
+      : sel.kind === "drawn" ? "drawn" : "floor";
+  const items = state.floor?.items || [];
   return {
     kind,
     space: kind === "space" ? spaces[0] : null,
     spaces,
-    asset: kind === "asset" ? (state.floor?.items || []).find((a) => a.id === sel.ids[0]) || null : null,
+    asset: kind === "asset" ? items.find((a) => a.id === sel.ids[0]) || null : null,
+    // items chosen together (a group, or several Shift-clicked), and the group when it is one
+    assets: kind === "assets" ? sel.ids.map((id) => items.find((a) => a.id === id)).filter(Boolean) : [],
+    group: kind === "assets" ? sel.group : null,
     opening: kind === "opening" ? (state.floor?.doors || []).find((d) => d.id === sel.ids[0]) || null : null,
     drawn: kind === "drawn" ? sel.line : null,
     floor: state.floor,
@@ -103,7 +108,8 @@ export function render({ force = false } = {}) {
   const body = $("inspector-body");
   const typing = body.contains(document.activeElement) && document.activeElement.matches("input, select, textarea");
   const ctx = context();
-  const key = `${ctx.kind}:${ctx.space?.id || ctx.asset?.id || ctx.opening?.id || ctx.drawn?.at || ctx.spaces.map((s) => s.id).join(",")}`;
+  const key = `${ctx.kind}:${ctx.space?.id || ctx.asset?.id || ctx.opening?.id || ctx.drawn?.at || ctx.spaces.map((s) => s.id).join(",")
+    || ctx.assets.map((a) => a.id).join(",")}`;
   if (typing && !force && key === lastKey) {
     pending = true;
     return;

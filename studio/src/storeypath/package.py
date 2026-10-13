@@ -236,6 +236,10 @@ class ItemProps(_Props):
     values: dict[str, str | float] = Field(default_factory=dict, description=(
         "its details entered in StoreyPath, by the catalogue's field keys (the others belong to the "
         "system that manages the asset)"))
+    group: str | None = Field(None, description=(
+        "the items placed or grouped together with it (format 0.10: a workstation's desk, chair and "
+        "pedestal; a meeting table and its chairs): a key its group's items share and no other item of the "
+        "package has; null: in none. A group is a link, not an asset"))
 
 
     @field_validator("category", mode="before")
