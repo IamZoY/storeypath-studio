@@ -157,7 +157,9 @@ def spaces_from_walls(
         return WallSpaces([], None, [])
     seals = [bar for d in doors for bar in _door_bars(d, mass)]
     built = mass
-    seals += list(shapely.buffer(_connectors(mass, opening_lines, cfg.max_opening), SNAP_M)) if opening_lines else []
+    # glazing from wall to wall, or to a door (a side light beside an entrance's doors)
+    against = unary_union([mass, *seals]) if seals else mass
+    seals += list(shapely.buffer(_connectors(against, opening_lines, cfg.max_opening), SNAP_M)) if opening_lines else []
     mass = unary_union([mass, *seals]) if seals else mass
     mass = _bridge_door_boxes(mass, [d.box for d in doors if not d.swings], cfg.max_thickness)
     openings = shapely.union_all(opening_lines) if opening_lines else None
@@ -303,19 +305,27 @@ def _axis(poly: Polygon) -> LineString:
     return LineString([a, b])
 
 
+GLASS_FRAME_M = 0.35  # a closed shape on an opening layer this thin, and long, is a pane in its frame
+
+
 def _connectors(mass, lines: list, max_length: float) -> list:
-    """Lines that carry a wall across a gap: glazing (straight or curved) or a door
-    leaf drawn closed. Both ends sit on a wall and run in line with it; the middle
-    is clear of walls. Lines that meet walls at an angle (a cross marking a lift
-    car, a counter edge) and closed shapes do not qualify."""
+    """Lines that carry a wall across a gap: glazing (straight or curved, or a pane drawn
+    as a thin closed frame: its middle line, end to end) or a door leaf drawn closed.
+    Both ends sit on a wall and run in line with it; the middle is clear of walls.
+    Lines that meet walls at an angle (a cross marking a lift car, a counter edge) and
+    other closed shapes do not qualify."""
     shapely.prepare(mass)
     out = []
     for ln in lines:
-        if ln.length > max_length or ln.length < 0.1:
+        if ln.length < 0.1:
             continue
         c = np.asarray(ln.coords)
-        if np.hypot(*(c[-1] - c[0])) < 0.05:
-            continue  # closed
+        if np.hypot(*(c[-1] - c[0])) < 0.05:  # closed: a pane in its frame, or nothing that carries a wall
+            if len(c) < 4 or not (ln := _pane(c)) or ln.length > max_length:
+                continue
+            c = np.asarray(ln.coords)
+        elif ln.length > max_length:
+            continue
         a, b = Point(c[0]), Point(c[-1])
         if not (shapely.dwithin(mass, a, 0.06) and shapely.dwithin(mass, b, 0.06)):
             continue
@@ -324,6 +334,21 @@ def _connectors(mass, lines: list, max_length: float) -> list:
         if _in_line(mass, c[0], c[1] - c[0]) and _in_line(mass, c[-1], c[-2] - c[-1]):
             out.append(ln)
     return out
+
+
+def _pane(ring) -> LineString | None:
+    """A closed shape's middle line, end to end, when it is a thin rectangle (a pane in
+    its frame, a side light): no wider than GLASS_FRAME_M, at least three times as long."""
+    poly = Polygon(ring)
+    if not poly.is_valid or poly.area < 0.002:  # (a frame's corner piece, or nothing)
+        return None
+    with np.errstate(divide="ignore", invalid="ignore"):  # (an edge of no length on the way round)
+        box_ = poly.minimum_rotated_rectangle
+        c = np.asarray(box_.exterior.coords)[:4]
+        sides = sorted(np.hypot(*(c[(i + 1) % 4] - c[i])) for i in range(4))
+        if sides[0] > GLASS_FRAME_M or sides[2] < 3 * sides[0] or poly.area < 0.8 * box_.area:
+            return None
+        return _axis(poly)
 
 
 IN_LINE_EDGE_M = 0.08  # a wall face this long near a line's end shows which way the wall runs there

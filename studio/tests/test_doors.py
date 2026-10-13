@@ -132,6 +132,24 @@ def test_windows_drawn_as_blocks_close_their_gaps_as_windows(tmp_path):
         assert len([o for o in ways if o.source == "door"]) == (1 if door else 0)
 
 
+def test_a_side_light_drawn_as_a_frame_between_a_pier_and_a_door_closes_its_gap():
+    # An entrance in a glass front: a pier, a side light 1.3 m long (more than a doorway, so
+    # nothing closes it but its glass), then a double door's leaves shut. The glass is drawn
+    # as a thin closed frame, not a line: its middle line carries the wall from the pier to
+    # the door; a closed shape that is no pane (a box) carries nothing
+    from shapely.geometry import LineString, box
+    from shapely.ops import unary_union
+
+    from storeypath.walls import _connectors
+
+    pier = box(0.0, 1.35, 1.1, 2.55)
+    leaf = box(0.13, -1.15, 0.34, 0.02)  # a leaf shut, as the door's bar has it
+    pane = LineString([(0.13, 0.0), (0.18, 0.0), (0.18, 1.3), (0.13, 1.3), (0.13, 0.0)])
+    crate = LineString([(0.3, 0.2), (1.0, 0.2), (1.0, 0.9), (0.3, 0.9), (0.3, 0.2)])
+    got = _connectors(unary_union([pier, leaf]), [pane, crate], 4.0)
+    assert len(got) == 1 and abs(got[0].length - 1.3) < 0.01 and abs(got[0].centroid.x - 0.155) < 0.01
+
+
 def test_a_tag_says_whether_an_opening_is_a_door_or_a_window(tmp_path):
     _, door = _glazed_doorway(tmp_path, "D2")
     assert (door.source, door.tag, door.issues) == ("door", "D2", [])
