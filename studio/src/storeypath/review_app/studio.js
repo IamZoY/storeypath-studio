@@ -326,8 +326,8 @@ async function resume(code, p, plansArea) {
   const ours = (j) => !j.by || !me || j.by.id === me.id;
   const plans = jobs.find((j) => j.kind === "plans" && j.state === "done" && ours(j));
   const addedSince = plans && jobs.some((j) => j.kind === "floors" && j.about === plans.about && j.submitted > plans.submitted);
-  if (plans && !addedSince && findingPlans === null && !plansArea.childElementCount) {
-    showPlans(code, plans.about, plansArea, plans.result, plans.ended);
+  if (plans && !addedSince && !plansClosed().includes(plans.id) && findingPlans === null && !plansArea.childElementCount) {
+    showPlans(code, plans.about, plansArea, plans.result, plans.ended, plans.id);
   }
   const left = going.filter((j) => !following.has(j.id)).reverse(); // the oldest first, as they run
   if (!left.length) return;
@@ -554,6 +554,24 @@ function choosePrivate(fileName, found) {
 // its button says so.
 let findingPlans = null;
 
+// Plans found and then cancelled (their job's ID): not shown again when the page is opened
+// again (in this browser; Find plans finds them again)
+const PLANS_CLOSED = "storeypath.plans-closed";
+function plansClosed() {
+  try {
+    return JSON.parse(localStorage.getItem(PLANS_CLOSED) || "[]");
+  } catch {
+    return [];
+  }
+}
+function closePlans(jobId) {
+  try {
+    localStorage.setItem(PLANS_CLOSED, JSON.stringify([jobId, ...plansClosed()].slice(0, 20)));
+  } catch {
+    // (shown again when the page is opened again)
+  }
+}
+
 function showFindingPlans() {
   for (const b of document.querySelectorAll("button[data-drawing]")) {
     b.disabled = findingPlans !== null;
@@ -569,9 +587,11 @@ async function findPlans(code, drawing, area, units) {
   // Earlier results go: no floors are added from plans being found again.
   area.replaceChildren(el("section", { class: "card" }, el("h2", {}, `Plans in ${drawing}`),
     el("p", { class: "muted small" }, units ? `Finding the plans again, in ${UNITS[units]}…` : "Finding the plans…")));
-  let result;
+  let result, jobId = null;
   try {
-    result = await runJob(api(`projects/${code}/drawings/${encodeURIComponent(drawing)}/plans`, units ? { units } : {}));
+    const started = api(`projects/${code}/drawings/${encodeURIComponent(drawing)}/plans`, units ? { units } : {});
+    result = await runJob(started);
+    jobId = (await started).id;
   } catch (e) {
     toast(e.message, true);
     area.replaceChildren();
@@ -580,12 +600,13 @@ async function findPlans(code, drawing, area, units) {
     findingPlans = null;
     showFindingPlans();
   }
-  await showPlans(code, drawing, area, result);
+  await showPlans(code, drawing, area, result, null, jobId);
 }
 
 /** The plans found in a drawing (``result``: what Find plans gave; ``found``: when, for
- * plans found a while ago and shown again), offered as floors. */
-async function showPlans(code, drawing, area, result, found = null) {
+ * plans found a while ago and shown again; ``jobId``: the job that found them), offered as
+ * floors; Cancel puts them away, adding none. */
+async function showPlans(code, drawing, area, result, found = null, jobId = null) {
   let project;
   try {
     project = await api(`projects/${code}`); // its locations, buildings and floors, to add to
@@ -612,6 +633,12 @@ async function showPlans(code, drawing, area, result, found = null) {
   const unitChoice = el("select", { onchange: () => findPlans(code, drawing, area, unitChoice.value) },
     Object.entries(UNITS).map(([u, label]) => el("option", { value: u, selected: u === result.units }, label)));
   const add = el("button", { class: "primary", type: "button" }, "Add the chosen plans as floors");
+  const cancel = el("button", { type: "button", "data-testid": "plans-cancel", title: "Put these plans away, adding no floor" }, "Cancel");
+  cancel.addEventListener("click", () => {
+    if (jobId) closePlans(jobId);
+    area.replaceChildren();
+    toast("No floors added");
+  });
   const updateCount = () => {
     const chosen = cards.filter((c) => c.chosen());
     const byPlace = new Map();
@@ -656,7 +683,7 @@ async function showPlans(code, drawing, area, result, found = null) {
       ? `Levels in the drawing: ${result.levels.summary}. Each floor's height and parapet are set from them.`
       : `No floor levels on its sections or plans: floors are ${result.levels.height} m high unless you change them.`),
     el("p", { class: "muted small" }, "Choose the plans that are floors; Studio lines them up and finds the rooms."),
-    el("div", { class: "row" }, el("label", { class: "check" }, "Units ", unitChoice), el("span", { class: "grow" }), add),
+    el("div", { class: "row" }, el("label", { class: "check" }, "Units ", unitChoice), el("span", { class: "grow" }), cancel, add),
     el("div", { class: "plans" }, cards.map((c) => c.node)),
   ));
   area.scrollIntoView({ behavior: "smooth" });
