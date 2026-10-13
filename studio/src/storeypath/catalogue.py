@@ -100,6 +100,13 @@ class ItemType(BaseModel):
     # into the capacity of the room it stands in, unless the room's is set in review
     workplaces: int = Field(0, ge=0, le=100)
     grade: Grade | None = None  # who it is for (desks by grade): a room takes its highest
+    # a camera's view (format 0.10): how wide it sees (degrees across, 360 all round) and how
+    # far (metres), for its items that are not given their own (their fields of the same keys)
+    view_deg: float | None = Field(None, gt=0, le=360)
+    range_m: float | None = Field(None, gt=0, le=500)
+    # its items each serve a door (format 0.10): a card reader, a door controller, an exit
+    # button, linked to the door they open (Item.door_id)
+    serves_door: bool = False
     fields: list[ItemField] = Field(default_factory=list)
     retired: bool = False
 
@@ -169,10 +176,12 @@ def shape_of(t: ItemType) -> str:
 
 def _t(code: str, en: str, ar: str, category: str, size: tuple[float, float, float], color: str, *, mount: str = "floor",
        elevation: float | None = None, shape: str = "box", workplaces: int = 0, grade: str | None = None,
-       fields: list[ItemField] | None = None) -> ItemType:
+       fields: list[ItemField] | None = None, view: tuple[float, float] | None = None, serves_door: bool = False) -> ItemType:
     width, depth, height = size
+    view_deg, range_m = view or (None, None)
     return ItemType(code=code, name_en=en, name_ar=ar, category=category, width=width, depth=depth, height=height, mount=mount,
-                    elevation=elevation, color=color, shape=shape, workplaces=workplaces, grade=grade, fields=fields or [])
+                    elevation=elevation, color=color, shape=shape, workplaces=workplaces, grade=grade, fields=fields or [],
+                    view_deg=view_deg, range_m=range_m, serves_door=serves_door)
 
 
 def _desk(code: str, en: str, ar: str, width: float, depth: float, color: str, grade: str) -> ItemType:
@@ -189,7 +198,8 @@ def _meeting_table(seats: int, width: float, depth: float, color: str) -> ItemTy
               (width, depth, 0.75), color, shape="table")
 
 
-# fields some types carry, entered in StoreyPath
+# fields some types carry, entered in StoreyPath. A camera's view_deg and range_m are its own
+# view, where it differs from its type's (a lens zoomed in, a camera looking down a corridor)
 def _camera_fields() -> list[ItemField]:
     return [ItemField(key="view_deg", name_en="Field of view (°)", name_ar="زاوية الرؤية (°)", kind="number"),
             ItemField(key="range_m", name_en="Range (m)", name_ar="المدى (م)", kind="number"),
@@ -263,19 +273,23 @@ def default_catalogue() -> Catalogue:
         _t("BED-KING", "King-size bed", "سرير مقاس كينج", "beds", (1.9, 2.1, 1.0), "#8a5a6e", shape="bed"),
         _t("BED-QUEEN", "Queen-size bed", "سرير مقاس كوين", "beds", (1.7, 2.1, 1.0), "#a87b8c", shape="bed"),
         # ---- security: a camera looks the way its front faces
+        # (a camera's view: a dome's wide lens over a room; a bullet's narrower, further, down a
+        # corridor or at a door; a PTZ turns all round, and zooms far)
         _t("CCTV-DOME", "CCTV camera, dome", "كاميرا مراقبة قبّية", "security", (0.15, 0.15, 0.12), SECURITY,
-           mount="ceiling", shape="camera", fields=_camera_fields()),
+           mount="ceiling", shape="camera", fields=_camera_fields(), view=(90, 12)),
         _t("CCTV-BULLET", "CCTV camera, bullet", "كاميرا مراقبة أسطوانية", "security", (0.1, 0.25, 0.1), SECURITY,
-           mount="wall", elevation=2.6, shape="camera", fields=_camera_fields()),
+           mount="wall", elevation=2.6, shape="camera", fields=_camera_fields(), view=(60, 20)),
         _t("CCTV-PTZ", "CCTV camera, PTZ", "كاميرا مراقبة متحركة (PTZ)", "security", (0.22, 0.22, 0.3), SECURITY,
-           mount="ceiling", shape="camera", fields=_camera_fields()),
+           mount="ceiling", shape="camera", fields=_camera_fields(), view=(360, 30)),
+        # (each linked to the door it opens: placed, to the nearest)
         _t("CARD-READER", "Access card reader", "قارئ بطاقات الدخول", "security", (0.09, 0.04, 0.14), "#283593",
-           mount="wall", elevation=1.1, fields=_model_field()),
+           mount="wall", elevation=1.1, fields=_model_field(), serves_door=True),
         _t("DOOR-CONTROLLER", "Door controller", "وحدة التحكم بالباب", "security", (0.3, 0.1, 0.4), "#283593",
-           mount="wall", elevation=2.2, fields=_model_field()),
-        _t("EXIT-BUTTON", "Exit button", "زر الخروج", "security", (0.09, 0.04, 0.09), "#5c6bc0", mount="wall", elevation=1.1),
+           mount="wall", elevation=2.2, fields=_model_field(), serves_door=True),
+        _t("EXIT-BUTTON", "Exit button", "زر الخروج", "security", (0.09, 0.04, 0.09), "#5c6bc0", mount="wall", elevation=1.1,
+           serves_door=True),
         _t("INTERCOM", "Intercom", "جهاز اتصال داخلي (إنتركم)", "security", (0.12, 0.04, 0.2), "#283593", mount="wall",
-           elevation=1.3),
+           elevation=1.3, serves_door=True),
         _t("ALARM-KEYPAD", "Alarm keypad", "لوحة مفاتيح نظام الإنذار", "security", (0.15, 0.03, 0.12), "#283593",
            mount="wall", elevation=1.4),
         _t("MOTION-SENSOR", "Motion sensor", "حساس حركة", "security", (0.1, 0.1, 0.05), "#5c6bc0", mount="ceiling"),
@@ -501,7 +515,7 @@ def models_in(folder: str | Path):
 def read(text: str) -> tuple[Catalogue, bool]:
     """A catalogue from its JSON, with what this Studio says of its own default types
     where an older file says nothing (how many people work at one, the grade a desk is
-    for, how it is drawn) or says what an older Studio gave them (OLD_DEFAULTS); and
+    for, how it is drawn, a camera's view, whether it serves a door) or says what an older Studio gave them (OLD_DEFAULTS); and
     whether any was filled in. One older than CATALOGUE_VERSION 2 (format 0.10) gives its
     default types this Studio's category and shape: categories by what a thing is for, and a
     desk and a table drawn alone (their chairs types of their own)."""
@@ -517,7 +531,7 @@ def read(text: str) -> tuple[Catalogue, bool]:
             continue
         if older:
             t["category"], t["shape"] = d.category, d.shape
-        for key in ("workplaces", "grade", "shape"):
+        for key in ("workplaces", "grade", "shape", "view_deg", "range_m", "serves_door"):
             if key not in t:
                 t[key], filled = getattr(d, key), True
         for key, olds in OLD_DEFAULTS.get(d.code, {}).items():
@@ -536,6 +550,11 @@ def check_types(types: list) -> None:
         if not isinstance(t, dict):
             continue  # (refused as it is read)
         which = str(t.get("code") or f"type {i + 1}")[:40]
+        for key, top, what in (("view_deg", 360, "degrees across, more than 0 and at most 360"),
+                               ("range_m", 500, "metres, more than 0 and at most 500")):
+            v = t.get(key)
+            if v is not None and (not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 < v <= top):
+                raise ValueError(f"{which}: {key} is in {what}")
         shape = t.get("shape")
         if shape is not None and shape not in SHAPES:
             raise ValueError(f"{which}: shape {str(shape)[:40]!r} is not one of {', '.join(SHAPES)}")

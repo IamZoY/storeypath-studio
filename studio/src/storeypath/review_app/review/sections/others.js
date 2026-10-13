@@ -3,21 +3,22 @@
 //
 // Several rooms: their type (each room's correction saved in turn: undone one at a
 // time), their floor's and walls' finishes (one change), accepting those to review, and
-// deleting them. An item: its type, turn, floor, details, the room it stands in. A door,
-// window or opening: its sizes. A line drawn here: taken away.
+// deleting them. An item: its type, turn, floor, details (a camera's view: its own, else
+// its type's), the door it serves (a card reader's), the room it stands in. A door, window
+// or opening: its sizes, and the items that serve it. A line drawn here: taken away.
 
 import { editable } from "../access.js";
 import { header, field, row, section } from "../inspector.js";
 import { el, icon } from "../dom.js";
 import { deleteItem, drawnLength, openingMeta, openingName, sizeForm } from "../drawing.js";
 import * as finish from "../finish.js";
-import { categories, changeAsset, copyId, turnAsset } from "../items.js";
+import { categories, changeAsset, copyId, doorOf, turnAsset } from "../items.js";
 import { deleteAssets, groupAssets, groupOf, turnAssets, ungroupAssets } from "../groups.js";
 import { categoryName } from "../../categories.js";
 import { kbd, keysOf, keyText } from "../keys.js";
 import { toast } from "../notify.js";
 import { accept, correct, forEach, setFlag } from "../rooms.js";
-import { select, selectAsset } from "../selection.js";
+import { select, selectAsset, selectItem } from "../selection.js";
 import { color, readable, state, title, typeName, typeOf, units, view3d, within } from "../state.js";
 import { roomHistory } from "./history.js";
 
@@ -133,14 +134,21 @@ function itemDetails({ asset: a, editable: may }) {
   const own = (t?.fields || []).filter((f) => f.owner === "storeypath");
   const others = (t?.fields || []).filter((f) => f.owner !== "storeypath").map((f) => f.name_en);
   if (!own.length && !others.length) return null;
+  // a camera's own view, where it is given; else its type's (shown, greyed)
+  const typed = { view_deg: t?.view_deg, range_m: t?.range_m };
   const rows = own.map((f) => {
     const input = f.kind === "choice"
       ? el("select", { disabled: !may || null }, el("option", { value: "" }, "—"), ...f.choices.map((c) => el("option", { value: c }, c)))
-      : el("input", { type: f.kind === "number" ? "number" : f.kind === "color" ? "color" : "text", step: "any", disabled: !may || null });
+      : el("input", { type: f.kind === "number" ? "number" : f.kind === "color" ? "color" : "text", step: "any", disabled: !may || null,
+        placeholder: typed[f.key] ?? null });
     input.value = a.values?.[f.key] ?? (f.kind === "color" ? "#000000" : "");
     input.addEventListener("change", () => changeAsset(a, { values: { ...a.values, [f.key]: input.value } }));
     return row(f.name_en, input);
   });
+  if (own.some((f) => typed[f.key] != null)) {
+    rows.push(el("p", { class: "hint" }, `Empty: as its type, ${t.view_deg ?? "?"}° across and ${t.range_m ?? "?"} m. `,
+      "What it covers shows while it is chosen; every camera's: ", ...kbd("mod+k"), " Show what every camera covers."));
+  }
   if (others.length) rows.push(el("p", { class: "hint" }, `${others.join(", ")}: entered where the asset is managed (wayfinder)`));
   return rows;
 }
@@ -151,6 +159,47 @@ function itemWhere({ asset: a }) {
   const go = room ? el("button", { type: "button", class: "btn-link" }, title(room)) : el("span", { class: "muted" }, "Outside every room");
   go.addEventListener?.("click", () => room && select(room.id, { fly: true }));
   return [row("In", go), row("At", el("code", { class: "value" }, `${a.x.toFixed(2)}, ${a.y.toFixed(2)} m`))];
+}
+
+/** The door an item serves (a card reader's, a door controller's: format 0.10): one of the
+ * floor's doors and openings, the nearest first; placed, it was linked to the nearest. */
+function itemDoor({ asset: a, editable: may }) {
+  const t = a && typeOf(a.type);
+  if (!t?.serves_door) return null;
+  const at = (d) => d.middle || d.point;
+  const far = (d) => Math.hypot(at(d)[0] - a.x, at(d)[1] - a.y);
+  const near = (state.floor?.doors || []).filter((d) => d.type !== "window" && !d.ignored).sort((p, q) => far(p) - far(q)).slice(0, 12);
+  const linked = doorOf(a);
+  if (linked && !near.includes(linked)) near.push(linked);
+  const between = (d) => (d.connects || []).map((id) => state.byId.get(id)).filter(Boolean).map(title).join(" · ");
+  const pick = el("select", { id: "as-door", "aria-label": "The door it serves", disabled: !may || null },
+    el("option", { value: "" }, "None"),
+    a.door_id && !linked ? el("option", { value: a.door_id }, "Its door, deleted since") : null,
+    ...near.map((d) => el("option", { value: d.id }, [openingName(d), `${far(d).toFixed(1)} m`, between(d)].filter(Boolean).join(" · "))));
+  pick.value = a.door_id || "";
+  pick.addEventListener("change", () => changeAsset(a, { door_id: pick.value || null }));
+  const show = el("button", { type: "button", class: "btn-sm", disabled: !linked || null, "data-tip": "Choose the door: its readers are shown linked" },
+    icon("door-open", { size: 14 }), "Show the door");
+  show.addEventListener("click", () => linked && selectItem({ kind: "door", id: linked.id }));
+  return [row("Door", pick),
+    el("p", { class: "hint" }, linked ? `The door it opens, ${far(linked).toFixed(1)} m from it: the line on the plan.`
+      : a.door_id ? "Its door was deleted: link it to another, or to none." : "Linked to no door: choose the one it opens."),
+    el("div", { class: "sec-actions" }, show)];
+}
+
+/** The items that serve a door (its card readers, its controller): each, to choose it. */
+function openingServed({ opening: d }) {
+  if (!d || d.type === "window") return null;
+  const by = (state.floor?.items || []).filter((a) => a.door_id === d.id && !a.retired);
+  if (!by.length) return null;
+  return el("ul", { class: "group-list" }, by.map((a) => {
+    const t = typeOf(a.type);
+    const b = el("button", { type: "button", class: "group-item", "data-tip": "Choose it" },
+      el("span", { class: "swatch", style: `background:${t?.color || "#8a8a8a"}` }), el("span", { class: "grow" }, t ? t.name_en : a.type),
+      el("code", { class: "tag" }, a.id));
+    b.addEventListener("click", () => selectAsset(a.id, { alone: true }));
+    return el("li", {}, b);
+  }));
 }
 
 /** An item of a group, chosen alone: the group it is part of, to choose it whole, or to
@@ -277,6 +326,7 @@ export function setupOtherSections() {
   header({ kind: "asset", render: itemHeader });
   section({ id: "item.main", kinds: ["asset"], title: "Item", order: 10, render: itemMain });
   section({ id: "item.details", kinds: ["asset"], title: "Details", order: 20, render: itemDetails });
+  section({ id: "item.door", kinds: ["asset"], title: "The door it serves", order: 25, render: itemDoor });
   section({ id: "item.where", kinds: ["asset"], title: "Where it stands", order: 30, render: itemWhere });
   section({ id: "item.history", kinds: ["asset"], title: "History", order: 40, open: false, render: ({ asset }) => asset && roomHistory(asset.id) });
   section({ id: "item.group", kinds: ["asset"], title: "Its group", order: 35, render: itemGroup });
@@ -288,6 +338,7 @@ export function setupOtherSections() {
 
   header({ kind: "opening", render: openingHeader });
   section({ id: "opening.size", kinds: ["opening"], title: "Size", order: 10, render: openingSize });
+  section({ id: "opening.served", kinds: ["opening"], title: "Served by", order: 20, render: openingServed });
   section({ id: "opening.actions", kinds: ["opening"], title: "", order: 90, bare: true, render: openingActions });
 
   header({ kind: "drawn", render: drawnHeader });

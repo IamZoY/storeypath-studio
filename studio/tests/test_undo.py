@@ -243,3 +243,72 @@ def test_a_set_placed_is_its_pieces_each_an_item_one_group_and_undone_as_one(tea
     assert status == 200 and done["line"] == f"placed Workstation, junior staff ({len(items)} items)"
     assert all(team.studio.workspace(team.code).items[i["id"]].status == "retired" for i in items)
     assert team("khalid", "POST", f"floors/{team.hq0}/sets", {"set": "SET-NOTHING", "x": 1, "y": 1})[0] == 400
+
+
+def test_a_card_reader_serves_the_door_it_is_placed_by_and_a_camera_is_drawn_by_its_view(team, tmp_path):
+    """An item of a type that serves a door (a card reader) placed within DOOR_REACH_M of
+    one is linked to the nearest; linked to another, or none, as one change undone as one;
+    carried to another floor or made a type that serves none, unlinked. A camera's view is
+    its own (its fields), else its type's. The package says both, and drops a link to a door
+    deleted since."""
+    import json
+    import zipfile
+
+    from shapely.geometry import LineString, Point
+
+    from storeypath.export import export_package, walked_doors
+    from storeypath.review import DOOR_REACH_M
+    from storeypath.validate import validate_package
+
+    ws = team.studio.workspace(team.code)
+    doors = walked_doors(ws, team.hq0)
+    at = lambda r: LineString(r.span) if r.span else Point(r.geometry["coordinates"])  # noqa: E731
+    door = min(doors, key=lambda r: r.id)
+    middle = at(door).interpolate(0.5, normalized=True) if door.span else at(door)
+    near = (middle.x + 0.25, middle.y)
+    nearest = min(doors, key=lambda r: (at(r).distance(Point(near)), r.id))
+    status, reader = team("khalid", "POST", f"floors/{team.hq0}/items", {"type": "CARD-READER", "x": near[0], "y": near[1]})
+    assert status == 200 and reader["door_id"] == nearest.id
+    # far from every door: none
+    far = next((x, y) for x in range(-40, 80, 2) for y in range(-40, 80, 2)
+               if min(at(r).distance(Point(x, y)) for r in doors) > DOOR_REACH_M + 1)
+    status, alone = team("khalid", "POST", f"floors/{team.hq0}/items", {"type": "CARD-READER", "x": far[0], "y": far[1]})
+    assert status == 200 and alone["door_id"] is None
+    status, linked = team("khalid", "POST", f"items/{alone['id']}", {"door_id": door.id})
+    assert status == 200 and linked["door_id"] == door.id
+    _, h = team("khalid", "GET", f"history?floor={team.hq0}&n=1")
+    assert h["entries"][0]["line"] == f"linked Access card reader {alone['id']} to the door …-{door.id.rsplit('-', 1)[-1]}"
+    assert team("khalid", "POST", "undo", {"floor": team.hq0})[0] == 200
+    assert team.studio.workspace(team.code).items[alone["id"]].door_id is None
+    window = next((r for r in ws.floor_objects(team.hq0) if r.kind == "opening" and r.type == "window"), None)
+    for body in ({"door_id": "NO-SUCH-DOOR"}, *([{"door_id": window.id}] if window else []), {"door_id": 7}):
+        assert team("khalid", "POST", f"items/{alone['id']}", body)[0] == 400
+    status, sofa = team("khalid", "POST", f"floors/{team.hq0}/items", {"type": "SOFA", "x": far[0], "y": far[1]})
+    status, err = team("khalid", "POST", f"items/{sofa['id']}", {"door_id": door.id})
+    assert status == 400 and "serves no door" in err["error"]
+    # a camera: its own view where given, else its type's; a view past all round, refused
+    assert team("khalid", "POST", f"floors/{team.hq0}/items", {"type": "CCTV-DOME", "x": 3, "y": 3,
+                                                                "values": {"view_deg": 400}})[0] == 400
+    _, dome = team("khalid", "POST", f"floors/{team.hq0}/items", {"type": "CCTV-DOME", "x": 3, "y": 3, "values": {"view_deg": 120}})
+
+    def package(name):
+        export_package(team.studio.workspace(team.code), tmp_path / name, bake=False, record=False, building=team.hq)
+        assert validate_package(tmp_path / name) == []
+        with zipfile.ZipFile(tmp_path / name) as z:
+            return {f["id"]: f["properties"] for f in json.loads(z.read("items.geojson"))["features"]}
+
+    items = package("1.storeypath")
+    assert items[reader["id"]]["door_id"] == nearest.id and items[alone["id"]]["door_id"] is None
+    assert (items[dome["id"]]["view_deg"], items[dome["id"]]["range_m"]) == (120, 12)  # its own angle, its type's range
+    assert (items[sofa["id"]]["view_deg"], items[sofa["id"]]["door_id"]) == (None, None)
+    # its door deleted: the package links it to none (the link is kept, should it come back)
+    status, _ = team("khalid", "POST", f"objects/{nearest.id}", {"ignored": True})
+    assert status == 200, _
+    assert package("2.storeypath")[reader["id"]]["door_id"] is None
+    assert team.studio.workspace(team.code).items[reader["id"]].door_id == nearest.id
+    # made a sofa, or carried to another floor: unlinked
+    _, made = team("khalid", "POST", f"items/{reader['id']}", {"type": "SOFA"})
+    assert made["door_id"] is None
+    _, carried = team("khalid", "POST", f"items/{linked['id']}", {"door_id": door.id})
+    _, carried = team("khalid", "POST", f"items/{linked['id']}", {"floor_id": team.hq1})
+    assert carried["door_id"] is None

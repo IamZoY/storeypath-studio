@@ -24,6 +24,7 @@ export const state = {
   selected: null,
   view: { k: 1, tx: 0, ty: 0 }, // screen = (x·k + tx, −y·k + ty)
   showHidden: false, // show what was deleted (or hidden)
+  showCoverage: false, // show what every camera covers (the chosen camera's is shown anyway)
   showLabels: true, // the rooms' names and numbers on the plan (and in 3D)
   fitted: false,
   filter: "",

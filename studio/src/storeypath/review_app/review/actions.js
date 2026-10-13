@@ -287,6 +287,14 @@ export function setupActions() {
       emit("settings");
       emit("spaces", null);
     } });
+  command({ id: "view.coverage", title: "Show what every camera covers", group: "View", icon: "cctv",
+    words: "cameras cctv coverage view range security",
+    run: () => {
+      state.showCoverage = !state.showCoverage;
+      renderAssets();
+      toast(state.showCoverage ? "Every camera's view shown, out to its range" : "Only the chosen camera's view shown");
+      emit("settings");
+    } });
   command({ id: "view.all-floors", title: "Show every floor in 3D", group: "View", icon: "layers", words: "building stack all floors",
     run: () => setAllFloors(!view3d.allFloors) });
   for (const [style, name] of [["real", "Real"], ["model", "Model"]]) {

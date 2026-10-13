@@ -47,11 +47,15 @@ const CODE_RE = /^[A-Z0-9]+(-[A-Z0-9]+)*$/;
 const KEY_RE = /^[a-z][a-z0-9_]{0,31}$/;
 // what a new type starts as (catalogue.py ItemType's defaults)
 const BLANK = { code: "", name_en: "", name_ar: "", category: "furniture", width: 1, depth: 0.6, height: 0.75, mount: "floor",
-  elevation: null, color: "#8a8a8a", shape: "box", workplaces: 0, grade: null, fields: [], retired: false };
+  elevation: null, color: "#8a8a8a", shape: "box", workplaces: 0, grade: null, view_deg: null, range_m: null, serves_door: false,
+  fields: [], retired: false };
 // what is compared between two types of a code (a file's and this Studio's), and how it is called
 const COMPARED = [["name_en", "name"], ["name_ar", "Arabic name"], ["category", "category"], ["width", "size"],
   ["depth", "size"], ["height", "size"], ["mount", "mount"], ["elevation", "height off the floor"], ["color", "colour"],
-  ["shape", "shape"], ["workplaces", "workplaces"], ["grade", "grade"], ["fields", "fields"], ["retired", "retired"]];
+  ["shape", "shape"], ["workplaces", "workplaces"], ["grade", "grade"], ["view_deg", "camera's view"], ["range_m", "camera's view"],
+  ["serves_door", "serves a door"], ["fields", "fields"], ["retired", "retired"]];
+// numbers a type may leave empty (null): then as the format says (elevation), or not known
+const NULLABLE = new Set(["elevation", "view_deg", "range_m"]);
 
 function el(tag, attrs = {}, ...children) {
   const e = document.createElement(tag);
@@ -251,8 +255,9 @@ export async function itemTypesPage(page, me, toast) {
         t[key] = parse(e.target.value);
         changed();
       } });
-    const num = (key, attrs = {}) => input(key, { type: "number", step: "0.05", min: "0", ...attrs },
-      (v) => (v === "" ? (key === "elevation" ? null : 0) : Number(v)));
+    // (any number: a size of 0.12 m is no step of 0.05, and a browser would refuse to send the form)
+    const num = (key, attrs = {}) => input(key, { type: "number", step: "any", min: "0", ...attrs },
+      (v) => (v === "" ? (NULLABLE.has(key) ? null : 0) : Number(v)));
     const segmented = (key, options, after = () => {}) => {
       const seg = el("div", { class: "segmented", role: "radiogroup" }, options.map(([v, label]) => el("button", {
         type: "button", role: "radio", "aria-checked": String(t[key] === v), disabled: off, "data-value": v,
@@ -285,6 +290,20 @@ export async function itemTypesPage(page, me, toast) {
         changed();
       } }, el("option", { value: "" }, "None"), GRADES.map(([g, name]) => el("option", { value: g, selected: t.grade === g }, name))),
       el("span", { class: "muted small" }, "What goes with it (a return, a credenza, visitors' chairs); a room takes its highest desk's.")) : null;
+
+    // a camera's view (format 0.10), for its items given none of their own; whether its items
+    // serve a door (a card reader's, linked to the door it opens)
+    const viewRow = shapeOf(t) === "camera" || t.view_deg != null || t.range_m != null ? el("div", { class: "it-two" },
+      el("label", { class: "field" }, "Sees across (°)", num("view_deg", { max: "360", placeholder: "not known" })),
+      el("label", { class: "field" }, "Sees as far as (m)", num("range_m", { max: "500", placeholder: "not known" }),
+        el("span", { class: "muted small" }, "What each of its cameras covers, unless it is given its own (a lens zoomed in). 360°: all round."))) : null;
+    const doorRow = el("label", { class: "field it-check" },
+      el("span", { class: "row" }, el("input", { type: "checkbox", checked: Boolean(t.serves_door), disabled: off, "data-testid": "it-serves-door",
+        onchange: (e) => {
+          t.serves_door = e.target.checked;
+          changed();
+        } }), "Serves a door"),
+      el("span", { class: "muted small" }, "A card reader, a door controller, an exit button: each placed is linked to the nearest door, and can be linked to another."));
 
     // its fields: the details each item of it carries
     const fieldRows = el("div", { class: "it-fields" });
@@ -386,6 +405,8 @@ export async function itemTypesPage(page, me, toast) {
       el("label", { class: "field" }, "Workplaces", num("workplaces", { step: "1", max: "100" }),
         el("span", { class: "muted small" }, "How many people work at one (a desk: 1): counted into a room's capacity."))),
     gradeRow,
+    viewRow,
+    doorRow,
     el("div", { class: "field" }, el("span", {}, "Fields: what each item of it carries"),
       el("span", { class: "muted small" }, "Entered in StoreyPath (a model, a colour) or kept by the system that manages the asset (an access point's network)."),
       fieldRows),
@@ -681,7 +702,8 @@ export async function itemTypesPage(page, me, toast) {
 function clean(t) {
   const out = structuredClone(t);
   for (const key of ["width", "depth", "height", "workplaces"]) out[key] = Number(out[key]);
-  out.elevation = out.elevation === null || out.elevation === "" ? null : Number(out.elevation);
+  for (const key of NULLABLE) out[key] = out[key] === null || out[key] === undefined || out[key] === "" ? null : Number(out[key]);
+  out.serves_door = Boolean(out.serves_door);
   out.fields = out.fields.map((f) => ({ key: f.key, name_en: f.name_en, name_ar: f.name_ar || "", kind: f.kind || "text",
     choices: (f.kind || "text") === "choice" ? f.choices || [] : [], owner: f.owner || "storeypath" }));
   return out;
@@ -696,6 +718,8 @@ function check(t, isNew) {
     if (!(Number(t[key]) > 0 && Number(t[key]) <= 100)) out.push(`Its ${key}: in metres, more than 0 and at most 100.`);
   }
   if (t.elevation !== null && !(Number(t.elevation) >= 0 && Number(t.elevation) <= 100)) out.push("Off the floor: 0 to 100 metres.");
+  if (t.view_deg != null && !(Number(t.view_deg) > 0 && Number(t.view_deg) <= 360)) out.push("Sees across: more than 0 and at most 360 degrees.");
+  if (t.range_m != null && !(Number(t.range_m) > 0 && Number(t.range_m) <= 500)) out.push("Sees as far as: more than 0 and at most 500 metres.");
   if (!/^#[0-9a-f]{6}$/i.test(t.color)) out.push("Its colour: #rrggbb.");
   if (!(Number.isInteger(Number(t.workplaces)) && t.workplaces >= 0 && t.workplaces <= 100)) out.push("Workplaces: a whole number, 0 to 100.");
   const keys = t.fields.map((f) => f.key);

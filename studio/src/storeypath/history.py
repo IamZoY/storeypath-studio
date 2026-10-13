@@ -254,6 +254,9 @@ def _describe(e: dict) -> str:
             return f"carried {it} to {e.get('to_name') or 'another floor'}"
         if "retype" in changes:
             return f"made {short((e.get('targets') or [None])[0])} a {e.get('new_label') or 'another type'}"
+        if changes == ["door"]:  # the door it serves
+            door = ((e.get("after") or {}).get("item") or {}).get("door_id")
+            return f"linked {it} to the door {short(door)}" if door else f"unlinked {it} from its door"
         words = [verbs[c] for c in changes if c in verbs]
         return f"{' and '.join(words) if words else 'changed'} {it}"
     if part == "edit":

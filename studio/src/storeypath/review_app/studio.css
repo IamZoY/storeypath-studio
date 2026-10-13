@@ -235,6 +235,7 @@ dialog.share h3 { font-size: 13px; margin: 6px 0 0; }
 .it-head { display: flex; gap: var(--sp-3); align-items: center; }
 .it-preview { flex: none; display: flex; align-items: center; justify-content: center; width: 168px; height: 150px; border-radius: var(--r-lg); background: var(--canvas-paper); }
 .it-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.it-check .row { gap: var(--sp-2); align-items: center; }
 .it-three { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
 .it-colour input[type="color"] { width: 40px; min-width: 40px; padding: 2px; flex: none; }
 .it-colour input:not([type]) { min-width: 0; flex: 1; font-family: var(--font-mono); }

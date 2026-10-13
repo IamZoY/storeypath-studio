@@ -187,6 +187,7 @@ def validate_package(path: str | Path) -> list[str]:
                         if why:
                             errors.append(f"{t.model}: {t.code}'s model: {why}")
             fc = load(manifest.files["items"], FeatureCollection[ItemFeature])
+            ways = {o.id: o.properties.type for o in collections.get("openings", [])}  # what a door_id may be
             if fc is not None:
                 items = fc.features
                 if manifest.counts.get("items") != len(items):
@@ -209,6 +210,9 @@ def validate_package(path: str | Path) -> list[str]:
                             errors.append(f"{f.id}: in unknown {kind} {key} (or not on its floor)")
                     if codes is not None and q.type not in codes:
                         errors.append(f"{f.id}: type {q.type} is not in the catalogue")
+                    if q.door_id is not None and (ways.get(q.door_id) in (None, "window")
+                                                  or not q.door_id.startswith(q.floor_id + "-")):
+                        errors.append(f"{f.id}: serves unknown door {q.door_id} (or not a door or opening of its floor)")
                     if one_building and q.local is None:
                         errors.append(f"{f.id}: no position in its building (local)")
                     # (a building without a placement, or not in the package, is a problem of its own above)

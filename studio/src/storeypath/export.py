@@ -24,7 +24,7 @@ from .bake import WORLD_DIR, bake_world
 from .geometry import as_polygons
 from .georef import Georeferencer
 from .ids import child_id, is_item_id, make_id
-from .catalogue import GRADES, MODELS, Catalogue, default_catalogue
+from .catalogue import GRADES, MODELS, Catalogue, default_catalogue, shape_of
 from .package import (
     FILES,
     OBJECTS_CSV_COLUMNS,
@@ -344,11 +344,19 @@ def capacity_of(eff: dict, seats: dict | None) -> tuple[int | None, str | None]:
     return None, None
 
 
-def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units) -> dict:
+def walked_doors(ws: Workspace, floor_id: str) -> list:
+    """The doors and openings of a floor, the ways through that a person walks (never a
+    window), but those deleted: what an item that serves a door may be linked to."""
+    return [r for r in ws.floor_objects(floor_id) if r.kind == "opening"
+            and ws.effective(r)["type"] != "window" and not ws.effective(r)["ignored"]]
+
+
+def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units, doors: set[str] = frozenset()) -> dict:
     """An item as a feature: where it stands in its building's own frame (what it is
     placed by), its footprint on the map (its width along its rotation, its front
     facing the plan's -y turned with it), where its front faces on earth, and the
-    zone or space its middle stands in."""
+    zone or space its middle stands in; the door it serves, while that is one of
+    ``doors`` (its floor's: walked_doors); a camera's view, its own else its type's."""
     w, d = (t.width, t.depth) if t else (1.0, 0.6)
     r = math.radians(it.rotation)
     ux, uy = math.cos(r), math.sin(r)  # along its width
@@ -359,6 +367,9 @@ def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units) -> 
     mount = t.mount if t else "floor"
     elevation = t.elevation if t and t.elevation is not None else (0.0 if mount == "floor" else WALL_ELEVATION_M if mount == "wall" else None)
     own = {f.key for f in t.fields if f.owner == "storeypath"} if t else set()
+    camera = t is not None and shape_of(t) == "camera"
+    view = {key: (float(it.values[key]) if key in own and isinstance(it.values.get(key), (int, float)) else getattr(t, key))
+            if camera else None for key in ("view_deg", "range_m")}
     return _feature(it.id, _rounded(g.geometry(Polygon(corners))), {
         "kind": "item", "type": it.type, "category": t.category if t else "furniture",
         "name": t.name_en if t else it.type, "floor_id": it.floor_id, "building_id": b_id,
@@ -369,7 +380,8 @@ def _item_feature(it, t, g: Georeferencer, bearing: float, b_id: str, units) -> 
         "heading": round((bearing + math.degrees(math.atan2(fx, fy))) % 360, 2),
         "width_m": w, "depth_m": d, "height_m": t.height if t else 0.75, "mount": mount,
         "elevation_m": elevation, "values": {k: v for k, v in it.values.items() if k in own},
-        "group": it.group,
+        "group": it.group, "door_id": it.door_id if it.door_id in doors and t is not None and t.serves_door else None,
+        **view,
     })
 
 
@@ -476,8 +488,9 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
             for f in sorted(b.floors, key=lambda f: f.ordinal) if whole else ():
                 f_id = child_id(b_id, f.code)
                 units = floor_units(ws, f_id)
+                doors = {r.id for r in walked_doors(ws, f_id)}
                 for it in sorted(ws.floor_items(f_id), key=lambda i: i.id):
-                    out["items"].append(_item_feature(it, cat.get(it.type), g, placed[b_id][0].bearing, b_id, units))
+                    out["items"].append(_item_feature(it, cat.get(it.type), g, placed[b_id][0].bearing, b_id, units, doors))
             footprint = None
             if outlines and g is not None:  # (its floors' outlines' holes and parts of no size left out)
                 footprint = g.geometry(_without_slivers(unary_union(outlines)))

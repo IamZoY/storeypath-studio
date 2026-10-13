@@ -778,7 +778,10 @@ for anything else), a size, a `mount` (floor, wall, ceiling), a colour, a `shape
 the viewers draw it, format 0.9.1; 0.10: `desk`, `table`, `chair`, `side_chair`,
 `armchair`, `sofa`, `storage`, `screen`, `copier`, `bed`, `kiosk`, `access_point`,
 `camera` or `box`; none: as its code's first part says; a desk and a table drawn alone,
-their chairs types of their own), `workplaces` (a desk: 1) and, for desks, a `grade`, and its `fields`: each owned by
+their chairs types of their own), `workplaces` (a desk: 1) and, for desks, a `grade`; a camera's
+`view_deg` and `range_m` (format 0.10: what its items see, unless given their own in their
+fields of those keys), whether its items `serves_door` (a card reader: each item's
+`door_id`, linked to the nearest door within 2 m when placed); and its `fields`: each owned by
 `storeypath` (entered in Studio) or by the `system` that manages the asset (entered
 there, never in a package). A type may have a 3D **model** (format 0.9.2,
 [models.py](src/storeypath/models.py)): a `.glb` sent for it is read whole (its nodes'

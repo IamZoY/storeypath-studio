@@ -62,7 +62,7 @@ from .cad import DrawingError, meters_per_unit, read_drawing
 from . import finishes, history
 from .db.store import Changes, Editor, _same, drawing_name, floor_of, who_of
 from .errors import Busy, Conflict, NotFound
-from .export import Units, _label_point, capacity_of, seating
+from .export import Units, _label_point, capacity_of, seating, walked_doors as _doors
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
 from .ids import normalize_item_id
 from .profile import Profile, load_profile, resolve_profile
@@ -81,6 +81,8 @@ CORRECTABLE = ("type", "name", "number")
 KEPT = {"hidden", "ignored", "capacity", "stack", "floor_finish", "wall_finish", "wall_finishes"}
 FINISHED_AT_ONCE = 5000  # rooms whose finishes one change sets, at most
 REMOVE_REACH_M = 0.5  # removing what was drawn takes the drawn wall or opening this near
+DOOR_REACH_M = 2.0  # an item that serves a door (a card reader), placed this near one, is linked to it
+VIEW_TOP = {"view_deg": 360.0, "range_m": 500.0}  # a camera's own view (its fields of these keys): at most
 RESIZE_BANDS = {"width": (0.3, 8.0), "sill": (0.0, 3.0), "height": (0.3, 10.0)}  # metres
 PRINT_PX_PER_M = 100  # a floor's print: a pixel a centimetre…
 PRINT_MAX_PX = 10000  # …within this many pixels a side
@@ -596,7 +598,7 @@ class Review:
     def _item(self, it, cat=None) -> dict:
         t = (cat or self.catalogue()).get(it.type)
         return {"id": it.id, "type": it.type, "floor_id": it.floor_id, "x": it.x, "y": it.y, "rotation": it.rotation,
-                "values": it.values, "retired": it.status == "retired", "group": it.group,
+                "values": it.values, "retired": it.status == "retired", "group": it.group, "door_id": it.door_id,
                 "name_en": t.name_en if t else it.type, "name_ar": t.name_ar if t else "",
                 "category": t.category if t else "furniture", "color": t.color if t else "#8a8a8a",
                 "width": t.width if t else 1.0, "depth": t.depth if t else 0.6, "mount": t.mount if t else "floor"}
@@ -623,6 +625,8 @@ class Review:
                 continue  # cleared
             if f.kind == "number":
                 value = _finite(value, key)
+                if key in VIEW_TOP and not 0 < value <= VIEW_TOP[key]:
+                    raise ValueError(f"{key} is more than 0 and at most {VIEW_TOP[key]:g}")
             elif f.kind == "choice" and value not in f.choices:
                 raise ValueError(f"{key} is one of {', '.join(f.choices)}")
             elif f.kind == "color" and not (isinstance(value, str) and len(value) == 7 and value.startswith("#")):
@@ -633,17 +637,21 @@ class Review:
         return out
 
     def add_item(self, floor_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
-        """An item placed on a floor: ``{type, x, y, rotation?, values?}`` (local metres),
-        with a new ID: drawn again while an item of the project, or of any project of
-        this Studio, has it."""
+        """An item placed on a floor: ``{type, x, y, rotation?, values?, door_id?}`` (local
+        metres), with a new ID: drawn again while an item of the project, or of any project
+        of this Studio, has it. One of a type that serves a door is linked to ``door_id``
+        (null: none), else to the nearest door within DOOR_REACH_M."""
         cat = self.catalogue()
 
         def fn(ws: Workspace):
             self._floor(ws, floor_id)
             values = self._item_values(body.get("type"), body.get("values"), cat)
             x, y = _number(body, "x"), _number(body, "y")
+            t = cat.get(body["type"])
+            door = _door_of(ws, floor_id, t, body["door_id"]) if "door_id" in body \
+                else _nearest_door(ws, floor_id, (x, y)) if t.serves_door else None
             it = Item(id=ws.new_item_id(self.source.item_taken), type=body["type"], floor_id=floor_id, x=x, y=y,
-                      rotation=_number(body, "rotation", 0.0) % 360, values=values)
+                      rotation=_number(body, "rotation", 0.0) % 360, values=values, door_id=door)
             ch = Changes(part="item", kind="add", targets=[it.id], floors={floor_id},
                          before={"item": None}, after={"item": _dump(it)},
                          more={"label": _type_name(cat, it.type), "changes": ["add"]})
@@ -767,8 +775,9 @@ class Review:
         return self._item(it)
 
     def change_item(self, item_id: str, body: dict, by=None, editor: Editor | None = None) -> dict:
-        """An item moved, turned, given another type or details, carried to another floor
-        (``floor_id``), taken away (``{"retired": true}``) or brought back: all that is
+        """An item moved, turned, given another type or details, linked to the door it
+        serves (``door_id``; null: none), carried to another floor (``floor_id``: unlinked
+        from its door), taken away (``{"retired": true}``) or brought back: all that is
         asked, or (when any of it cannot be) nothing."""
         cat = self.catalogue()
 
@@ -790,16 +799,24 @@ class Review:
                 self._floor(ws, body["floor_id"])
                 if body["floor_id"] != new.floor_id:
                     kinds.append("carry")
+                    new.door_id = None  # (its door is the other floor's)
                 new.floor_id = body["floor_id"]
             if "type" in body:
                 self._item_values(body["type"], None, cat)  # a type of the catalogue
                 new.type = body["type"]
                 own = {f.key for f in cat.get(new.type).fields if f.owner == "storeypath"}
                 new.values = {k: v for k, v in new.values.items() if k in own}  # what the new type has
+                if not cat.get(new.type).serves_door:
+                    new.door_id = None
+                elif new.door_id is None:
+                    new.door_id = _nearest_door(ws, new.floor_id, (new.x, new.y))
                 kinds.append("retype")
             if "values" in body:
                 new.values = self._item_values(new.type, body["values"], cat)
                 kinds.append("values")
+            if "door_id" in body:
+                new.door_id = _door_of(ws, new.floor_id, cat.get(new.type), body["door_id"])
+                kinds.append("door")
             for key in ("x", "y"):
                 if key in body:
                     setattr(new, key, _number(body, key))
@@ -1330,6 +1347,27 @@ def _resized_span(span, width: float) -> list[list[float]]:
     from .geometry import span_of_width
 
     return span_of_width(span, width)
+
+
+def _door_of(ws: Workspace, floor_id: str, t, door_id) -> str | None:
+    """``door_id`` as the door an item of type ``t`` on a floor serves, checked: one of the
+    floor's doors (_doors), and a type that serves one; None: none."""
+    if door_id is None:
+        return None
+    if t is None or not t.serves_door:
+        raise ValueError(f"{t.name_en if t else 'This item'} serves no door")
+    if not isinstance(door_id, str) or door_id not in {r.id for r in _doors(ws, floor_id)}:
+        raise ValueError(f"no door {str(door_id)[:40]} on the item's floor")
+    return door_id
+
+
+def _nearest_door(ws: Workspace, floor_id: str, at) -> str | None:
+    """The door nearest ``at`` on a floor (its span, jamb to jamb, else where it is), when
+    within DOOR_REACH_M; None: none so near."""
+    p = Point(at)
+    near = min((((LineString(r.span) if r.span and len(r.span) >= 2 else Point(r.geometry["coordinates"])).distance(p), r.id)
+                for r in _doors(ws, floor_id)), default=None)
+    return near[1] if near and near[0] <= DOOR_REACH_M else None
 
 
 def _middle(r: ObjectRecord) -> Point:

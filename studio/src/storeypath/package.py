@@ -240,6 +240,14 @@ class ItemProps(_Props):
         "the items placed or grouped together with it (format 0.10: a workstation's desk, chair and "
         "pedestal; a meeting table and its chairs): a key its group's items share and no other item of the "
         "package has; null: in none. A group is a link, not an asset"))
+    door_id: str | None = Field(None, description=(
+        "the door it serves (format 0.10: a card reader, a door controller, an exit button, of a type that "
+        "serves_door): an opening of its floor, a door or an opening, never a window; null: none"))
+    view_deg: float | None = Field(None, gt=0, le=360, description=(
+        "a camera's view (format 0.10: of a type of shape camera): how wide it sees, degrees across, about "
+        "the way its front faces (360: all round); its own, else its type's; null: not a camera, or not known"))
+    range_m: float | None = Field(None, gt=0, le=500, description=(
+        "a camera's view: how far it sees, metres from it; its own, else its type's; null as view_deg"))
 
 
     @field_validator("category", mode="before")

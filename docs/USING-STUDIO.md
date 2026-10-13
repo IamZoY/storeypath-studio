@@ -226,6 +226,17 @@ floors in review, each piece an item of its own with its own ID (a desk's chair 
   named in the inspector) chooses that piece alone. *Ungroup* (<kbd>⌘⇧G</kbd>) lets the
   pieces go (each keeps its ID); Shift- or ⌘-click items to choose several, and *Group*
   (<kbd>⌘G</kbd>) makes them one.
+- **A card reader and its door**: a card reader, a door controller, an exit button or an
+  intercom serves a door. Placed within 2 m of one, it is linked to the nearest; chosen,
+  a dashed line on the plan joins it to its door, and the inspector's *The door it serves*
+  links it to another (the nearest dozen, with how far each is and the rooms it joins) or
+  to none. A door chosen lists what serves it (*Served by*). Carried to another floor, an
+  item is unlinked.
+- **What a camera covers**: a camera's mark is as wide as it sees; chosen, its view is
+  drawn out to its range (a circle, for one that sees all round). Its type says both
+  (a dome 90° and 12 m, a bullet 60° and 20 m, a PTZ all round and 30 m); a camera of its
+  own (a lens zoomed in) takes its own in its details, the type's shown greyed. *Show what
+  every camera covers* (<kbd>⌘K</kbd>) draws every camera's. Walls are not taken off it.
 - **Item types** (in your menu, top right, and on the Projects page) lists them. Admins,
   and those an admin lets, add a type (its code is its identity for good), change one,
   *Copy as new*, or *Retire* one no longer used (never removed: its code stays with

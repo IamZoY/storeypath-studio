@@ -393,6 +393,91 @@ test("a set placed in one go: each piece an item of its own, one group; a click 
   await press("Escape");
 });
 
+test("a card reader placed by a door serves it: the line to it drawn, linked to none and again in the inspector; a camera chosen shows what it covers, every camera's on asking", async () => {
+  const screen = (p) => R((p) => {
+    const v = window.storeypathReview.state.view, b = document.getElementById("svg").getBoundingClientRect();
+    return [b.left + p[0] * v.k + v.tx, b.top - p[1] * v.k + v.ty];
+  }, p);
+  const office = await officeNamed("002");
+  // a door of the office, and a point inside the office half a metre from its middle
+  const [door, near] = await R((id) => {
+    const st = window.storeypathReview.state, d = st.floor.doors.find((x) => (x.connects || []).includes(id) && x.type === "door");
+    const [x, y] = d.middle || d.point, [lx, ly] = st.byId.get(id).label_point, n = Math.hypot(lx - x, ly - y);
+    return [d, [x + ((lx - x) / n) * 0.5, y + ((ly - y) / n) * 0.5]];
+  }, office.id);
+  await press("i");
+  await chooseType("card reader", /Access card reader/);
+  const before = await R(() => window.storeypathReview.state.floor.items.length);
+  await page.click(...await screen(near));
+  await until((n) => window.storeypathReview.state.floor.items.length === n + 1, "the reader placed", 8000, before);
+  await press("Escape");
+  const reader = await R(() => window.storeypathReview.state.floor.items.at(-1));
+  const nearest = await R((a) => {
+    const at = (d) => d.middle || d.point;
+    return window.storeypathReview.state.floor.doors.filter((d) => d.type !== "window" && !d.ignored)
+      .sort((p, q) => Math.hypot(at(p)[0] - a.x, at(p)[1] - a.y) - Math.hypot(at(q)[0] - a.x, at(q)[1] - a.y))[0].id;
+  }, reader);
+  truly(reader.type === "CARD-READER" && reader.door_id === nearest, `linked to the nearest door: ${reader.door_id} (${nearest}; the office's ${door.id})`);
+  truly(await R(() => !document.querySelector("#assets .door-link")), "not chosen: no line to its door");
+  await page.click(...await screen([reader.x, reader.y]));
+  await until((id) => window.storeypathReview.state.asset === id && document.querySelectorAll("#assets line.door-link").length === 1
+    && document.getElementById("as-door")?.value === window.storeypathReview.state.floor.items.find((x) => x.id === id).door_id,
+    "chosen: its line to the door, the door in the inspector", 5000, reader.id);
+  const pick = (v) => R((v) => {
+    const s = document.getElementById("as-door");
+    s.value = v;
+    s.dispatchEvent(new Event("change"));
+  }, v);
+  await pick("");
+  await until((id) => window.storeypathReview.state.floor.items.find((x) => x.id === id).door_id === null
+    && !document.querySelector("#assets .door-link"), "linked to none: no line", 5000, reader.id);
+  await pick(nearest);
+  await until((a) => window.storeypathReview.state.floor.items.find((x) => x.id === a[0]).door_id === a[1], "linked again", 5000, [reader.id, nearest]);
+  // the door chosen: what serves it, listed
+  await R(() => [...document.querySelectorAll("#inspector button")].find((b) => b.textContent.includes("Show the door")).click());
+  await until((d) => window.storeypathReview.state.item?.kind === "door" && window.storeypathReview.state.item.id === d
+    && document.getElementById("inspector").dataset.kind === "opening"
+    && [...document.querySelectorAll("#inspector .group-item")].some((b) => b.textContent.includes("Access card reader"))
+    && document.querySelectorAll("#assets line.door-link").length >= 1, "the door chosen: its reader listed, the line drawn", 5000, nearest);
+  await press("Escape");
+  // a camera: what it covers shown while it is chosen, every camera's on asking
+  await press("i");
+  await chooseType("cctv dome", /CCTV camera, dome/);
+  const n = await R(() => window.storeypathReview.state.floor.items.length);
+  await page.click(...await roomAt(office.id));
+  await until((n) => window.storeypathReview.state.floor.items.length === n + 1, "the camera placed", 8000, n);
+  await press("Escape");
+  const dome = await R(() => window.storeypathReview.state.floor.items.at(-1));
+  const covers = () => R((id) => Boolean(document.querySelector(`#assets [data-asset="${id}"] .coverage`)), dome.id);
+  truly(!(await covers()), "not chosen: what it covers not drawn");
+  await page.click(...await screen([dome.x, dome.y]));
+  await until((id) => window.storeypathReview.state.asset === id && document.querySelector(`#assets [data-asset="${id}"] .coverage`),
+    "chosen: what it covers drawn", 5000, dome.id);
+  const across = await R((id) => document.querySelector(`#assets [data-asset="${id}"] .coverage`).getBBox().width, dome.id);
+  truly(Math.abs(across - 2 * 12 * Math.sin(Math.PI / 4)) < 0.05, `a dome: 90° across, 12 m out (${across})`);
+  await press("Escape");
+  await press("k", ["mod"]);
+  await until(() => document.querySelector("dialog.palette[open]"), "the palette opens");
+  await R(() => {
+    const i = document.getElementById("palette-input");
+    i.value = "every camera covers";
+    i.dispatchEvent(new Event("input"));
+  });
+  await press("Enter");
+  await until((id) => window.storeypathReview.state.showCoverage && document.querySelector(`#assets [data-asset="${id}"] .coverage`),
+    "every camera's coverage shown", 5000, dome.id);
+  await R(() => { window.storeypathReview.state.showCoverage = false; });
+  // taken away again
+  for (const id of [reader.id, dome.id]) {
+    await page.click(...await screen(id === reader.id ? [reader.x, reader.y] : [dome.x, dome.y]));
+    await until((id) => window.storeypathReview.state.asset === id, "chosen to delete", 5000, id);
+    await press("Delete");
+    await until((id) => window.storeypathReview.state.floor.items.find((x) => x.id === id).retired, "deleted", 5000, id);
+  }
+  noErrors("a reader and its door, a camera's view");
+  await press("Escape");
+});
+
 test("the command palette finds a room by its name and runs a command", async () => {
   await press("k", ["mod"]);
   await R(() => {
@@ -694,7 +779,8 @@ async function steady() {
  * on the plan (said in ``placed``, taken away by the last test that needs it). Its ID. */
 let placed = null;
 async function aDesk() {
-  const have = await R(() => window.storeypathReview.state.floor.items.find((a) => !a.retired && a.type.startsWith("DESK"))?.id ?? null);
+  // (one alone: one of a group, a set's, is chosen with its group)
+  const have = await R(() => window.storeypathReview.state.floor.items.find((a) => !a.retired && !a.group && a.type.startsWith("DESK"))?.id ?? null);
   if (have) return have;
   await viewTo("2d");
   await press("Escape");

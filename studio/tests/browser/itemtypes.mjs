@@ -94,7 +94,7 @@ test("the page lists the catalogue by category, each type with its symbol, how i
   truly(got.groups.join() === "Workstations,Seating,Tables,Storage,Soft seating,Beds,Security,Fire and life safety,IT and AV,Building services,Appliances",
     `by category, in their order: ${got.groups}`);
   // a table alone (format 0.10): its chairs are types of their own
-  truly(/2\.4 × 1\.2 × 0\.75 m/.test(got.table) && /Meeting table/.test(got.table) && got.chairs === 0, `a table for 8: ${JSON.stringify(got)}`);
+  truly(/2\.4 × 1\.2 × 0\.75 m/.test(got.table) && /Table$/.test(got.table) && got.chairs === 0, `a table for 8: ${JSON.stringify(got)}`);
   noErrors("the list");
 });
 
@@ -146,6 +146,29 @@ test("a type changed: its name, its colour, how it is drawn, a field; saved as i
   const row = await R(() => document.querySelector('.it-row[data-code="LOCKER-TALL"] .it-name strong').textContent);
   truly(row === "Tall locker, grey", `the list says so: ${row}`);
   noErrors("a type changed");
+});
+
+test("a camera type: how wide it sees and how far, changed and saved; a card reader serves a door", async () => {
+  await click('.it-row[data-code="CCTV-DOME"]');
+  await until(() => document.querySelector(".it-form h2")?.textContent === "CCTV camera, dome", "its form");
+  const view = () => R(() => [...document.querySelectorAll(".it-form label.field")].filter((l) => /^Sees /.test(l.textContent))
+    .map((l) => l.querySelector("input").value));
+  truly(JSON.stringify(await view()) === JSON.stringify(["90", "12"]), `its view: ${await view()}`);
+  await R(() => {
+    const i = [...document.querySelectorAll(".it-form label.field")].find((l) => l.textContent.startsWith("Sees across")).querySelector("input");
+    i.value = "100";
+    i.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  truly(await R(() => document.querySelector(".it-form").checkValidity()), "the form may be sent: a size of 0.12 m is no step of 0.05");
+  await click(".it-form button[type=submit]");
+  const t = await soon(() => typeOf("CCTV-DOME"), (got) => got?.view_deg === 100);
+  truly(t.view_deg === 100 && t.range_m === 12, `saved: ${JSON.stringify(t)}`);
+  await click('.it-row[data-code="CARD-READER"]');
+  await until(() => document.querySelector(".it-form h2")?.textContent === "Access card reader", "the reader's form");
+  truly(await R(() => document.querySelector('[data-testid="it-serves-door"]').checked
+    && ![...document.querySelectorAll(".it-form label.field")].some((l) => /^Sees /.test(l.textContent))),
+  "a card reader: serves a door, no view");
+  noErrors("a camera's view, a reader's door");
 });
 
 test("a type retired: not listed unless retired ones are shown, marked so; restored", async () => {

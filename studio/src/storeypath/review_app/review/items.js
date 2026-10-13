@@ -54,15 +54,31 @@ export function renderAssets() {
   layer.replaceChildren();
   for (const a of state.floor?.items || []) {
     if (a.retired && !state.showHidden) continue;
-    const g = assetShape(a, typeOf(a.type) || a, "asset");
+    const chosen = state.assets.includes(a.id);
+    const g = assetShape(a, typeOf(a.type) || a, "asset", { coverage: chosen || state.showCoverage });
     g.dataset.asset = a.id;
-    g.classList.toggle("chosen", state.assets.includes(a.id));
+    g.classList.toggle("chosen", chosen);
     g.classList.toggle("retired", a.retired);
     g.append(svg("title", {}));
     g.lastChild.textContent = `${typeOf(a.type)?.name_en || a.type} · ${a.id}`;
     layer.append(g);
   }
+  // the door an item chosen serves (a card reader's), or the items that serve the door chosen:
+  // a line from each to its door, and a ring round the door
+  const door = state.item?.kind === "door" ? state.item.id : null;
+  for (const a of state.floor?.items || []) {
+    if (!a.door_id || a.retired || !(state.assets.includes(a.id) || a.door_id === door)) continue;
+    const d = (state.floor.doors || []).find((x) => x.id === a.door_id);
+    if (!d) continue;
+    const [x, y] = d.middle || d.point;
+    layer.append(svg("line", { class: "door-link", x1: a.x, y1: a.y, x2: x, y2: y }),
+      svg("circle", { class: "door-link", cx: x, cy: y, r: Math.max(0.3, (d.width || 0.9) / 2 + 0.1) }));
+  }
 }
+
+/** The door an item serves (a card reader's: format 0.10), as the floor has it; null: none, or
+ * one deleted since. */
+export const doorOf = (a) => (a?.door_id && (state.floor?.doors || []).find((d) => d.id === a.door_id && !d.ignored)) || null;
 
 export function assetOf(target) {
   const id = target?.closest?.("[data-asset]")?.dataset.asset;
@@ -156,6 +172,11 @@ async function placeItem(type, p, free = state.alt, reach = undefined) {
     renderAssets();
     update3d(); // in 3D at once: this floor's items drawn again, nothing else
     emit("items");
+    if (typeOf(type)?.serves_door) { // linked to the nearest door, or to none: said, to choose it
+      const d = doorOf(a);
+      toast(d ? `Linked to the door it is beside${d.tag ? ` (${d.tag})` : ""}: choose it to link another`
+        : "No door within 2 m: choose it to link the door it opens");
+    }
   } catch (e) {
     toast(`Not placed: ${e.message}`, true);
   }
