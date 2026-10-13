@@ -317,8 +317,9 @@ export function setupItems() {
           : `Click in a room where the ${name} goes · it lines up with walls and items · Alt-click: anywhere, as it is`;
     },
     options: placeOptions,
-    start: () => {
-      if (!state.placeType && !state.placeSet) requestAnimationFrame(() => openInsert(placeType));
+    start: () => { // nothing to place yet: the box to find it, unless chosen meanwhile (or put down)
+      const none = () => !state.placeType && !state.placeSet && state.tool === "place" && !document.querySelector("dialog.palette[open]");
+      if (none()) requestAnimationFrame(() => none() && openInsert(placeType));
     },
     stop: () => {
       drawGuides();
