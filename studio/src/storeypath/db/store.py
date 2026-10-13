@@ -1303,10 +1303,13 @@ class ProjectStore:
             return kept[1].model_copy(deep=True)
         with self.db.connection() as conn:
             types = [t for (t,) in conn.execute("SELECT type FROM catalogue ORDER BY position")]
+            # the catalogue format its types were saved in (catalogue.py CATALOGUE_VERSION): none, 1
+            row = conn.execute("SELECT value FROM settings WHERE key = 'catalogue_format'").fetchone()
         if version is None and not types:
             self.save_catalogue(catalogues.default_catalogue())
             return self.catalogue()
-        cat, filled = catalogues.read(json.dumps({"types": types}))
+        saved_as = row[0] if row and isinstance(row[0], int) else 1
+        cat, filled = catalogues.read(json.dumps({"format_version": saved_as, "types": types}))
         cat.check()
         known = {t.code for t in cat.types}
         new = [t for t in catalogues.default_catalogue().types if t.code not in known]
@@ -1324,9 +1327,13 @@ class ProjectStore:
     def save_catalogue(self, cat) -> None:
         """The catalogue replaced (its types' ``model`` is not kept: it follows from the
         models Studio has)."""
+        from ..catalogue import CATALOGUE_VERSION
+
         cat.check()
         with self.db.transaction() as conn:
             self._catalogue_changed(conn)
+            conn.execute("INSERT INTO settings (key, value) VALUES ('catalogue_format', %s) ON CONFLICT (key) DO "
+                         "UPDATE SET value = EXCLUDED.value", (_j(CATALOGUE_VERSION),))
             conn.execute("DELETE FROM catalogue")
             with conn.cursor() as cur:
                 cur.executemany("INSERT INTO catalogue (code, position, type) VALUES (%s, %s, %s)",

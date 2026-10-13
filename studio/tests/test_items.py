@@ -276,3 +276,34 @@ def test_an_item_is_found_by_its_id_as_a_person_types_it(tmp_path, monkeypatch):
         assert status == 200 and way["route"]["from"] == desk["id"], way
     finally:
         team.close()
+
+
+def test_a_database_catalogue_saved_before_categories_gives_its_default_types_theirs_once(tmp_path):
+    """A Studio's catalogue saved in its database before format 0.10 (catalogue format 1,
+    no catalogue_format setting): read again, its default types take this Studio's
+    categories and shapes (a desk among workstations, a meeting table a table alone), a
+    type of its own keeps its own; saved so, a category a person sets later stays."""
+    import json
+
+    from storeypath import db as studio_db
+    from storeypath.db.store import ProjectStore
+
+    store = ProjectStore(studio_db.connect(data=tmp_path / "data"))
+    older = catalogue.default_catalogue()
+    older.types.append(catalogue.ItemType(code="PLANT", name_en="Plant", name_ar="نبتة", category="furniture"))
+    store.save_catalogue(older)
+    with store.db.transaction() as conn:  # as a Studio of format 0.9 left it
+        conn.execute("DELETE FROM settings WHERE key = 'catalogue_format'")
+        for code, category, shape in (("DESK-MANAGER", "furniture", "desk"), ("MEETING-TABLE-8", "furniture", "meeting_table"),
+                                      ("TV", "appliance", "screen")):
+            conn.execute("UPDATE catalogue SET type = type || %s::jsonb WHERE code = %s",
+                         (json.dumps({"category": category, "shape": shape}), code))
+        conn.execute("UPDATE settings SET value = to_jsonb(settings.value::text::bigint + 1) WHERE key = 'catalogue'")
+    store._catalogue = None
+    cat = store.catalogue()
+    assert (cat.get("DESK-MANAGER").category, cat.get("MEETING-TABLE-8").category, cat.get("MEETING-TABLE-8").shape,
+            cat.get("TV").category, cat.get("PLANT").category) == ("workstations", "tables", "table", "it_av", "furniture")
+    cat.get("DESK-MANAGER").category = "furniture"  # a person's choice, later
+    store.save_catalogue(cat)
+    store._catalogue = None
+    assert store.catalogue().get("DESK-MANAGER").category == "furniture"
