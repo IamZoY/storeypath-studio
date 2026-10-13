@@ -323,6 +323,24 @@ def test_handrails_and_steps_are_not_read_as_walls(tmp_path):
     assert "walls" not in roles.get("HAND RAIL", []) and "walls" not in roles.get("STEP", [])
 
 
+@pytest.mark.parametrize("layer", ["ROOM_TAGS", "ROOM-NAME", "A-AREA-IDEN"])
+def test_room_tags_boxed_against_the_walls_are_labels_not_walls(tmp_path, layer):
+    # A room tag's box drawn against the walls is two lines as far apart as a wall is
+    # thick, in the wall frame; on a layer named for room tags they are its labels' boxes.
+    write_floor_dxf(tmp_path / "plan.dxf", office_floor(1), area_outlines=False)
+    doc = ezdxf.readfile(tmp_path / "plan.dxf")
+    for e in list(doc.modelspace().query('LWPOLYLINE[layer=="A-WALL"]')):
+        box = e.copy()
+        box.dxf.layer = layer
+        doc.modelspace().add_entity(box)
+    for i, (x, y) in enumerate([(2000, 2000), (8000, 2000), (14000, 2000)]):
+        doc.modelspace().add_text(f"T-{101 + i}", dxfattribs={"layer": layer, "height": 200, "insert": (x, y)})
+    doc.saveas(tmp_path / "plan.dxf")
+    roles = {r.layer: r.roles for r in analyse(read_drawing(tmp_path / "plan.dxf"), 0.001, None, rules_only).roles}
+    assert "walls" in roles["A-WALL"]
+    assert roles[layer] == ["labels"]
+
+
 @pytest.mark.parametrize("layer", ["WIN", "A-WIN-FRAME", "WINDOWS", "A-DOOR-FRAME"])
 def test_window_frames_as_thick_as_walls_are_windows_when_the_layer_says_so(tmp_path, layer):
     # Window frames drawn at the wall's faces are a pair of lines a wall's thickness

@@ -74,9 +74,12 @@ NAME_HINTS: list[tuple[str, re.Pattern[str]]] = [
 ]
 # Layers that a name says hold something else are not read as walls, however
 # much their lines look like them: handrails and window frames are pairs of lines
-# a wall's thickness apart, step outlines are small closed shapes like columns.
-# Windows are then read as glazing in the walls' gaps.
-NOT_WALLS = {"furniture", "equipment", "dimension", "grid", "stairs", "railing"}
+# a wall's thickness apart, step outlines are small closed shapes like columns, and
+# the boxes round room tags, drawn against the walls, are two lines as far apart as
+# a wall is thick (read as walls, each tag would stand in a wall of its own, its room
+# unnamed, and the rooms round it merged). Windows are then read as glazing in the
+# walls' gaps; room tags as labels.
+NOT_WALLS = {"furniture", "equipment", "dimension", "grid", "stairs", "railing", "room_name"}
 # A layer named for doors or windows holds their frames and leaves, which look like
 # walls too; it is read as walls only when it holds most of the plan's walls (the
 # drafter drew the walls on it).
