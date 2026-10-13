@@ -97,10 +97,12 @@ correction survives the next revision of the drawing.
 |---|---|
 | ![The president's desk chosen in 3D, its tag and its Arabic name in the inspector](docs/images/furniture.webp) | ![Placing a copier in 3D: its ghost pulled into the corner by the door](docs/images/place.webp) |
 
-Desks by grade (from a junior's to the president's, each drawn with its chairs, return,
-credenza or armchairs), meeting tables for 4 to 16 with their chairs round them, copiers,
-access points, sofas, screens and wayfinding kiosks are
-placed on the plan, in 3D or while walking. An item stays in its room and lines up with the
+Furniture and the building's equipment, in categories: desks by grade (from a junior's
+to the president's), chairs, meeting tables for 4 to 16, storage, sofas; cameras, card
+readers, smoke detectors, call points, extinguishers, emergency lights, access points,
+network racks, screens, wayfinding kiosks, air-conditioning units, appliances. Each piece
+is an item of its own, with its own tag (a desk's chair too), placed on the plan, in 3D or
+while walking. An item stays in its room and lines up with the
 walls and the items near it. Its ID is an asset's tag (`7K2Q-XM9F-4DP`) with a check
 symbol: carried to another room or building, it keeps it, and ⌘K finds it as a person types
 it. Each room's capacity comes from its desks unless you set it.
@@ -119,7 +121,7 @@ every office of a floor the same in one go; they go into the package.
 ![The first floor in 3D, cut away: the left half Real, finished as built; the right half Model, white with its edges drawn](docs/images/looks.webp)
 
 Every building opens in 3D straight from Studio, nothing exported first: walls as drawn,
-doors with architraves and handles, windows with glass, furniture with its chairs, floors
+doors with architraves and handles, windows with glass, furniture and equipment, floors
 and walls in their finishes, soft shadows. **Real** (left) or **Model** (right), one click
 apart, at a quality that suits the machine.
 

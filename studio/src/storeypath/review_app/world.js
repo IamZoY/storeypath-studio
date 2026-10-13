@@ -14,6 +14,7 @@
 // its frame, on Studio's theme, components and top bar.
 
 import { accountMenu, sentAway, whoami } from "./account.js";
+import { categoryName } from "./categories.js";
 import { setupChrome } from "./chrome.js";
 import { WITH_OTHERS, onHold, together, toggled } from "./floorpick.js";
 import { lookOptions, setupLook } from "./look.js";
@@ -444,7 +445,7 @@ function renderItem(feature) {
     ...ours.map((f) => [el("dt", {}, f.name_en), el("dd", {}, value(f))]),
   ].filter(Boolean);
   showDetails(
-    head(type?.name_en ?? p.name, [cap(p.category), p.type].join(" · "), type?.color ?? "#8a8a8a", type?.name_ar || null),
+    head(type?.name_en ?? p.name, [categoryName(p.category), p.type].join(" · "), type?.color ?? "#8a8a8a", type?.name_ar || null),
     el("dl", {}, rows.flat()),
     theirs.length ? el("div", { class: "w-section" }, el("p", { class: "w-note" },
       `Kept by the system that manages it: ${theirs.map((f) => f.name_en).join(", ")}`)) : null,

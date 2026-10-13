@@ -62,6 +62,12 @@ async function soon(fn, ok, ms = 20000) {
   }
   return last;
 }
+/** A choice made in a select (and said: "change"). */
+const pick = (selector, value) => R((s, v) => {
+  const e = document.querySelector(s);
+  e.value = v;
+  e.dispatchEvent(new Event("change", { bubbles: true }));
+}, selector, value);
 /** A field's value set at once, as a paste does (and said: "input"). */
 const set = (selector, value) => R((s, v) => {
   const e = document.querySelector(s);
@@ -85,8 +91,10 @@ test("the page lists the catalogue by category, each type with its symbol, how i
   const types = await catalogue();
   truly(got.title === "Item types" && got.crumbs.join("/") === "Projects/Item types", `the page: ${JSON.stringify(got)}`);
   truly(got.rows === types.filter((t) => !t.retired).length && got.symbols === got.rows, `every type, a symbol each: ${JSON.stringify(got)}`);
-  truly(got.groups.join() === "Furniture,Equipment,Appliances", `by category: ${got.groups}`);
-  truly(/2\.4 × 1\.2 × 0\.75 m/.test(got.table) && /Meeting table/.test(got.table) && got.chairs === 8, `a table for 8: ${JSON.stringify(got)}`);
+  truly(got.groups.join() === "Workstations,Seating,Tables,Storage,Soft seating,Beds,Security,Fire and life safety,IT and AV,Building services,Appliances",
+    `by category, in their order: ${got.groups}`);
+  // a table alone (format 0.10): its chairs are types of their own
+  truly(/2\.4 × 1\.2 × 0\.75 m/.test(got.table) && /Meeting table/.test(got.table) && got.chairs === 0, `a table for 8: ${JSON.stringify(got)}`);
   noErrors("the list");
 });
 
@@ -95,10 +103,10 @@ test("a search finds a type by its name or code; a category shows its own", asyn
   await until(() => document.querySelectorAll(".it-row").length === 1, "one type found");
   truly(await R(() => document.querySelector(".it-row").dataset.code) === "KIOSK", "the kiosk");
   await set('input[type="search"]', "");
-  await click('.it-filters .segmented [data-value="appliance"]');
+  await pick(".it-filters select", "security");
   const codes = await R(() => [...document.querySelectorAll(".it-row")].map((r) => r.dataset.code));
-  truly(codes.join() === "TV", `appliances: ${codes}`);
-  await click('.it-filters .segmented [data-value="all"]');
+  truly(codes.length > 5 && codes.includes("CCTV-DOME") && codes.includes("CARD-READER") && !codes.includes("TV"), `security: ${codes}`);
+  await pick(".it-filters select", "all");
 });
 
 test("a new type: its code, names, how it is drawn and its size; refused until it has them; added to the catalogue", async () => {

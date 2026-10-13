@@ -10,25 +10,39 @@ import { sentAway } from "./account.js";
 import { SHAPES, shapeOf } from "./fit.js";
 import { assetShape, symbolBox } from "./itemshape.js";
 import { putFile } from "./seal.js";
+import { CATEGORIES, SIDES, categoryOf } from "./categories.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const CATEGORIES = [["furniture", "Furniture"], ["equipment", "Equipment"], ["appliance", "Appliances"]];
 const MOUNTS = [["floor", "Floor"], ["wall", "Wall"], ["ceiling", "Ceiling"]];
 const GRADES = [["president", "President"], ["c_level", "C-level"], ["director", "Director"], ["manager", "Manager"],
   ["section_head", "Head of section"], ["senior", "Senior staff"], ["junior", "Junior staff"]];
 const FIELD_KINDS = [["text", "Text"], ["number", "Number"], ["choice", "Choice"], ["color", "Colour"]];
 /** How a type may be drawn (fit.js SHAPES), what each looks like, and a size to show it at. */
 const SHAPE_ABOUT = {
-  desk: ["Desk", "its chair, and what goes with its grade", { width: 1.6, depth: 0.8, grade: "senior" }],
-  meeting_table: ["Meeting table", "as many chairs round it as its size seats", { width: 2.4, depth: 1.2 }],
+  desk: ["Desk", "the desk alone: its chair and the rest are items of their own", { width: 1.6, depth: 0.8, grade: "senior" }],
+  table: ["Table", "the table alone: its chairs are items of their own", { width: 2.4, depth: 1.2 }],
+  chair: ["Office chair", "on castors; high-backed when 0.66 m wide or more", { width: 0.62, depth: 0.62 }],
+  side_chair: ["Visitor chair", "four legs, a seat and a back", { width: 0.5, depth: 0.5 }],
+  armchair: ["Armchair", "upholstered, with arms", { width: 0.75, depth: 0.75 }],
   sofa: ["Sofa", "its seat between its arms", { width: 2, depth: 0.9 }],
+  storage: ["Storage", "drawers when low and narrow, else a cupboard with doors", { width: 0.9, depth: 0.45 }],
   screen: ["Screen", "on a wall, facing the room", { width: 1.4, depth: 0.1 }],
   copier: ["Copier", "a machine on a cabinet", { width: 1.2, depth: 0.7 }],
   bed: ["Bed", "its headboard and pillows", { width: 1.7, depth: 2.1 }],
   kiosk: ["Kiosk", "a screen on a post, facing its front", { width: 0.6, depth: 0.45 }],
   access_point: ["Access point", "a disc under the ceiling", { width: 0.4, depth: 0.4, mount: "ceiling" }],
+  camera: ["Camera", "looking the way its front faces: a dome under the ceiling", { width: 0.15, depth: 0.25, mount: "wall" }],
   box: ["Box", "its size, in its colour", { width: 1, depth: 0.6 }],
 };
+/** A choice of category (categories.js), by side (furniture, the building's equipment): ``value``
+ * chosen, ``onChange(key)``; with ``all``, a first option of every category ("all"). */
+function categorySelect(value, attrs, onChange, all = null) {
+  const option = (key, label) => el("option", { value: key, selected: key === value ? true : null }, label);
+  const sides = Object.entries(SIDES).map(([side, label]) => el("optgroup", { label },
+    CATEGORIES.filter((c) => c.side === side).map((c) => option(c.key, c.name))));
+  return el("select", { ...attrs, onchange: (e) => onChange(e.target.value) }, all ? option("all", all) : null, sides);
+}
+
 const CODE_RE = /^[A-Z0-9]+(-[A-Z0-9]+)*$/;
 const KEY_RE = /^[a-z][a-z0-9_]{0,31}$/;
 // what a new type starts as (catalogue.py ItemType's defaults)
@@ -142,7 +156,7 @@ export async function itemTypesPage(page, me, toast) {
   const chosenBar = el("div", { class: "it-chosen row", hidden: true });
 
   const shown = () => view.types.filter((t) => (view.retired || !t.retired)
-    && (view.category === "all" || t.category === view.category)
+    && (view.category === "all" || categoryOf(t.category).key === view.category)
     && (!view.query || [t.code, t.name_en, t.name_ar].some((s) => (s || "").toLowerCase().includes(view.query))));
 
   const renderChosen = () => {
@@ -195,7 +209,9 @@ export async function itemTypesPage(page, me, toast) {
   const renderList = () => {
     const list = shown();
     counts.textContent = `${list.length} of ${view.types.length} types`;
-    const groups = CATEGORIES.map(([c, name]) => [name, list.filter((t) => t.category === c)]).filter(([, ts]) => ts.length);
+    const known = new Set(CATEGORIES.map((c) => c.key));
+    const groups = [...CATEGORIES.map((c) => [c.name, list.filter((t) => categoryOf(t.category).key === c.key)]),
+      ["Other", list.filter((t) => !known.has(categoryOf(t.category).key))]].filter(([, ts]) => ts.length);
     listBox.replaceChildren(...(groups.length ? groups.map(([name, ts]) => el("section", { class: "it-group" },
       el("h3", {}, name, el("span", { class: "muted" }, ` ${ts.length}`)), ts.map(row)))
       : [el("p", { class: "empty" }, view.types.length ? "No type matches." : "No item types yet.")]));
@@ -351,7 +367,10 @@ export async function itemTypesPage(page, me, toast) {
     el("div", { class: "it-two" },
       el("label", { class: "field" }, "Name", input("name_en", { required: true, placeholder: "e.g. Tall locker", "data-testid": "it-name" })),
       el("label", { class: "field" }, "Arabic name", input("name_ar", { dir: "rtl", lang: "ar" }))),
-    el("div", { class: "field" }, el("span", {}, "Category"), segmented("category", CATEGORIES.map(([c, n]) => [c, n === "Appliances" ? "Appliance" : n]))),
+    el("label", { class: "field" }, "Category", categorySelect(categoryOf(t.category).key, { disabled: off, "data-testid": "it-category" }, (v) => {
+      t.category = v;
+      changed();
+    })),
     el("div", { class: "field" }, el("span", {}, "How it is drawn"), shapes),
     el("div", { class: "field" }, el("span", {}, "3D model"), modelPart),
     el("div", { class: "it-three" },
@@ -630,13 +649,10 @@ export async function itemTypesPage(page, me, toast) {
       view.query = e.target.value.trim().toLowerCase();
       renderList();
     } });
-  const categories = el("div", { class: "segmented", role: "radiogroup", "aria-label": "Category" },
-    [["all", "All"], ...CATEGORIES].map(([c, name]) => el("button", { type: "button", role: "radio", "aria-checked": String(c === "all"),
-      "data-value": c, onclick: (e) => {
-        view.category = c;
-        for (const b of e.currentTarget.parentElement.children) b.setAttribute("aria-checked", String(b.dataset.value === c));
-        renderList();
-      } }, name)));
+  const categories = categorySelect("all", { "aria-label": "Category" }, (v) => {
+    view.category = v;
+    renderList();
+  }, "All categories");
   const retired = el("label", { class: "check it-retired" }, el("input", { type: "checkbox", onchange: (e) => {
     view.retired = e.target.checked;
     renderList();

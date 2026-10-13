@@ -195,7 +195,7 @@ def test_reading_and_corrections_say_what_was_decided_and_changed(project):
     assert fixed[s214]["name"] == "[NAME] OFFICE"
     assert fixed[s213]["ignored"] is True and fixed[s212]["accepted_as_is"] is True
     assert c["drawn"]["walls"] == [[[14.0, 14.5], [14.0, 19.5]]]
-    assert c["items"] == [{"id": "I1", "type": "DESK-JUNIOR", "category": "furniture", "at": [4.0, 3.5],
+    assert c["items"] == [{"id": "I1", "type": "DESK-JUNIOR", "category": "workstations", "at": [4.0, 3.5],
                            "rotation": 0.0, "in": office["id"]}]
     s_path = path.parent / "s.spsample"
     s_path.write_bytes(s.zipped())

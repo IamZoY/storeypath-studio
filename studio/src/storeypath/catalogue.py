@@ -1,5 +1,6 @@
-"""The catalogue of item types: the furniture and equipment people place on floors
-(desks by grade, central photocopiers, access points, sofas, TVs…).
+"""The catalogue of item types: the furniture and the building's equipment people place on
+floors (desks by grade, chairs, meeting tables, cupboards; cameras, card readers, smoke
+detectors, extinguishers, access points, air-conditioning units…), each in a category.
 
 One catalogue serves every project of a Studio (its database; ``catalogue.json`` in
 a data folder). A package carries the types its items use (or, exported so, the whole
@@ -24,7 +25,9 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 CATALOGUE_FORMAT = "storeypath-catalogue"
-CATALOGUE_VERSION = 1
+# 2 (format 0.10): categories by what a thing is for; a desk's and a table's chairs types of
+# their own. A catalogue of 1 read so gives its default types this Studio's categories
+CATALOGUE_VERSION = 2
 FILE_NAME = "catalogue.json"
 MODELS = "models/"  # types' 3D models (format 0.9.2): in a package, and beside a data folder's catalogue.json
 _CODE_RE = re.compile(r"^[A-Z0-9]+(-[A-Z0-9]+)*$")
@@ -36,13 +39,26 @@ _KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 # who a desk is for, highest first: a room takes the grade of the highest desk in it
 GRADES = ("president", "c_level", "director", "manager", "section_head", "senior", "junior")
 Grade = Literal["president", "c_level", "director", "manager", "section_head", "senior", "junior"]
-# how the viewers draw a type (format 0.9.1): a desk with what its grade has, a meeting table with
-# its chairs round it, …, a plain box. None: by its code's first part, as before (DESK-…, MEETING-…,
-# SOFA, TV and SCREEN, COPIER and PRINTER, ACCESS-…, BED-…, KIOSK), else a box. Only the drawing:
-# what a type is stays with its code (a wayfinding kiosk is KIOSK or KIOSK-…)
-SHAPES = ("desk", "meeting_table", "sofa", "screen", "copier", "bed", "kiosk", "access_point", "box")
-Shape = Literal["desk", "meeting_table", "sofa", "screen", "copier", "bed", "kiosk", "access_point", "box"]
-_BY_CODE = {"DESK": "desk", "MEETING": "meeting_table", "SOFA": "sofa", "TV": "screen", "SCREEN": "screen",
+# what a type is (format 0.10): furniture by what it is for, the building's equipment by the
+# system it is part of; "furniture" and "equipment", anything else of either. In this order
+# in Review (the box to find what to place); the first six and "furniture" are furniture
+CATEGORIES = ("workstations", "seating", "tables", "storage", "soft_seating", "beds", "furniture",
+              "security", "fire_safety", "it_av", "building_services", "appliances", "equipment")
+Category = Literal["workstations", "seating", "tables", "storage", "soft_seating", "beds", "furniture",
+                   "security", "fire_safety", "it_av", "building_services", "appliances", "equipment"]
+OLD_CATEGORIES = {"appliance": "appliances"}  # 0.9's, read as
+# how the viewers draw a type (format 0.9.1; 0.10: a desk and a table alone, their chairs types
+# of their own): a desk, a table, an office chair, a visitor's chair, an armchair, a sofa, a
+# cupboard or drawers, a screen, a copier, a bed, a kiosk, an access point, a camera, a plain
+# box. None: by its code's first part, as before (DESK-…, MEETING-…, SOFA, TV and SCREEN, COPIER
+# and PRINTER, ACCESS-…, BED-…, KIOSK), else a box. Only the drawing: what a type is stays with
+# its code (a wayfinding kiosk is KIOSK or KIOSK-…)
+SHAPES = ("desk", "table", "chair", "side_chair", "armchair", "sofa", "storage", "screen", "copier", "bed", "kiosk",
+          "access_point", "camera", "box")
+Shape = Literal["desk", "table", "chair", "side_chair", "armchair", "sofa", "storage", "screen", "copier", "bed", "kiosk",
+                "access_point", "camera", "box"]
+OLD_SHAPES = {"meeting_table": "table"}  # 0.9's (a table with its chairs), read as
+_BY_CODE = {"DESK": "desk", "MEETING": "table", "SOFA": "sofa", "TV": "screen", "SCREEN": "screen",
             "COPIER": "copier", "PRINTER": "copier", "ACCESS": "access_point", "BED": "bed", "KIOSK": "kiosk"}
 
 
@@ -68,7 +84,7 @@ class ItemType(BaseModel):
     code: str  # stable identity, e.g. DESK-MANAGER
     name_en: str
     name_ar: str = ""
-    category: Literal["furniture", "equipment", "appliance"] = "furniture"
+    category: Category = "furniture"
     width: float = 1.0  # metres, along the item (its front)
     depth: float = 0.6  # metres, front to back
     height: float = 0.75  # metres: its top above the floor (floor), its size (wall, ceiling)
@@ -98,8 +114,14 @@ class ItemType(BaseModel):
     def _shape(cls, v):
         # one this Studio does not know (a later format's) is read as none: drawn by its code,
         # as the format says of a reader that does not know it (a person's typo is refused
-        # where the catalogue is saved: check_shapes)
+        # where the catalogue is saved: check_shapes); 0.9's meeting_table is a table
+        v = OLD_SHAPES.get(v, v)
         return v if v is None or v in SHAPES else None
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _category(cls, v):
+        return OLD_CATEGORIES.get(v, v)
 
     @field_validator("color")
     @classmethod
@@ -144,25 +166,50 @@ def shape_of(t: ItemType) -> str:
     return t.shape or _BY_CODE.get(t.code.split("-")[0], "box")
 
 
+def _t(code: str, en: str, ar: str, category: str, size: tuple[float, float, float], color: str, *, mount: str = "floor",
+       elevation: float | None = None, shape: str = "box", workplaces: int = 0, grade: str | None = None,
+       fields: list[ItemField] | None = None) -> ItemType:
+    width, depth, height = size
+    return ItemType(code=code, name_en=en, name_ar=ar, category=category, width=width, depth=depth, height=height, mount=mount,
+                    elevation=elevation, color=color, shape=shape, workplaces=workplaces, grade=grade, fields=fields or [])
+
+
 def _desk(code: str, en: str, ar: str, width: float, depth: float, color: str, grade: str) -> ItemType:
-    return ItemType(code=code, name_en=en, name_ar=ar, category="furniture", width=width, depth=depth,
-                    height=0.75, mount="floor", color=color, shape="desk", workplaces=1, grade=grade)
+    # the desk alone (format 0.10): its chair, a return, a credenza, visitors' chairs are
+    # items of their own, placed with it as a set
+    return _t(code, en, ar, "workstations", (width, depth, 0.75), color, shape="desk", workplaces=1, grade=grade)
 
 
 def _meeting_table(seats: int, width: float, depth: float, color: str) -> ItemType:
-    # its chairs drawn round it by the viewers, as many as its size seats (tableChairs):
-    # meeting places, not workplaces (no one is allocated to one)
+    # the table alone (format 0.10): its chairs are items of their own, placed with it as a
+    # set; meeting places, not workplaces (no one is allocated to one)
     ar = f"{seats} مقاعد" if seats <= 10 else f"{seats} مقعدًا"
-    return ItemType(code=f"MEETING-TABLE-{seats}", name_en=f"Meeting table, {seats} seats", name_ar=f"طاولة اجتماعات، {ar}",
-                    category="furniture", width=width, depth=depth, height=0.75, mount="floor", color=color,
-                    shape="meeting_table")
+    return _t(f"MEETING-TABLE-{seats}", f"Meeting table, {seats} seats", f"طاولة اجتماعات، {ar}", "tables",
+              (width, depth, 0.75), color, shape="table")
+
+
+# fields some types carry, entered in StoreyPath
+def _camera_fields() -> list[ItemField]:
+    return [ItemField(key="view_deg", name_en="Field of view (°)", name_ar="زاوية الرؤية (°)", kind="number"),
+            ItemField(key="range_m", name_en="Range (m)", name_ar="المدى (م)", kind="number"),
+            ItemField(key="model", name_en="Model", name_ar="الطراز")]
+
+
+def _model_field() -> list[ItemField]:
+    return [ItemField(key="model", name_en="Model", name_ar="الطراز")]
+
+
+OAK, WALNUT_TOP, CHAIR_FABRIC, LEATHER = "#a8845e", "#6b4a33", "#41444c", "#2b2622"
+SECURITY, FIRE, SAFETY_GREEN, IT, SERVICES, APPLIANCE = "#3f51b5", "#d32f2f", "#2e7d32", "#00897b", "#607d8b", "#78909c"
 
 
 def default_catalogue() -> Catalogue:
-    """What a new Studio starts with: desks by grade, meeting tables, central
-    photocopiers, access points, sofas, TVs, beds and wayfinding kiosks. People add more
-    as they need them."""
+    """What a new Studio starts with: furniture (desks by grade, chairs, tables, storage, soft
+    seating, beds) and the building's equipment whose place matters (security, fire and life
+    safety, IT and AV, building services, appliances), each piece an item of its own. People
+    add more as they need them."""
     return Catalogue(types=[
+        # ---- workstations: desks by grade, alone (format 0.10)
         _desk("DESK-PRESIDENT", "President's desk", "مكتب الرئيس", 2.4, 1.2, "#6b4a2b", "president"),
         _desk("DESK-CLEVEL", "C-level desk", "مكتب الإدارة العليا", 2.2, 1.1, "#7a5532", "c_level"),
         _desk("DESK-DIRECTOR", "Director's desk", "مكتب مدير", 2.0, 1.0, "#8a6238", "director"),
@@ -170,40 +217,145 @@ def default_catalogue() -> Catalogue:
         _desk("DESK-SECTION-HEAD", "Head of section desk", "مكتب رئيس قسم", 1.6, 0.8, "#a8834f", "section_head"),
         _desk("DESK-SENIOR", "Senior staff desk", "مكتب موظف أول", 1.4, 0.7, "#b8955f", "senior"),
         _desk("DESK-JUNIOR", "Junior staff desk", "مكتب موظف", 1.2, 0.6, "#c6a674", "junior"),
-        # sized to seat their number round them: in oak, a board table's (12 and more) in walnut
-        _meeting_table(4, 1.2, 1.2, "#a8845e"),
-        _meeting_table(6, 1.8, 0.9, "#a8845e"),
-        _meeting_table(8, 2.4, 1.2, "#a8845e"),
-        _meeting_table(12, 3.6, 1.4, "#6b4a33"),
-        _meeting_table(14, 4.2, 1.4, "#6b4a33"),
-        _meeting_table(16, 4.8, 1.5, "#6b4a33"),
-        ItemType(code="COPIER", name_en="Central photocopier", name_ar="آلة تصوير مركزية", category="equipment",
-                 width=1.2, depth=0.7, height=1.2, mount="floor", color="#3b6ea5", shape="copier",
-                 fields=[ItemField(key="model", name_en="Model", name_ar="الطراز"),
-                         ItemField(key="network_name", name_en="Network name", name_ar="اسم الشبكة", owner="system")]),
-        ItemType(code="ACCESS-POINT", name_en="Wireless access point", name_ar="نقطة وصول لاسلكية", category="equipment",
-                 width=0.25, depth=0.25, height=0.05, mount="ceiling", color="#1f9d8b", shape="access_point",
-                 fields=[ItemField(key="color", name_en="Colour", name_ar="اللون", kind="color"),
-                         ItemField(key="ssid", name_en="Network (SSID)", name_ar="اسم الشبكة اللاسلكية", owner="system"),
-                         ItemField(key="vlan", name_en="VLAN", name_ar="الشبكة الافتراضية", kind="number", owner="system")]),
-        ItemType(code="SOFA", name_en="Sofa", name_ar="أريكة", category="furniture",
-                 width=2.0, depth=0.9, height=0.8, mount="floor", color=SOFA_COLOR, shape="sofa",
-                 fields=[ItemField(key="seats", name_en="Seats", name_ar="عدد المقاعد", kind="number")]),
-        ItemType(code="TV", name_en="TV screen", name_ar="شاشة تلفاز", category="appliance",
-                 width=1.4, depth=0.1, height=0.8, mount="wall", color="#2b2b30", shape="screen",
-                 fields=[ItemField(key="size_in", name_en="Size (inches)", name_ar="المقاس (بوصة)", kind="number")]),
-        # for an office with a bed (long shifts): a 180 or 160 by 200 cm mattress in its
-        # frame; its height the headboard's top
-        ItemType(code="BED-KING", name_en="King-size bed", name_ar="سرير مقاس كينج", category="furniture",
-                 width=1.9, depth=2.1, height=1.0, mount="floor", color="#8a5a6e", shape="bed"),
-        ItemType(code="BED-QUEEN", name_en="Queen-size bed", name_ar="سرير مقاس كوين", category="furniture",
-                 width=1.7, depth=2.1, height=1.0, mount="floor", color="#a87b8c", shape="bed"),
-        # where a kiosk stands, its screen at its front: where people look for their
-        # office, and later start the way to it (a system that guides people links its
-        # kiosks to these items)
-        ItemType(code="KIOSK", name_en="Wayfinding kiosk", name_ar="كشك إرشاد", category="equipment",
-                 width=0.6, depth=0.45, height=1.7, mount="floor", color="#d9782b", shape="kiosk",
-                 fields=[ItemField(key="model", name_en="Model", name_ar="الطراز")]),
+        # an L-shaped desk's side part, at its user's side
+        _t("DESK-RETURN", "Desk return", "ملحق جانبي للمكتب", "workstations", (1.0, 0.5, 0.75), "#9b7444", shape="desk"),
+        _t("DESK-BENCH-4", "Bench desk, 4 places", "مكتب جماعي، 4 أماكن", "workstations", (2.8, 1.6, 0.75), "#c6a674",
+           shape="desk", workplaces=4),
+        _t("RECEPTION-DESK", "Reception desk", "مكتب استقبال", "workstations", (2.4, 0.8, 1.1), "#8a6238", shape="desk",
+           workplaces=1),
+        # ---- seating: each chair its own (format 0.10); its front where its sitter looks
+        _t("CHAIR-EXECUTIVE", "Executive chair", "كرسي تنفيذي", "seating", (0.7, 0.7, 1.25), LEATHER, shape="chair"),
+        _t("CHAIR-TASK", "Office chair", "كرسي مكتب", "seating", (0.62, 0.62, 1.0), CHAIR_FABRIC, shape="chair"),
+        _t("CHAIR-MEETING", "Meeting chair", "كرسي اجتماعات", "seating", (0.6, 0.6, 0.95), "#4a4e57", shape="chair"),
+        _t("CHAIR-BOARD", "Boardroom chair", "كرسي مجلس الإدارة", "seating", (0.68, 0.68, 1.2), LEATHER, shape="chair"),
+        _t("CHAIR-VISITOR", "Visitor chair", "كرسي زائر", "seating", (0.5, 0.5, 0.88), "#5b5f69", shape="side_chair"),
+        _t("SEATS-WAITING-3", "Waiting seats, 3", "مقاعد انتظار، 3 مقاعد", "seating", (1.7, 0.6, 0.8), "#5b5f69",
+           shape="sofa"),
+        # ---- tables: alone (format 0.10), sized to seat their number round them: in oak, a
+        # board table's (12 and more) in walnut
+        _meeting_table(4, 1.2, 1.2, OAK),
+        _meeting_table(6, 1.8, 0.9, OAK),
+        _meeting_table(8, 2.4, 1.2, OAK),
+        _meeting_table(10, 3.0, 1.2, OAK),
+        _meeting_table(12, 3.6, 1.4, WALNUT_TOP),
+        _meeting_table(14, 4.2, 1.4, WALNUT_TOP),
+        _meeting_table(16, 4.8, 1.5, WALNUT_TOP),
+        _t("TABLE-TRAINING", "Training table", "طاولة تدريب", "tables", (1.6, 0.6, 0.75), "#c6a674", shape="table"),
+        _t("TABLE-DINING-4", "Dining table, 4 seats", "طاولة طعام، 4 مقاعد", "tables", (1.2, 0.8, 0.75), OAK, shape="table"),
+        _t("TABLE-COFFEE", "Coffee table", "طاولة قهوة", "tables", (1.0, 0.6, 0.42), WALNUT_TOP, shape="table"),
+        _t("TABLE-SIDE", "Side table", "طاولة جانبية", "tables", (0.5, 0.5, 0.55), WALNUT_TOP, shape="table"),
+        # ---- storage
+        _t("PEDESTAL", "Drawer pedestal", "وحدة أدراج متنقلة", "storage", (0.42, 0.55, 0.6), "#8d9096", shape="storage"),
+        _t("CREDENZA", "Credenza", "خزانة جانبية منخفضة", "storage", (1.6, 0.45, 0.72), "#7a5532", shape="storage"),
+        _t("CABINET-FILING", "Filing cabinet", "خزانة ملفات", "storage", (0.8, 0.45, 1.32), "#9aa0a6", shape="storage"),
+        _t("CUPBOARD-TALL", "Tall cupboard", "خزانة طويلة", "storage", (0.9, 0.45, 2.0), "#b8955f", shape="storage"),
+        _t("BOOKCASE", "Bookcase", "خزانة كتب", "storage", (0.9, 0.35, 1.8), "#8a6238", shape="storage"),
+        _t("LOCKERS-6", "Lockers, 6 doors", "خزائن شخصية، 6 أبواب", "storage", (0.9, 0.5, 1.8), "#7d8a96", shape="storage"),
+        _t("SAFE", "Safe", "خزنة", "storage", (0.5, 0.5, 0.8), "#4a4d51", shape="storage"),
+        # ---- soft seating
+        _t("SOFA", "Sofa", "أريكة", "soft_seating", (2.0, 0.9, 0.8), SOFA_COLOR, shape="sofa",
+           fields=[ItemField(key="seats", name_en="Seats", name_ar="عدد المقاعد", kind="number")]),
+        _t("SOFA-2", "Two-seat sofa", "أريكة لشخصين", "soft_seating", (1.5, 0.85, 0.8), SOFA_COLOR, shape="sofa"),
+        _t("ARMCHAIR", "Armchair", "كرسي بذراعين", "soft_seating", (0.75, 0.75, 0.88), "#7a6f64", shape="armchair"),
+        # ---- beds: for an office with a bed (long shifts), a 180 or 160 by 200 cm mattress in
+        # its frame; its height the headboard's top
+        _t("BED-KING", "King-size bed", "سرير مقاس كينج", "beds", (1.9, 2.1, 1.0), "#8a5a6e", shape="bed"),
+        _t("BED-QUEEN", "Queen-size bed", "سرير مقاس كوين", "beds", (1.7, 2.1, 1.0), "#a87b8c", shape="bed"),
+        # ---- security: a camera looks the way its front faces
+        _t("CCTV-DOME", "CCTV camera, dome", "كاميرا مراقبة قبّية", "security", (0.15, 0.15, 0.12), SECURITY,
+           mount="ceiling", shape="camera", fields=_camera_fields()),
+        _t("CCTV-BULLET", "CCTV camera, bullet", "كاميرا مراقبة أسطوانية", "security", (0.1, 0.25, 0.1), SECURITY,
+           mount="wall", elevation=2.6, shape="camera", fields=_camera_fields()),
+        _t("CCTV-PTZ", "CCTV camera, PTZ", "كاميرا مراقبة متحركة (PTZ)", "security", (0.22, 0.22, 0.3), SECURITY,
+           mount="ceiling", shape="camera", fields=_camera_fields()),
+        _t("CARD-READER", "Access card reader", "قارئ بطاقات الدخول", "security", (0.09, 0.04, 0.14), "#283593",
+           mount="wall", elevation=1.1, fields=_model_field()),
+        _t("DOOR-CONTROLLER", "Door controller", "وحدة التحكم بالباب", "security", (0.3, 0.1, 0.4), "#283593",
+           mount="wall", elevation=2.2, fields=_model_field()),
+        _t("EXIT-BUTTON", "Exit button", "زر الخروج", "security", (0.09, 0.04, 0.09), "#5c6bc0", mount="wall", elevation=1.1),
+        _t("INTERCOM", "Intercom", "جهاز اتصال داخلي (إنتركم)", "security", (0.12, 0.04, 0.2), "#283593", mount="wall",
+           elevation=1.3),
+        _t("ALARM-KEYPAD", "Alarm keypad", "لوحة مفاتيح نظام الإنذار", "security", (0.15, 0.03, 0.12), "#283593",
+           mount="wall", elevation=1.4),
+        _t("MOTION-SENSOR", "Motion sensor", "حساس حركة", "security", (0.1, 0.1, 0.05), "#5c6bc0", mount="ceiling"),
+        _t("PANIC-BUTTON", "Panic button", "زر الطوارئ", "security", (0.08, 0.04, 0.08), "#c62828", mount="wall",
+           elevation=0.8),
+        _t("TURNSTILE", "Turnstile", "بوابة دوّارة", "security", (1.2, 0.3, 1.0), "#5f6b7a"),
+        # ---- fire and life safety
+        _t("SMOKE-DETECTOR", "Smoke detector", "كاشف دخان", "fire_safety", (0.12, 0.12, 0.05), FIRE, mount="ceiling"),
+        _t("HEAT-DETECTOR", "Heat detector", "كاشف حرارة", "fire_safety", (0.12, 0.12, 0.05), "#e57373", mount="ceiling"),
+        _t("CALL-POINT", "Fire alarm call point", "نقطة نداء إنذار الحريق", "fire_safety", (0.09, 0.05, 0.09), FIRE,
+           mount="wall", elevation=1.4),
+        _t("FIRE-ALARM-PANEL", "Fire alarm panel", "لوحة التحكم بإنذار الحريق", "fire_safety", (0.45, 0.12, 0.35), FIRE,
+           mount="wall", elevation=1.5, fields=_model_field()),
+        _t("ALARM-SOUNDER", "Fire alarm sounder", "جرس إنذار الحريق", "fire_safety", (0.12, 0.08, 0.12), FIRE,
+           mount="wall", elevation=2.3),
+        _t("FIRE-EXTINGUISHER", "Fire extinguisher", "طفاية حريق", "fire_safety", (0.2, 0.2, 0.6), FIRE,
+           fields=[ItemField(key="agent", name_en="Agent", name_ar="مادة الإطفاء", kind="choice",
+                             choices=["CO2", "Dry powder", "Foam", "Water", "Wet chemical"]),
+                   ItemField(key="capacity_kg", name_en="Capacity (kg)", name_ar="السعة (كغ)", kind="number")]),
+        _t("FIRE-HOSE-REEL", "Fire hose reel cabinet", "خزانة بكرة خرطوم الحريق", "fire_safety", (0.8, 0.25, 0.8), FIRE,
+           mount="wall", elevation=0.9),
+        _t("FIRE-BLANKET", "Fire blanket", "بطانية الحريق", "fire_safety", (0.25, 0.08, 0.3), FIRE, mount="wall",
+           elevation=1.4),
+        _t("EMERGENCY-LIGHT", "Emergency light", "إضاءة الطوارئ", "fire_safety", (0.35, 0.12, 0.06), "#f9a825",
+           mount="ceiling"),
+        _t("EXIT-SIGN", "Exit sign", "لوحة مخرج الطوارئ", "fire_safety", (0.35, 0.03, 0.2), SAFETY_GREEN, mount="wall",
+           elevation=2.2),
+        _t("FIRST-AID-KIT", "First-aid kit", "حقيبة الإسعافات الأولية", "fire_safety", (0.4, 0.15, 0.3), SAFETY_GREEN,
+           mount="wall", elevation=1.4),
+        _t("AED", "Defibrillator (AED)", "جهاز الصدمات الكهربائية (AED)", "fire_safety", (0.4, 0.2, 0.45), SAFETY_GREEN,
+           mount="wall", elevation=1.2),
+        # ---- IT and AV
+        _t("ACCESS-POINT", "Wireless access point", "نقطة وصول لاسلكية", "it_av", (0.25, 0.25, 0.05), "#1f9d8b",
+           mount="ceiling", shape="access_point",
+           fields=[ItemField(key="color", name_en="Colour", name_ar="اللون", kind="color"),
+                   ItemField(key="ssid", name_en="Network (SSID)", name_ar="اسم الشبكة اللاسلكية", owner="system"),
+                   ItemField(key="vlan", name_en="VLAN", name_ar="الشبكة الافتراضية", kind="number", owner="system")]),
+        _t("NETWORK-RACK", "Network rack", "خزانة الشبكة (راك)", "it_av", (0.6, 1.0, 2.0), "#2f3238", shape="storage"),
+        _t("FLOOR-BOX", "Floor box, data and power", "علبة أرضية للبيانات والكهرباء", "it_av", (0.3, 0.3, 0.02), "#546e7a"),
+        _t("DATA-POINT", "Data point", "نقطة بيانات", "it_av", (0.09, 0.04, 0.09), IT, mount="wall", elevation=0.3),
+        _t("COPIER", "Central photocopier", "آلة تصوير مركزية", "it_av", (1.2, 0.7, 1.2), "#3b6ea5", shape="copier",
+           fields=[ItemField(key="model", name_en="Model", name_ar="الطراز"),
+                   ItemField(key="network_name", name_en="Network name", name_ar="اسم الشبكة", owner="system")]),
+        _t("PRINTER", "Printer", "طابعة", "it_av", (0.5, 0.5, 0.45), "#3b6ea5", shape="copier",
+           fields=[ItemField(key="model", name_en="Model", name_ar="الطراز"),
+                   ItemField(key="network_name", name_en="Network name", name_ar="اسم الشبكة", owner="system")]),
+        _t("TV", "TV screen", "شاشة تلفاز", "it_av", (1.4, 0.1, 0.8), "#2b2b30", mount="wall", shape="screen",
+           fields=[ItemField(key="size_in", name_en="Size (inches)", name_ar="المقاس (بوصة)", kind="number")]),
+        _t("VIDEO-BAR", "Video-conference bar", "وحدة مؤتمرات الفيديو", "it_av", (0.9, 0.1, 0.12), "#2b2b30", mount="wall",
+           elevation=1.0, fields=_model_field()),
+        _t("PROJECTOR", "Projector", "جهاز عرض (بروجكتر)", "it_av", (0.4, 0.35, 0.15), "#eceff1", mount="ceiling",
+           fields=_model_field()),
+        _t("PROJECTION-SCREEN", "Projection screen", "شاشة إسقاط", "it_av", (2.4, 0.1, 0.1), "#eceff1", mount="ceiling"),
+        _t("DIGITAL-SIGN", "Digital sign", "لافتة رقمية", "it_av", (0.6, 0.05, 1.0), "#2b2b30", mount="wall", elevation=1.2,
+           shape="screen"),
+        _t("ROOM-PANEL", "Room booking panel", "لوحة حجز القاعة", "it_av", (0.25, 0.04, 0.18), "#2b2b30", mount="wall",
+           elevation=1.4, shape="screen"),
+        # where a kiosk stands, its screen at its front: where people look for their office, and
+        # later start the way to it (a system that guides people links its kiosks to these items)
+        _t("KIOSK", "Wayfinding kiosk", "كشك إرشاد", "it_av", (0.6, 0.45, 1.7), "#d9782b", shape="kiosk",
+           fields=_model_field()),
+        # ---- building services
+        _t("AC-CASSETTE", "Air-conditioning unit, ceiling cassette", "وحدة تكييف سقفية (كاسيت)", "building_services",
+           (0.84, 0.84, 0.3), "#cfd8dc", mount="ceiling"),
+        _t("AC-SPLIT", "Air-conditioning unit, wall split", "وحدة تكييف جدارية (سبليت)", "building_services",
+           (0.9, 0.25, 0.3), "#cfd8dc", mount="wall", elevation=2.2),
+        _t("THERMOSTAT", "Thermostat", "منظم الحرارة (ثرموستات)", "building_services", (0.09, 0.03, 0.09), SERVICES,
+           mount="wall", elevation=1.4),
+        _t("ELECTRICAL-PANEL", "Electrical panel", "لوحة توزيع الكهرباء", "building_services", (0.6, 0.2, 0.8), SERVICES,
+           mount="wall", elevation=1.2),
+        _t("WATER-HEATER", "Water heater", "سخان مياه", "building_services", (0.5, 0.5, 0.8), SERVICES, mount="wall",
+           elevation=1.6),
+        _t("HAND-DRYER", "Hand dryer", "مجفف الأيدي", "building_services", (0.3, 0.2, 0.3), SERVICES, mount="wall",
+           elevation=1.0),
+        # ---- appliances
+        _t("FRIDGE", "Fridge", "ثلاجة", "appliances", (0.7, 0.7, 1.8), APPLIANCE),
+        _t("MICROWAVE", "Microwave", "ميكروويف", "appliances", (0.5, 0.4, 0.3), APPLIANCE, elevation=0.9),
+        _t("COFFEE-MACHINE", "Coffee machine", "آلة قهوة", "appliances", (0.4, 0.45, 0.45), APPLIANCE, elevation=0.9),
+        _t("WATER-DISPENSER", "Water dispenser", "مبرّد مياه", "appliances", (0.35, 0.35, 1.1), APPLIANCE),
+        _t("VENDING-MACHINE", "Vending machine", "آلة بيع ذاتي", "appliances", (0.9, 0.8, 1.85), APPLIANCE),
+        _t("SHREDDER", "Paper shredder", "آلة إتلاف الورق", "appliances", (0.45, 0.35, 0.7), APPLIANCE),
     ])
 
 
@@ -243,14 +395,21 @@ def read(text: str) -> tuple[Catalogue, bool]:
     """A catalogue from its JSON, with what this Studio says of its own default types
     where an older file says nothing (how many people work at one, the grade a desk is
     for, how it is drawn) or says what an older Studio gave them (OLD_DEFAULTS); and
-    whether any was filled in."""
+    whether any was filled in. One older than CATALOGUE_VERSION 2 (format 0.10) gives its
+    default types this Studio's category and shape: categories by what a thing is for, and a
+    desk and a table drawn alone (their chairs types of their own)."""
     raw = json.loads(text)
     defaults = {t.code: t for t in default_catalogue().types}
     filled = False
+    older = isinstance(raw, dict) and isinstance(raw.get("format_version"), int) and raw["format_version"] < CATALOGUE_VERSION
+    if older:
+        raw["format_version"], filled = CATALOGUE_VERSION, True
     for t in raw.get("types", []):
         d = defaults.get(t.get("code"))
         if d is None:
             continue
+        if older:
+            t["category"], t["shape"] = d.category, d.shape
         for key in ("workplaces", "grade", "shape"):
             if key not in t:
                 t[key], filled = getattr(d, key), True

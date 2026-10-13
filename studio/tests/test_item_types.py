@@ -35,11 +35,12 @@ def test_every_default_type_says_how_it_is_drawn_and_one_without_is_drawn_by_its
     cat = catalogue.default_catalogue()
     shapes = {t.code: t.shape for t in cat.types}
     assert all(shapes.values()) and set(shapes.values()) <= set(catalogue.SHAPES)
-    assert (shapes["DESK-MANAGER"], shapes["MEETING-TABLE-8"], shapes["TV"], shapes["ACCESS-POINT"], shapes["KIOSK"]) == \
-        ("desk", "meeting_table", "screen", "access_point", "kiosk")
+    assert (shapes["DESK-MANAGER"], shapes["MEETING-TABLE-8"], shapes["CHAIR-TASK"], shapes["CHAIR-VISITOR"], shapes["CREDENZA"],
+            shapes["CCTV-DOME"], shapes["TV"], shapes["ACCESS-POINT"], shapes["KIOSK"]) == \
+        ("desk", "table", "chair", "side_chair", "storage", "camera", "screen", "access_point", "kiosk")
     of = lambda code, shape=None: catalogue.shape_of(catalogue.ItemType(code=code, name_en="x", shape=shape))  # noqa: E731
-    assert (of("DESK-HOT"), of("SCREEN-LED"), of("PRINTER-A3"), of("LOCKER"), of("LOCKER", "copier")) == \
-        ("desk", "screen", "copier", "box", "copier")
+    assert (of("DESK-HOT"), of("MEETING-ROUND"), of("SCREEN-LED"), of("PRINTER-A3"), of("LOCKER"), of("LOCKER", "copier"),
+            of("TABLE-X", "meeting_table")) == ("desk", "table", "screen", "copier", "box", "copier", "table")
 
 
 def test_a_shape_this_studio_does_not_know_is_read_as_none_and_an_older_catalogue_gains_its_defaults_shapes(tmp_path):
@@ -83,7 +84,7 @@ def test_a_package_carries_the_types_its_items_use_each_once_or_the_whole_catalo
     assert validate_package(tmp_path / "all.storeypath") == []
     with zipfile.ZipFile(tmp_path / "used.storeypath") as z:  # each with how it is drawn
         assert {t["code"]: t["shape"] for t in json.loads(z.read("catalogue.json"))["types"]} == \
-            {"DESK-MANAGER": "desk", "MEETING-TABLE-8": "meeting_table"}
+            {"DESK-MANAGER": "desk", "MEETING-TABLE-8": "table"}
     # Studio's own viewers: every type (one no item has yet may be placed there)
     preview_package(ws, tmp_path / "preview.storeypath", catalogue=cat)
     assert len(_types_of(tmp_path / "preview.storeypath")) == len(cat.types)

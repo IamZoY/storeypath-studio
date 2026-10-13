@@ -412,7 +412,7 @@ gives.
 Every building opens as a 3D world, straight from Studio, with nothing downloaded:
 the walls at the thickness they were drawn, with skirting, parapets around roofs
 and terraces, doorways you walk through, doors with architraves and handles that
-open and shut, windows with sills, boards and glass, stairs with their steps, furniture with its chairs,
+open and shut, windows with sills, boards and glass, stairs with their steps, furniture and equipment,
 floors and walls finished as each room is (its own finishes, or its type's: carpet
 tiles in offices, marble in lobbies, porcelain in corridors, restrooms and kitchens,
 terrazzo on stairs, oak in homes), under a sun that casts soft shadows, with ambient

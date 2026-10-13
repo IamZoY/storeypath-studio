@@ -11,12 +11,13 @@ import re
 from datetime import datetime
 from typing import Annotated, Generic, Literal, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .catalogue import OLD_CATEGORIES, Category
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.9.3"
+FORMAT_VERSION = "0.10.0"
 FILE_EXTENSION = ".storeypath"
 # one building per package from 0.7 (before: a whole project, or a part of it)
 ONE_BUILDING_FROM = (0, 7)
@@ -214,7 +215,7 @@ class ItemLocal(_Model):
 class ItemProps(_Props):
     kind: Literal["item"]
     type: str = Field(description="the item's type: a code of catalogue.json (DESK-MANAGER, COPIER, …)")
-    category: Literal["furniture", "equipment", "appliance"]
+    category: Category = Field(description="its type's category (format 0.10): what it is for, of the catalogue's")
     name: str = Field(description="its type's English name, for readers that do not read the catalogue")
     floor_id: str
     building_id: str
@@ -235,6 +236,12 @@ class ItemProps(_Props):
     values: dict[str, str | float] = Field(default_factory=dict, description=(
         "its details entered in StoreyPath, by the catalogue's field keys (the others belong to the "
         "system that manages the asset)"))
+
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _category(cls, v):
+        return OLD_CATEGORIES.get(v, v)  # (0.9's appliance)
 
 
 P = TypeVar("P", bound=_Props)

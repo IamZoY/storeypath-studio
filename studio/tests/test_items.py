@@ -16,7 +16,7 @@ def test_the_catalogue_starts_with_desks_by_grade_copiers_access_points_sofas_tv
     assert ap.mount == "ceiling" and {f.key: f.owner for f in ap.fields}["ssid"] == "system"  # the network: wayfinder's
     assert {f.key: f.owner for f in ap.fields}["color"] == "storeypath"
     kiosk = cat.get("KIOSK")  # where people look up their office, and later start the way to it
-    assert (kiosk.category, kiosk.mount, kiosk.workplaces, kiosk.grade) == ("equipment", "floor", 0, None)
+    assert (kiosk.category, kiosk.mount, kiosk.workplaces, kiosk.grade) == ("it_av", "floor", 0, None)
     assert all(t.name_ar for t in cat.types)
     assert catalogue.load(tmp_path) == cat  # read back as written
 

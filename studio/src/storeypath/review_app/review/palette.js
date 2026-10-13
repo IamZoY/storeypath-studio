@@ -16,6 +16,7 @@ import { toast } from "./notify.js";
 import { select, selectAsset } from "./selection.js";
 import { code, color, state, title, typeLabel, typeOf, units, visible } from "./state.js";
 import { normalizeItemId } from "/viewer/src/ids.js";
+import { CATEGORIES, SIDES, categoryOf, categoryName } from "../categories.js";
 
 // with nothing typed: what was run from here last, then what is most asked for
 const SUGGESTED = ["review.start", "tool.place", "tool.wall", "view.3d", "view.walk", "edit.history", "share.export",
@@ -37,8 +38,6 @@ let mode = "find"; // "find" (⌘K) or "insert" (openInsert): what the box finds
 let place = null; // (insert) what choosing a type does: place(code)
 let within = null; // (insert) the category chosen: its types alone; null, every category
 
-const CATEGORY_NAMES = { furniture: "Furniture", equipment: "Equipment", appliance: "Appliances" };
-const categoryName = (c) => CATEGORY_NAMES[c] || c.replaceAll("_", " ").replace(/^./, (x) => x.toUpperCase());
 const placedLately = () => {
   try {
     return JSON.parse(saved("storeypath.review.placed") || "[]");
@@ -52,7 +51,7 @@ const rememberPlaced = (code) => save("storeypath.review.placed", JSON.stringify
  * category (chosen: its types); else the types that match, best first. Within a category,
  * its types alone (those that match what is typed), after the way back. */
 function typeResults(q) {
-  const live = (state.catalogue || []).filter((t) => !t.retired && (!within || t.category === within));
+  const live = (state.catalogue || []).filter((t) => !t.retired && (!within || categoryOf(t.category).key === within));
   const row = (t, group, sc) => ({ group, score: sc, swatch: t.color || "#8a8a8a", title: t.name_en,
     sub: [t.name_ar, categoryName(t.category), `${t.width} × ${t.depth} m`, t.mount && t.mount !== "floor" ? `on the ${t.mount}` : null]
       .filter(Boolean).join(" · "),
@@ -70,12 +69,17 @@ function typeResults(q) {
   if (!q) {
     const lately = placedLately().map((c) => live.find((t) => t.code === c)).filter(Boolean);
     const counts = new Map();
-    for (const t of live) counts.set(t.category, (counts.get(t.category) || 0) + 1);
+    for (const t of live) counts.set(categoryOf(t.category).key, (counts.get(categoryOf(t.category).key) || 0) + 1);
+    // the categories in their order (one a later format adds, after), under furniture or equipment
+    const order = [...CATEGORIES.map((c) => c.key), ...[...counts.keys()].filter((k) => !CATEGORIES.some((c) => c.key === k))];
     return [...lately.map((t) => row(t, "Placed lately", 1)),
-      ...[...counts].map(([c, n]) => ({ group: "Categories", score: 0, icon: "layers", title: categoryName(c), sub: `${n} types`, keep: true,
-        run: () => goInto(c) }))];
+      ...order.filter((k) => counts.has(k)).map((k) => {
+        const c = categoryOf(k), n = counts.get(k);
+        return { group: SIDES[c.side], score: 0, icon: c.icon, title: c.name, sub: [`${n} type${n === 1 ? "" : "s"}`, c.ar].filter(Boolean).join(" · "),
+          keep: true, run: () => goInto(k) };
+      })];
   }
-  return live.map((t) => [score(q, `${t.name_en} ${t.name_ar || ""} ${t.code} ${categoryName(t.category)} ${t.shape || ""}`), t])
+  return live.map((t) => [score(q, `${t.name_en} ${t.name_ar || ""} ${t.code} ${categoryName(t.category)} ${categoryOf(t.category).ar} ${t.shape || ""}`), t])
     .filter(([sc]) => sc > 0).sort((a, b) => b[0] - a[0]).slice(0, 14).map(([sc, t]) => row(t, "Item types", sc));
 }
 

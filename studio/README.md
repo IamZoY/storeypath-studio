@@ -771,11 +771,14 @@ on the command line), written with the default types the first time Studio needs
 A package carries the types its items use, each once (exported with *Every item type*,
 `item_types: "all"`, `--item-types all`: the whole catalogue), so another system knows
 them and may take them into its own. A type
-has a `code` kept for good, English and Arabic names, a `category` (furniture,
-equipment, appliance), a size, a `mount` (floor, wall, ceiling), a colour, a `shape`
-(how the viewers draw it, format 0.9.1: `desk`, `meeting_table`, `sofa`, `screen`,
-`copier`, `bed`, `kiosk`, `access_point` or `box`; none: as its code's first part
-says), `workplaces` (a desk: 1) and, for desks, a `grade`, and its `fields`: each owned by
+has a `code` kept for good, English and Arabic names, a `category` (format 0.10:
+`workstations`, `seating`, `tables`, `storage`, `soft_seating`, `beds`, `security`,
+`fire_safety`, `it_av`, `building_services`, `appliances`, or `furniture` / `equipment`
+for anything else), a size, a `mount` (floor, wall, ceiling), a colour, a `shape` (how
+the viewers draw it, format 0.9.1; 0.10: `desk`, `table`, `chair`, `side_chair`,
+`armchair`, `sofa`, `storage`, `screen`, `copier`, `bed`, `kiosk`, `access_point`,
+`camera` or `box`; none: as its code's first part says; a desk and a table drawn alone,
+their chairs types of their own), `workplaces` (a desk: 1) and, for desks, a `grade`, and its `fields`: each owned by
 `storeypath` (entered in Studio) or by the `system` that manages the asset (entered
 there, never in a package). A type may have a 3D **model** (format 0.9.2,
 [models.py](src/storeypath/models.py)): a `.glb` sent for it is read whole (its nodes'
