@@ -419,3 +419,23 @@ def test_the_outline_spans_a_facade_of_columns_even_with_a_stray_line_in_the_wal
     assert _envelope(polygonal(GeometryCollection(walls)), 4.0).covers(room)
     assert _envelope(stray, 4.0).covers(room)
     assert polygonal(stray).geom_type == "MultiPolygon" and closing(stray, 0.3).geom_type in ("Polygon", "MultiPolygon")
+
+
+def test_a_wall_fill_whose_point_has_jumped_far_off_loses_its_spike():
+    # A damaged hatch: a wall piece whose boundary runs 80 m out to a stray point and
+    # straight back, a thin wedge across a courtyard. The spike goes, the wall stays; a long
+    # wall, an L and a wedge-shaped wall (a tapered end) are kept as they are.
+    from shapely.geometry import Polygon
+
+    from storeypath.extract import _fill_without_spikes as _without_spikes
+
+    wall = [(0.0, 0.0), (1.0, 0.0), (1.0, 0.3), (0.0, 0.3)]
+    spiked = [(0.0, 0.0), (1.0, 0.0), (1.0, 0.3), (-40.0, 70.0), (-38.8, 69.8), (1.0, 0.3), (0.0, 0.3)]
+    assert Polygon(_without_spikes(spiked)).equals(Polygon(wall))
+    only_spike = [(1.0, 0.3), (-40.0, 70.0), (-38.8, 69.8)]
+    assert len(_without_spikes(only_spike)) < 3
+    long_wall = [(0.0, 0.0), (30.0, 0.0), (30.0, 0.25), (0.0, 0.25)]
+    ell = [(0.0, 0.0), (12.0, 0.0), (12.0, 0.3), (0.3, 0.3), (0.3, 9.0), (0.0, 9.0)]
+    taper = [(0.0, 0.0), (8.0, 0.1), (8.0, 0.2), (0.0, 0.6)]
+    for shape in (long_wall, ell, taper):
+        assert _without_spikes(shape) == shape

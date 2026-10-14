@@ -1322,12 +1322,54 @@ def _wall_hatch(e, tol, scale, max_thickness, lines, fills) -> None:
             continue
         if pts is None or len(pts) < 3:
             continue
-        pts = [(x * scale, y * scale) for x, y in pts]
+        pts = _fill_without_spikes([(x * scale, y * scale) for x, y in pts])
+        if len(pts) < 3:
+            continue
         for poly in as_polygons(make_valid(Polygon(pts))):
             if poly.area <= HATCH_FILL_MAX_M2 or poly.buffer(-max_thickness / 2).is_empty:
                 fills.append(poly)
             else:
                 lines.append(poly.exterior)
+
+
+FILL_SPIKE_M = 5.0  # a boundary that runs out this far…
+FILL_SPIKE_TIP_M = 1.5  # …turns within this…
+FILL_SPIKE_DEG = 10.0  # …and comes straight back (within this of the way it went)…
+FILL_SPIKE_BACK_M = 0.05  # …to the very point it left: a spike
+
+
+def _fill_without_spikes(pts: list) -> list:
+    """A fill's boundary (metres) without its spikes: a run out from a point, a short tip
+    and a run straight back to the very point it left (within FILL_SPIKE_BACK_M), both runs
+    FILL_SPIKE_M or more. A damaged hatch's boundary has one when a point of it has jumped far
+    off: drawn, a thin wedge across whatever lies between. A long wall comes back as wide
+    as its end, a tapered one as wide as its narrow end: neither to a point."""
+    pts = [tuple(p) for p in pts]
+    if len(pts) > 1 and pts[0] == pts[-1]:
+        pts = pts[:-1]
+    changed = True
+    while changed and len(pts) >= 3:
+        changed = False
+        n = len(pts)
+        for i in range(n):
+            a, b = np.asarray(pts[i]), np.asarray(pts[(i + 1) % n])
+            out = b - a
+            if np.hypot(*out) < FILL_SPIKE_M:
+                continue
+            k = i + 1  # the tip: the points within FILL_SPIKE_TIP_M of the run's far end
+            while k + 1 < i + n and np.hypot(*(np.asarray(pts[(k + 1) % n]) - b)) <= FILL_SPIKE_TIP_M:
+                k += 1
+            c, r = np.asarray(pts[k % n]), np.asarray(pts[(k + 1) % n])
+            back = r - c
+            turn = np.dot(out, back) / (np.hypot(*out) * (np.hypot(*back) or 1.0))
+            if np.hypot(*back) >= FILL_SPIKE_M and np.hypot(*(r - a)) <= FILL_SPIKE_BACK_M \
+                    and turn <= -np.cos(np.radians(FILL_SPIKE_DEG)):
+                gone = {j % n for j in range(i + 1, k + 1)}
+                pts = [p for j, p in enumerate(pts) if j not in gone]
+                pts = [p for j, p in enumerate(pts) if p != pts[j - 1]] or pts[:1]  # (its foot, once)
+                changed = True
+                break
+    return pts
 
 
 CONTAINER_SHARE = 0.5  # an outline is the floor's, not a room, when the outlines in it cover this much of it
