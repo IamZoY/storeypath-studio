@@ -859,6 +859,39 @@ def test_a_broken_entity_the_auditor_misses_is_left_out_too(plain_office, breaka
     assert len(convert_floor(ws, f, tmp_path).added) == counts["ncs"]
 
 
+def test_a_hatch_outline_that_does_not_close_is_left_out_as_cad_programs_leave_it(tmp_path):
+    # A damaged wall hatch: a piece of wall (closed) and a leftover outline of three edges
+    # that do not meet (one of no length far off). A CAD program leaves the leftover
+    # unfilled; joined as it is, it would draw a thin wedge 80 m across the plan. An
+    # outline whose edges are stored out of order, or the wrong way round, still closes.
+    import math
+
+    import ezdxf.path
+
+    from storeypath.cad import read_drawing, read_notes
+
+    doc = ezdxf.new()
+    h = doc.modelspace().add_hatch(dxfattribs={"layer": "A-WALL"})
+    wall = h.paths.add_edge_path(flags=16)
+    for a, b in (((0, 0), (640, 0)), ((640, 0), (640, 200)), ((640, 200), (0, 200)), ((0, 200), (0, 0))):
+        wall.add_line(a, b)
+    leftover = h.paths.add_edge_path(flags=1)
+    leftover.add_line((40000, -70000), (40000, -70000))
+    leftover.add_line((-1100, 200), (0, 200))
+    leftover.add_line((-1100, 0), (0, 0))
+    shuffled = h.paths.add_edge_path(flags=0)
+    for a, b in (((100, 50), (200, 50)), ((200, 150), (100, 150)), ((200, 50), (200, 150)), ((100, 50), (100, 150))):
+        shuffled.add_line(a, b)
+    doc.saveas(tmp_path / "hatch.dxf")
+    read = read_drawing(tmp_path / "hatch.dxf")
+    hatch = next(iter(read.modelspace().query("HATCH")))
+    assert len(hatch.paths.paths) == 2
+    assert any("1 hatch outline(s) that do not close were left out" in n for n in read_notes(read))
+    longest = max(math.dist(a, b) for p in ezdxf.path.from_hatch(hatch)
+                  for a, b in itertools.pairwise([(v.x, v.y) for v in p.flattening(1)]))
+    assert longest <= 640.01
+
+
 def test_views_are_drawn_only_a_little_ahead_of_the_model():
     import threading
     import time

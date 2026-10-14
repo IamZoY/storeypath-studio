@@ -349,7 +349,7 @@ what they may see.
 | `item-id TEXT…` | an item's ID as a person typed it (`7k2q xm9f 4dp`), as it is written (`7K2Q-XM9F-4DP`); fails when it is not one |
 | `private DRAWING OUT.dxf` | copy a drawing without its private information (see below) |
 | `words DRAWING` | every word and string in a drawing, to look through for anything private |
-| `sample make FILE --floor ID --area x0,y0,x1,y1` | an area sample of a floor (at most 50 × 50 m), as Review's *Share an area* makes it: `-o`, `--note`, `--list` (what would be taken out, with ids), `--keep ID`, `--remove ID` ([area samples](../docs/AREA-SAMPLES.md)) |
+| `sample make FILE --floor ID --area x0,y0,x1,y1` | an area sample of a floor (at most 300 × 300 m), as Review's *Share an area* makes it: `-o`, `--note`, `--list` (what would be taken out, with ids), `--keep ID`, `--remove ID` ([area samples](../docs/AREA-SAMPLES.md)) |
 | `sample inspect SAMPLE` | what is in an area sample: the note, counts, what Studio decided there and by whom, the corrections as a diff |
 | `sample replay SAMPLE` | read a sample's drawing with this Studio and compare with Studio then and with the corrections, with a score: `-o DIR` (replay.json, replay.png, side-by-side.png), `--no-model`, `--no-vision`, `--fresh` (without the answers the sample keeps), `--no-edits`, `--units`, `--json` |
 | `view PACKAGE` | open a package in the viewer's example app |

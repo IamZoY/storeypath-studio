@@ -435,5 +435,5 @@ def test_whoever_may_see_a_floor_shares_an_area_of_it(site):
     assert said and said[0]["target"] == site.ids["hq0"]
     for role, want in (("building_editor", 404), ("nobody", 404), ("anon", 401)):
         assert site.as_(role, "POST", path, {"area": area})[0] == want, role
-    status, got, _ = site.as_("floor_viewer", "POST", path, {"area": [100, 40, 160, 60]})
-    assert status == 400 and "at most 50" in got["error"]
+    status, got, _ = site.as_("floor_viewer", "POST", path, {"area": [100, 40, 410, 60]})
+    assert status == 400 and "at most 300" in got["error"]

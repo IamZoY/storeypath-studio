@@ -161,7 +161,84 @@ def _audited(doc: Drawing) -> Drawing:
     if removed:
         more = f" (and {len(removed) - 1} more)" if len(removed) > 1 else ""
         _note(doc, f"{len(removed)} broken entities were left out of the drawing as it was read: {removed[0]}{more}")
+    broken = _close_hatch_outlines(doc)
+    if broken:
+        _note(doc, f"{broken} hatch outline(s) that do not close were left out, as CAD programs leave them unfilled")
     return doc
+
+
+HATCH_GAP = 1e-3  # an outline's edges meet when this close, as a share of its size
+
+
+def _close_hatch_outlines(doc: Drawing) -> int:
+    """Every hatch's outlines made of edges (in the model and in blocks), each joined end
+    to end: in the order stored, else reordered (and turned) so each edge starts where one
+    ends. One that still does not close is taken out: a damaged hatch's leftover (its edges
+    far apart, a point of it jumped off), which a CAD program leaves unfilled and a reader
+    joining it as it is draws as a long thin wedge across the plan. How many were."""
+    taken = 0
+    for e in doc.entitydb.values():
+        if e.dxftype() != "HATCH" or not e.is_alive:
+            continue
+        try:
+            paths = list(e.paths)
+        except Exception:
+            continue
+        keep = []
+        for p in paths:
+            if type(p).__name__ != "EdgePath" or _edges_close(p):
+                keep.append(p)
+        if len(keep) < len(paths):
+            taken += len(paths) - len(keep)
+            e.paths.paths = keep
+    return taken
+
+
+def _edge_ends(edge):
+    """An edge's start and end (x, y), or None for an edge whose ends are not known."""
+    kind = type(edge).__name__
+    if kind == "LineEdge":
+        return (edge.start[0], edge.start[1]), (edge.end[0], edge.end[1])
+    if kind == "ArcEdge":
+        c, r = edge.center, edge.radius
+        a0, a1 = math.radians(edge.start_angle), math.radians(edge.end_angle)
+        if not edge.ccw:
+            a0, a1 = -a0, -a1
+        return (c[0] + r * math.cos(a0), c[1] + r * math.sin(a0)), (c[0] + r * math.cos(a1), c[1] + r * math.sin(a1))
+    if kind == "EllipseEdge":
+        try:
+            return tuple((p.x, p.y) for p in edge.construction_tool().vertices([edge.start_param, edge.end_param]))
+        except Exception:
+            return None
+    if kind == "SplineEdge":
+        pts = list(edge.fit_points) or list(edge.control_points)
+        return ((pts[0][0], pts[0][1]), (pts[-1][0], pts[-1][1])) if pts else None
+    return None
+
+
+def _edges_close(path) -> bool:
+    """Whether an outline's edges join end to end into a loop (in any order, either way
+    round), within HATCH_GAP of its size. One with an edge whose ends are not known is
+    taken to close."""
+    ends = [_edge_ends(ed) for ed in path.edges]
+    if not ends or any(x is None for x in ends):
+        return True
+    xs = [p[0] for se in ends for p in se]
+    ys = [p[1] for se in ends for p in se]
+    size = math.hypot(max(xs) - min(xs), max(ys) - min(ys))
+    tol = max(size * HATCH_GAP, 1e-9)
+    near = lambda a, b: math.hypot(a[0] - b[0], a[1] - b[1]) <= tol  # noqa: E731
+    if all(near(ends[i][1], ends[(i + 1) % len(ends)][0]) for i in range(len(ends))):
+        return True
+    left = list(ends[1:])
+    start, at = ends[0][0], ends[0][1]
+    while left:
+        k = next((i for i, (a, b) in enumerate(left) if near(a, at) or near(b, at)), None)
+        if k is None:
+            return False
+        a, b = left.pop(k)
+        at = b if near(a, at) else a
+    return near(at, start)
 
 
 def read_notes(doc: Drawing) -> list[str]:
