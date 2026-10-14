@@ -246,6 +246,44 @@ def test_a_stray_wall_far_off_does_not_spread_the_alignment_grid():
     assert time.monotonic() - started < 10
 
 
+def test_a_small_floor_over_part_of_a_big_one_lines_up_where_it_stands():
+    # A mezzanine over part of a ground floor four times its width, drawn in the same
+    # coordinates, its walls standing on the ground floor's: it stays where it is, though
+    # the ground floor's rooms repeat and its walls fit them better farther along
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+
+    from storeypath.sheets import align
+
+    ground = unary_union([box(0, 0, 100, 70).difference(box(0.2, 0.2, 99.8, 69.8)),
+                          *[box(x, 0, x + 0.2, 70) for x in range(6, 100, 6)],
+                          box(0, 41, 100, 41.2), box(60, 48, 100, 48.2)])
+    block = unary_union([*[box(x, 41, x + 0.2, 48.2) for x in (12, 18, 24, 30, 36)],
+                         box(12, 41, 36.2, 41.2), box(12, 48, 36.2, 48.2)])
+    (tx, ty), overlap = align(ground, block)
+    assert abs(tx) < 0.2 and abs(ty) < 0.2 and overlap > 0.3, (tx, ty, overlap)
+
+
+def test_a_small_floor_drawn_off_is_moved_back_whichever_side_of_the_big_one_it_is():
+    # A small floor over part of a big one, drawn 7 m off: moved back onto the walls it
+    # stands on, near the big floor's start or across it (a shift across most of the big
+    # floor is found the right way round, not read as one backwards)
+    from shapely.affinity import translate
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+
+    from storeypath.sheets import align
+
+    xs = (5.1, 13.4, 19.0, 28.7, 33.2, 41.9, 50.3, 54.8, 63.6, 70.2, 77.5, 86.1, 91.4)
+    ground = unary_union([box(0, 0, 100, 70).difference(box(0.2, 0.2, 99.8, 69.8)),
+                          *[box(x, 30 + (i % 3) * 4, x + 0.2, 70) for i, x in enumerate(xs)],
+                          box(0, 41, 100, 41.2), box(0, 22.5, 60, 22.7)])
+    for x0 in (8.0, 66.0):
+        block = ground.intersection(box(x0, 36, x0 + 30, 52))
+        (tx, ty), _ = align(ground, translate(block, 7, -2))
+        assert abs(tx - 7) < 0.2 and abs(ty + 2) < 0.2, (x0, tx, ty)
+
+
 def test_a_very_large_plan_is_aligned_on_a_coarser_grid():
     from shapely.affinity import translate
     from shapely.geometry import box

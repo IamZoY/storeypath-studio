@@ -300,13 +300,17 @@ def floor_walls(doc: Drawing, profile: Profile, scale: float, region):
 
 ALIGN_GAP_M = 10.0  # walls this far from the plan's main body are strays (a legend, a line at the origin)
 ALIGN_MAX_CELLS = 2000  # cells along a side of the grid the walls are laid on, at most
+ALIGN_STAYS = 0.25  # a plan whose walls line up this much where its drawing has it (or within
+ALIGN_NEAR_M = 1.0  # this) stays there, though they may line up better farther off
 
 
 def align(reference, other) -> tuple[tuple[float, float], float]:
     """How far ``other`` (a wall mass) lies from ``reference``: the shift (meters)
     to subtract from ``other`` so that it lines up, and the share of the smaller
     plan's walls that then overlap. Each plan is lined up by its main body of walls;
-    a large plan's walls are laid on a coarser grid."""
+    a large plan's walls are laid on a coarser grid. A plan that lines up where its
+    drawing has it (ALIGN_STAYS) stays there: a small floor over part of a big one
+    (a mezzanine) may fit the big one's repeated rooms better elsewhere."""
     reference, other = _main_body(reference), _main_body(other)
     if reference.is_empty or other.is_empty:
         return (0.0, 0.0), 0.0
@@ -316,11 +320,25 @@ def align(reference, other) -> tuple[tuple[float, float], float]:
     b, (bx, by) = _raster(other, cell)
     shape = (a.shape[0] + b.shape[0], a.shape[1] + b.shape[1])
     corr = np.fft.irfft2(np.fft.rfft2(a, shape) * np.conj(np.fft.rfft2(b, shape)), shape)
+    most = max(1.0, min(a.sum(), b.sum()))
     ki, kj = np.unravel_index(int(np.argmax(corr)), corr.shape)
-    score = float(corr[ki, kj]) / max(1.0, min(a.sum(), b.sum()))
+    i0, j0 = round((by - ay) / cell), round((bx - ax) / cell)  # the lag at which it is not moved
+    if -b.shape[0] < i0 < a.shape[0] and -b.shape[1] < j0 < a.shape[1]:  # (they overlap where drawn)
+        near = int(np.ceil(ALIGN_NEAR_M / cell))
+        rows = np.arange(i0 - near, i0 + near + 1) % shape[0]
+        cols = np.arange(j0 - near, j0 + near + 1) % shape[1]
+        here = corr[np.ix_(rows, cols)]
+        i, j = np.unravel_index(int(np.argmax(here)), here.shape)
+        if here[i, j] / most >= ALIGN_STAYS:
+            ki, kj = int(rows[i]), int(cols[j])
+    score = float(corr[ki, kj]) / most
     di, dj = _refine(corr, ki, kj)
-    ki = ki - shape[0] if ki > shape[0] // 2 else ki
-    kj = kj - shape[1] if kj > shape[1] // 2 else kj
+    # the correlation wraps round: a shift from 0 up to the reference's own size is where
+    # it is; past that, one the other way (the other plan beyond the reference's start).
+    # Not half the padded grid: with a small plan over part of a big one, that read a shift
+    # across the big one as one backwards
+    ki = ki - shape[0] if ki >= a.shape[0] else ki
+    kj = kj - shape[1] if kj >= a.shape[1] else kj
     tx = bx - ax - (kj + dj) * cell
     ty = by - ay - (ki + di) * cell
     return (tx, ty), min(1.0, score)
