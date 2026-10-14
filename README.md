@@ -221,7 +221,7 @@ docker exec storeypath storeypath demo --studio
 Open https://localhost:8080, log in as `admin` / `admin`, and open *Demo Campus*: a main
 building of three floors and a pavilion of two, furnished and finished, with a few rooms
 left for you to review. Drop your own DWG or DXF onto a new project. Everything is kept in
-the `storeypath` volume. Upgrades, your own certificate, a proxy, Compose, air-gapped
+the `storeypath` volume. Upgrades, your own certificate, a proxy, Compose, offline
 machines: [Installing StoreyPath Studio](docs/INSTALL.md).
 
 **From source**, with [uv](https://docs.astral.sh/uv/) and a PostgreSQL 17 with PostGIS:

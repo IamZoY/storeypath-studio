@@ -7,7 +7,7 @@ short version.
 - [Run it with Docker](#run-it) · [The demo campus](#the-demo-campus)
 - [Offline images: Studio and the GPU helper](#offline-images-studio-and-the-gpu-helper) ·
   [Build the Studio image](#build-the-studio-image) ·
-  [Carry it to an air-gapped machine](#carry-it-to-an-air-gapped-machine)
+  [Carry it to an offline machine](#carry-it-to-an-offline-machine)
 - [Without Docker](#without-docker) · [Requirements](#requirements) ·
   [Configuration](#configuration)
 
@@ -95,7 +95,7 @@ docker build -f docker/Dockerfile -t storeypath/studio .
 smaller image with a smaller model ([The language model](GPU.md#the-language-model)).
 Building the GPU helper: [Build the GPU helper](GPU.md#build-the-gpu-helper).
 
-### Carry it to an air-gapped machine
+### Carry it to an offline machine
 
 On the machine with internet, save the image to a file (the published Studio image, or
 one you built):
@@ -106,7 +106,7 @@ docker save ghcr.io/storeypath/studio | gzip > storeypath-studio.tar.gz
 docker save storeypath/gpu-helper | gzip -1 > storeypath-gpu-helper.tar.gz   # the GPU helper
 ```
 
-Carry the file over, then on the isolated machine:
+Carry the file over, then on the offline machine:
 
 ```sh
 docker load -i storeypath-studio.tar.gz

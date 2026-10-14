@@ -62,7 +62,7 @@ llama.cpp is compiled for every GPU generation from A100 on by default;
 `--build-arg CUDA_ARCHITECTURES="80-real;90-real"` builds for A100 and H100 alone,
 which is quicker, and `--build-arg JOBS=4` limits how many compile at once. To carry it
 to a machine without internet, `docker save` it as Studio's image is
-([Carry it to an air-gapped machine](INSTALL.md#carry-it-to-an-air-gapped-machine)).
+([Carry it to an offline machine](INSTALL.md#carry-it-to-an-offline-machine)).
 
 ## Run the GPU helper
 

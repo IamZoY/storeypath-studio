@@ -27,8 +27,8 @@
 # --data /data --cert /tls/cert.pem --key /tls/key.pem`; behind a proxy that speaks
 # HTTPS, `serve … --http --secure-cookies --trusted-proxy <its address>` (it must set
 # X-Real-IP). Users, sharing and backups: README.md.
-# Air-gapped: build (or `docker save`) on a connected machine, `docker load` on the
-# isolated one:
+# Offline: build (or `docker save`) on a connected machine, `docker load` on the
+# offline one:
 #
 #   docker save storeypath/studio | gzip > storeypath-studio.tar.gz
 #   docker load -i storeypath-studio.tar.gz
