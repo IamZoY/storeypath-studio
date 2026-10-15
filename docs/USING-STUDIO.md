@@ -70,6 +70,24 @@ project and everything in it, once you type its name.
   either side. Add a revised drawing of it the same way, with its code, and tick *Replace
   its drawing*. The project page lists it as *Mezzanine*, M00 · 3.5 m above Ground floor.
   A floor that a mezzanine stands in is not deleted while it does.
+- **The roof** (open air, with plant rooms and the stair and lift rooms standing on it,
+  behind its parapets): choose *Roof* in the plan's *Level* (Studio does when its title
+  says ROOF; not for the roof of a stair or lift room standing on the roof, such as STAIR
+  ROOF PLAN, which is offered as a second roof, not chosen to start with). Its *Floor* is
+  the next above the building's floors, its *Code* RF (a second roof over what stands on
+  the first, RF2) and *Floor name* Roof, all yours to change; *Height* is the rooms'
+  standing on it, *Parapet* its parapets' (from the levels on the sections when they
+  show them). Its rooms' IDs carry its code (…-RF-0001). Read as a roof, its open ground
+  is the roof's deck (type *Roof*: open to the sky, walked through), not the outside
+  round a building, and the rooms on it keep their own types; a lift drawn on it is read
+  as the lift's machine room (*Utility*: the lift does not stop there unless you type it
+  a lift). In 3D its slab is the roof, its parapets low round the deck, the rooms' walls
+  full height; nothing is built above it. Stairs drawn on it over the stairs below link
+  to it like any floor. A roof is the building's top: a floor added above it later puts
+  it higher (its rooms keep their IDs). The project page lists it as *Roof · RF · floor 3*.
+- **A penthouse** (a smaller top floor, with terraces round it) is a floor like any: a
+  plan titled PENTHOUSE is offered as the next floor up, named Penthouse, its code and
+  rooms' IDs numbered as any floor's (F07).
 - **Work goes on if you leave.** Finding plans, cleaning a drawing and reading floors
   run in Studio, not in the page: refresh it, open another tab or come back later,
   and the project page picks up what is going on. It shows the job running, marks a

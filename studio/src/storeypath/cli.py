@@ -21,7 +21,7 @@ from .export import ExportError
 from .ids import make_id, normalize_item_id
 from .package import json_schemas
 from .profile import AUTO, builtin_profiles, load_profile, resolve_profile
-from .types import SpaceType
+from .types import FloorType, SpaceType
 from .validate import validate_across, validate_package
 from .workspace import Override, Placement, SourceDrawing, Workspace, floor_order
 
@@ -129,19 +129,21 @@ def add_floor(
     workspace: WorkspaceArg,
     building_id: str,
     drawing: Annotated[Path, typer.Argument(help="DWG or DXF file of this floor")],
-    ordinal: Annotated[int, typer.Option(help="0 = ground floor, 1 = first floor, -1 = basement; a mezzanine: "
-                                              "the floor it stands in")],
+    ordinal: Annotated[Optional[int], typer.Option(help="0 = ground floor, 1 = first floor, -1 = basement; a "
+                                                        "mezzanine: the floor it stands in; a roof: by default the "
+                                                        "next above the building's floors")] = None,
+    type: Annotated[str, typer.Option(help="what level it is: floor; mezzanine (a floor standing in the building's "
+                                           "floor --ordinal, over part of it); roof (the building's roof, at its "
+                                           "top: its open deck, the rooms standing on it)")] = "floor",
     code: Annotated[Optional[str], typer.Option(help="floor code (default F00, F01…, B01…; a mezzanine M00, M01…, "
-                                                     "MB01…, a second on one floor M00B)")] = None,
+                                                     "MB01…, a second on one floor M00B; a roof RF, a second RF2)")] = None,
     name: Annotated[Optional[str], typer.Option()] = None,
     elevation: Annotated[Optional[float], typer.Option(help="meters (default ordinal × height)")] = None,
-    mezzanine: Annotated[bool, typer.Option("--mezzanine", help="a mezzanine: a floor standing in the building's "
-                                                                "floor --ordinal, over part of it")] = False,
     above: Annotated[Optional[float], typer.Option(help="a mezzanine's level above the floor it stands in, meters "
                                                         "(default half that floor's height)")] = None,
     height: Annotated[float, typer.Option(help="floor-to-floor height, meters (see `storeypath levels`)")] = 3.5,
     parapet: Annotated[Optional[float], typer.Option(
-        help="height of the low walls around its terraces and balconies, meters (default 1.1)")] = None,
+        help="height of the low walls around its terraces, balconies and roof, meters (default 1.1)")] = None,
     profile: Annotated[str, typer.Option(help="auto (read from the drawing), a built-in profile or a YAML path")] = "auto",
     units: Annotated[Optional[str], typer.Option(help="override drawing units: mm, cm, m, in, ft")] = None,
     view: Annotated[Optional[str], typer.Option(
@@ -153,6 +155,10 @@ def add_floor(
 ):
     """Add a floor and its source drawing to a building. The units the drawing is
     read in are kept with the floor: --units, or the units the drawing shows."""
+    if type not in [t.value for t in FloorType]:
+        _fail(f"--type is one of {', '.join(t.value for t in FloorType)}, not {type!r}")
+    if ordinal is None and type != FloorType.ROOF:
+        _fail(f"a {type} needs --ordinal")
     ws = _load(workspace)
     if not drawing.exists():
         _fail(f"{drawing} does not exist")
@@ -174,8 +180,7 @@ def add_floor(
         source.region, source.view = _pick_view(drawing, prof, units, view, profile)
     try:
         f_id = ws.add_floor(building_id, ordinal, code=code, name=name, elevation=elevation,
-                            height=height, parapet_height=parapet, source=source, mezzanine=mezzanine,
-                            above_host=above)
+                            height=height, parapet_height=parapet, source=source, type=type, above_host=above)
     except (KeyError, ValueError) as e:
         _fail(str(e))
     ws.save(workspace)
@@ -420,14 +425,18 @@ def levels(
         _fail("no level labels found (such as +3.65 FIRST FLOOR SLAB LVL, or +0.45 FFL on the plans); "
               "set heights with add-floor --height")
     typer.echo(f"levels: {found.summary()}")
+    # the roof the levels mark (one above the highest floor they name) is the building's
+    # roof, where it has one (its lowest), whatever its number here
+    roof = min((f for f in b.floors if f.roof), key=lambda f: f.ordinal, default=None)
     for f in b.floors:
         if f.mezzanine:  # its own height; its level above its floor's, when both plans mark theirs
             level, host = mezzanines.get(f.code), marked.get(f.ordinal)
             if level is not None and host is not None and 0 < level - host <= HEIGHT_M[1]:
                 f.above_host = round(level - host, 2)
             continue
-        f.height = found.height(f.ordinal)
-        if found.parapet is not None and f.ordinal == found.roof:
+        is_roof = f is roof if roof is not None else f.ordinal == found.roof
+        f.height = found.height(found.roof if is_roof and found.roof is not None else f.ordinal)
+        if found.parapet is not None and is_roof:
             f.parapet_height = found.parapet
     ws.restack(building_id)
     for f in sorted(b.floors, key=floor_order):

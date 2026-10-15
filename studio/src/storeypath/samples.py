@@ -132,6 +132,19 @@ def mezzanine_floor() -> list[Cell]:
     ]
 
 
+def roof_floor() -> list[Cell]:
+    """The roof over an office_floor, 48 × 20 m inside its parapet: STAIR A's room over the
+    floor's stairs (its door onto the roof), the lifts' machine room over the lifts and a
+    plant room at the east end, each with a door onto the roof; the rest is the open roof,
+    with no name (its deck)."""
+    return [
+        Cell(0, 0, 48, 20, None, "roof"),  # (its edge the parapet)
+        Cell(0, 6, 3, 14, ["LIFT MACHINE ROOM"], "utility", Door(3, 12, "v", +1)),
+        Cell(0, 14, 8, 20, ["STAIR A"], "stairs", Door(5.5, 14, "h", -1)),
+        Cell(38, 12, 48, 20, ["PLANT ROOM"], "utility", Door(43, 12, "h", -1)),
+    ]
+
+
 def add_footprint(path: str | Path, ring: list[tuple[float, float]], *, origin=(125.0, 48.0),
                   layer: str = "FOOTPRINT") -> None:
     """The building's outline drawn round a plan, alone on a layer of its own (a
@@ -145,12 +158,15 @@ def add_footprint(path: str | Path, ring: list[tuple[float, float]], *, origin=(
 
 
 def mezzanine_warehouse(directory: str | Path, *, origin=(20.0, 10.0)):
-    """A made-up warehouse with a mezzanine, read: its ground floor, 7 m high, and its first
-    floor are office floors (office_floor), each drawing of its own; the mezzanine (M00)
-    stands in the ground floor 3.5 m above it, a block of rooms at the top of STAIR A
-    (mezzanine_floor), its drawing holding the building's outline too (add_footprint).
-    The stairs are one stack through all three floors; the lifts pass the mezzanine.
-    Returns the workspace (not saved), its drawings in ``directory``."""
+    """A made-up warehouse with a mezzanine and a roof, read: its ground floor, 7 m high,
+    and its first floor are office floors (office_floor), each drawing of its own; the
+    mezzanine (M00) stands in the ground floor 3.5 m above it, a block of rooms at the top
+    of STAIR A (mezzanine_floor), its drawing holding the building's outline too
+    (add_footprint); the roof (RF) over the first floor, 3 m high (its stair room's), its
+    parapets 1.1 m, holds STAIR A's room, the lifts' machine room and a plant room
+    (roof_floor), its spaces found from its walls. The stairs are one stack through all
+    four levels; the lifts pass the mezzanine and stop at the first floor. Returns the
+    workspace (not saved), its drawings in ``directory``."""
     from .convert import convert_floor
     from .workspace import Placement, SourceDrawing, Workspace
 
@@ -161,14 +177,16 @@ def mezzanine_warehouse(directory: str | Path, *, origin=(20.0, 10.0)):
                                    ("mezzanine.dxf", mezzanine_floor(), above, "MEZZANINE FLOOR PLAN"),
                                    ("first.dxf", office_floor(1), origin, "FIRST FLOOR PLAN")):
         write_floor_dxf(directory / name, cells, origin=at, title=title)
+    write_floor_dxf(directory / "roof.dxf", roof_floor(), origin=origin, title="ROOF PLAN", area_outlines=False)
     add_footprint(directory / "mezzanine.dxf", [(-1, -1), (49, -1), (49, 21), (-1, 21)], origin=origin)
-    ws = Workspace.new("Warehouse with a mezzanine")
+    ws = Workspace.new("Warehouse with a mezzanine and a roof")
     loc = ws.add_location("MAIN", "Main site")
     b_id = ws.add_building(loc, "WH", "Warehouse")
     ws.building(b_id).placement = Placement(lon=10.0, lat=50.0, x=44.0, y=20.0, bearing=15)
     ws.add_floor(b_id, 0, name="Ground floor", height=7.0, source=SourceDrawing(path="ground.dxf"))
     ws.add_floor(b_id, 1, name="First floor", source=SourceDrawing(path="first.dxf"))
-    ws.add_floor(b_id, 0, mezzanine=True, above_host=3.5, height=3.5, source=SourceDrawing(path="mezzanine.dxf"))
+    ws.add_floor(b_id, 0, type="mezzanine", above_host=3.5, height=3.5, source=SourceDrawing(path="mezzanine.dxf"))
+    ws.add_floor(b_id, None, type="roof", height=3.0, parapet_height=1.1, source=SourceDrawing(path="roof.dxf"))
     ws.restack(b_id)
     for *_, f_id in ws.iter_floors():  # (lowest first: the mezzanine's stairs take the ground floor's code)
         convert_floor(ws, f_id, directory)

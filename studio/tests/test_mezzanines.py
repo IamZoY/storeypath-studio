@@ -51,19 +51,19 @@ def test_a_mezzanines_code_is_by_the_floor_it_stands_in():
 
 def test_a_mezzanine_stands_in_a_floor_of_its_building():
     ws, b_id = _building(0, 1)
-    m = ws.add_floor(b_id, 0, mezzanine=True, above_host=4.0)
+    m = ws.add_floor(b_id, 0, type="mezzanine", above_host=4.0)
     f = ws.floor(m)
     assert m == f"{b_id}-M00" and (f.name, f.ordinal, f.host, f.above_host, f.elevation) == ("Mezzanine", 0, "F00", 4.0, 4.0)
     assert f.mezzanine and not ws.floor(f"{b_id}-F00").mezzanine and ws.host_of(m).code == "F00"
     # in order: the ground floor, the mezzanine on it, the first floor
     assert [fid.rsplit("-", 1)[1] for *_, fid in ws.iter_floors()] == ["F00", "M00", "F01"]
     # a second on the same floor: its own code; by default half its floor's height above it
-    second = ws.floor(ws.add_floor(b_id, 0, mezzanine=True, name="Gallery"))
+    second = ws.floor(ws.add_floor(b_id, 0, type="mezzanine", name="Gallery"))
     assert (second.code, second.name, second.above_host, second.elevation) == ("M00B", "Gallery", 3.5, 3.5)
     # one over a basement
     ws.add_floor(b_id, -1, height=4.0)
     ws.restack(b_id)
-    below = ws.floor(ws.add_floor(b_id, -1, mezzanine=True, above_host=2.5))
+    below = ws.floor(ws.add_floor(b_id, -1, type="mezzanine", above_host=2.5))
     assert (below.code, below.elevation) == ("MB01", -1.5)
     assert [fid.rsplit("-", 1)[1] for *_, fid in ws.iter_floors()] == ["B01", "MB01", "F00", "M00B", "M00", "F01"]
 
@@ -73,18 +73,18 @@ def test_one_floor_of_an_ordinal_and_any_number_of_mezzanines_on_it():
     with pytest.raises(ValueError, match="floor ordinal 0 already used"):
         ws.add_floor(b_id, 0)
     with pytest.raises(ValueError, match="has no floor 2"):
-        ws.add_floor(b_id, 2, mezzanine=True)
+        ws.add_floor(b_id, 2, type="mezzanine")
     with pytest.raises(ValueError, match="floor code F01 already used"):
-        ws.add_floor(b_id, 0, mezzanine=True, code="F01")
+        ws.add_floor(b_id, 0, type="mezzanine", code="F01")
     with pytest.raises(ValueError, match="more than 0"):
-        ws.add_floor(b_id, 0, mezzanine=True, above_host=0)
+        ws.add_floor(b_id, 0, type="mezzanine", above_host=0)
     with pytest.raises(ValueError, match="above_host is a mezzanine's"):
         ws.add_floor(b_id, 2, above_host=3.0)
     with pytest.raises(ValueError, match="elevation is its host floor's"):
-        ws.add_floor(b_id, 0, mezzanine=True, elevation=4.0)
+        ws.add_floor(b_id, 0, type="mezzanine", elevation=4.0)
     for _ in range(3):
-        ws.add_floor(b_id, 0, mezzanine=True)
-    ws.add_floor(b_id, 1, mezzanine=True, code="GALLERY")
+        ws.add_floor(b_id, 0, type="mezzanine")
+    ws.add_floor(b_id, 1, type="mezzanine", code="GALLERY")
     assert sorted(f.code for f in ws.building(b_id).floors) == ["F00", "F01", "GALLERY", "M00", "M00B", "M00C"]
     ws.add_floor(b_id, 2)  # the second floor: its ordinal still free
     ws.restack(b_id)
@@ -93,7 +93,7 @@ def test_one_floor_of_an_ordinal_and_any_number_of_mezzanines_on_it():
 
 def test_a_mezzanine_moves_with_the_floor_it_stands_in():
     ws, b_id = _building(0, 1, 2)
-    m = ws.add_floor(b_id, 1, mezzanine=True, above_host=2.5)
+    m = ws.add_floor(b_id, 1, type="mezzanine", above_host=2.5)
     assert ws.floor(m).elevation == 9.5
     ws.floor(f"{b_id}-F00").height = 6.0  # the floors above it come down
     ws.restack(b_id)
@@ -106,7 +106,7 @@ def test_a_mezzanine_is_saved_and_read_back(tmp_path, databases):
     from storeypath.db.store import ProjectStore
 
     ws, b_id = _building(0, 1)
-    ws.add_floor(b_id, 0, mezzanine=True, above_host=4.0, height=3.0)
+    ws.add_floor(b_id, 0, type="mezzanine", above_host=4.0, height=3.0)
     ws.save(tmp_path / "w.spproj")
     again = Workspace.load(tmp_path / "w.spproj")
     assert again.floor(f"{b_id}-M00").model_dump() == ws.floor(f"{b_id}-M00").model_dump()
@@ -174,12 +174,12 @@ def test_the_package_lists_the_floors_in_order_with_the_mezzanines_mark(warehous
         rows = list(z.read("objects.csv").decode().splitlines())
     b_id = floors[0]["properties"]["building_id"]
     assert [(f["properties"]["code"], f["properties"]["ordinal"], f["properties"]["elevation"]) for f in floors] == \
-        [("F00", 0, 0.0), ("M00", 0, 3.5), ("F01", 1, 7.0)]
+        [("F00", 0, 0.0), ("M00", 0, 3.5), ("F01", 1, 7.0), ("RF", 2, 10.5)]
     m = floors[1]["properties"]
-    assert (m["mezzanine"], m["host_floor_id"], m["above_host_m"], m["height"]) == (True, f"{b_id}-F00", 3.5, 3.5)
-    for f in (floors[0], floors[2]):
-        assert (f["properties"]["mezzanine"], f["properties"]["host_floor_id"], f["properties"]["above_host_m"]) == \
-            (False, None, None)
+    assert (m["type"], m["host_floor_id"], m["above_host_m"], m["height"]) == ("mezzanine", f"{b_id}-F00", 3.5, 3.5)
+    for f, level in ((floors[0], "floor"), (floors[2], "floor"), (floors[3], "roof")):
+        assert (f["properties"]["type"], f["properties"]["host_floor_id"], f["properties"]["above_host_m"]) == \
+            (level, None, None)
     assert [f["id"] for f in nav["floors"]] == [f["id"] for f in floors]  # (the order ways count floors by)
     assert any(r.startswith(f"{b_id}-M00-") for r in rows)  # its rooms by its code: …-M00-0001
 
@@ -188,14 +188,14 @@ def test_the_stairs_serve_the_mezzanine_and_the_lifts_pass_it(warehouse):
     ws, out = warehouse
     b_id = next(iter(ws.locations[0].buildings)).code
     found = {s.type: s for s in stacks(ws, f"{ws.id}-MAIN-{b_id}")}
-    assert sorted(m.split("-")[3] for m in found["stairs"].members) == ["F00", "F01", "M00"]
+    assert sorted(m.split("-")[3] for m in found["stairs"].members) == ["F00", "F01", "M00", "RF"]
     lifts = [s for s in stacks(ws, f"{ws.id}-MAIN-{b_id}") if s.type == "elevator"]
     assert lifts and all(sorted(m.split("-")[3] for m in s.members) == ["F00", "F01"] for s in lifts)
     with zipfile.ZipFile(out) as z:
         nav = json.loads(z.read("navigation.json"))
     rides = {(e["kind"], *sorted(n.rsplit("-", 1)[1] for n in (e["from"], e["to"]))) for e in nav["edges"]
              if e["kind"] in ("stairs", "lift")}
-    assert rides == {("stairs", "F00", "M00"), ("stairs", "F01", "M00"), ("lift", "F00", "F01")}
+    assert rides == {("stairs", "F00", "M00"), ("stairs", "F01", "M00"), ("stairs", "F01", "RF"), ("lift", "F00", "F01")}
     lift = next(e for e in nav["edges"] if e["kind"] == "lift")
     assert (lift["seconds"], lift["length_m"]) == (38.0, 7.0)  # waiting, and two floors passed: the mezzanine is one
 
@@ -236,7 +236,7 @@ def test_a_package_with_a_mezzanine_opens_as_a_project_with_it(warehouse, tmp_pa
     assert how == "package" and code == ws.id
     m = next(f for *_, f, _ in opened.iter_floors() if f.mezzanine)
     assert (m.code, m.ordinal, m.host, m.above_host, m.elevation) == ("M00", 0, "F00", 3.5, 3.5)
-    assert [f.code for *_, f, _ in opened.iter_floors()] == ["F00", "M00", "F01"]
+    assert [f.code for *_, f, _ in opened.iter_floors()] == ["F00", "M00", "F01", "RF"]
 
 
 # ---- the validator --------------------------------------------------------------------------
@@ -259,18 +259,18 @@ def test_the_conformance_warehouse_is_valid_and_in_order():
     assert validate_package(WAREHOUSE) == []
     with zipfile.ZipFile(WAREHOUSE) as z:
         floors = json.loads(z.read("floors.geojson"))["features"]
-    assert [f["properties"]["code"] for f in floors] == ["F00", "M00", "F01"]
+    assert [f["properties"]["code"] for f in floors] == ["F00", "M00", "F01", "RF"]
 
 
 @pytest.mark.parametrize("change, said", [
     (lambda f: f["F01"]["properties"].update(ordinal=0), "is floor 0 of its building already"),
-    (lambda f: f["M00"]["properties"].update(mezzanine=False, host_floor_id=None, above_host_m=None),
+    (lambda f: f["M00"]["properties"].update(type="floor", host_floor_id=None, above_host_m=None),
      "is floor 0 of its building already"),
     (lambda f: f["M00"]["properties"].update(code="F00"), "code F00 is"),
     (lambda f: f["M00"]["properties"].update(host_floor_id=f["M00"]["id"].replace("M00", "F09")),
      "which is not a floor of its building"),
     (lambda f: f["M00"]["properties"].update(host_floor_id=f["F01"]["id"]), "a mezzanine of floor 1"),
-    (lambda f: f["M00"]["properties"].update(host_floor_id=f["M00"]["id"]), "itself a mezzanine"),
+    (lambda f: f["M00"]["properties"].update(host_floor_id=f["M00"]["id"]), "a mezzanine (a mezzanine stands in a floor)"),
     (lambda f: f["M00"]["properties"].update(elevation=4.0), "not its host floor's"),
     (lambda f: f["M00"]["properties"].update(above_host_m=None), "without its height above its host floor"),
     (lambda f: f["F01"]["properties"].update(host_floor_id=f["F00"]["id"]), "not a mezzanine, but with a host"),
@@ -345,15 +345,15 @@ def test_a_mezzanine_is_added_from_its_plan_and_told_apart_from_its_floor(studio
     call(f"{base}/api/projects/{code}/drawings/sheet.dxf?private=0", raw=(tmp_path / "sheet.dxf").read_bytes())
     found = wait(base, call(f"{base}/api/projects/{code}/drawings/sheet.dxf/plans", {})[1])
     plans = {p["title"]: p for p in found["plans"]}
-    assert (plans["MEZZANINE FLOOR PLAN"]["mezzanine"], plans["MEZZANINE FLOOR PLAN"]["floor"]) == (True, 0)
-    assert not plans["GROUND FLOOR PLAN"]["mezzanine"] and plans["FIRST FLOOR PLAN"]["floor"] == 1
+    assert (plans["MEZZANINE FLOOR PLAN"]["type"], plans["MEZZANINE FLOOR PLAN"]["floor"]) == ("mezzanine", 0)
+    assert plans["GROUND FLOOR PLAN"]["type"] == "floor" and plans["FIRST FLOOR PLAN"]["floor"] == 1
 
     def plan(title, **more):
         p = plans[title]
         return {"index": p["index"], "title": title, "region": p["region"], "building": "Warehouse",
                 "ordinal": p["floor"], **more}
 
-    mezzanine = plan("MEZZANINE FLOOR PLAN", mezzanine=True, code="M00", name="Mezzanine", above_host=3.5, height=3.5)
+    mezzanine = plan("MEZZANINE FLOOR PLAN", type="mezzanine", code="M00", name="Mezzanine", above_host=3.5, height=3.5)
     # a mezzanine of a floor the building does not have, and two of one code: refused, nothing changed
     status, said = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": [{**mezzanine, "ordinal": 2}]})
     assert status == 400 and "a mezzanine of floor 2, which Warehouse does not have" in said["error"]
@@ -377,15 +377,15 @@ def test_a_mezzanine_is_added_from_its_plan_and_told_apart_from_its_floor(studio
     assert shape(m.outline).bounds == pytest.approx((gx0, gy0 + MEZZANINE_AT[1], gx0 + 19.8, gy1), abs=0.3)  # its west end
     _, page = call(f"{base}/api/projects/{code}")
     listed = page["locations"][0]["buildings"][0]["floors"]
-    assert [(f["code"], f["mezzanine"]) for f in listed] == [("F00", False), ("M00", True), ("F01", False)]
+    assert [(f["code"], f["type"]) for f in listed] == [("F00", "floor"), ("M00", "mezzanine"), ("F01", "floor")]
     assert (listed[1]["host"], listed[1]["host_name"], listed[1]["above_host"]) == (f"{b_id}-F00", "Ground floor", 3.5)
 
     # again: a floor and a mezzanine on it are told apart
     status, said = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": [
-        plan("MEZZANINE FLOOR PLAN", building_id=b_id, mezzanine=True, code="M00")]})
+        plan("MEZZANINE FLOOR PLAN", building_id=b_id, type="mezzanine", code="M00")]})
     assert status == 400 and "Warehouse already has Mezzanine (M00) on floor 0" in said["error"]
     status, said = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": [
-        plan("MEZZANINE FLOOR PLAN", building_id=b_id, mezzanine=True, code="F01")]})
+        plan("MEZZANINE FLOOR PLAN", building_id=b_id, type="mezzanine", code="F01")]})
     assert status == 400 and "the code F01 is First floor (F01)'s" in said["error"]
     status, said = call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": [
         plan("GROUND FLOOR PLAN", building_id=b_id)]})
@@ -393,13 +393,13 @@ def test_a_mezzanine_is_added_from_its_plan_and_told_apart_from_its_floor(studio
     # the mezzanine's drawing replaced, higher up now: its rooms keep their IDs
     rooms = {r.id for r in ws.floor_objects(f"{b_id}-M00")}
     wait(base, call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": [
-        plan("MEZZANINE FLOOR PLAN", building_id=b_id, mezzanine=True, code="M00", above_host=4.0, replace=True)]})[1])
+        plan("MEZZANINE FLOOR PLAN", building_id=b_id, type="mezzanine", code="M00", above_host=4.0, replace=True)]})[1])
     ws = app.workspace(code)
     assert ws.floor(f"{b_id}-M00").elevation == 4.0 and {r.id for r in ws.floor_objects(f"{b_id}-M00")} == rooms
     assert len(ws.building(b_id).floors) == 3
     # a second mezzanine on the ground floor: its own code by default (M00B)
     wait(base, call(f"{base}/api/projects/{code}/floors", {"drawing": "sheet.dxf", "plans": [
-        plan("MEZZANINE FLOOR PLAN", building_id=b_id, mezzanine=True, name="Gallery", above_host=3.0)]})[1])
+        plan("MEZZANINE FLOOR PLAN", building_id=b_id, type="mezzanine", name="Gallery", above_host=3.0)]})[1])
     assert [f.code for *_, f, _ in app.workspace(code).iter_floors()] == ["F00", "M00B", "M00", "F01"]
     # the floor a mezzanine stands in is not deleted from under it
     status, said = call(f"{base}/api/projects/{code}/floors/{b_id}-F00/delete", {"confirm": "Ground floor"})
@@ -424,7 +424,7 @@ def test_a_mezzanine_is_added_on_the_command_line(tmp_path):
     run("new", ws_file, "--name", "Warehouse")
     b = run("add-building", ws_file, run("add-location", ws_file, "MAIN", "--name", "Main site"), "WH", "--name", "Warehouse")
     run("add-floor", ws_file, b, tmp_path / "ground.dxf", "--ordinal", "0", "--height", "7", "--units", "mm", "--no-model")
-    m = run("add-floor", ws_file, b, tmp_path / "upper.dxf", "--ordinal", "0", "--mezzanine", "--above", "3.5",
+    m = run("add-floor", ws_file, b, tmp_path / "upper.dxf", "--ordinal", "0", "--type", "mezzanine", "--above", "3.5",
             "--height", "3.5", "--units", "mm", "--no-model")
     assert m == f"{b}-M00"
     f = Workspace.load(ws_file).floor(m)

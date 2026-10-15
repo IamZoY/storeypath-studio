@@ -73,6 +73,7 @@ class ExtractedSpace:
     type_source: str = "default"
     issues: list[str] = field(default_factory=list)  # reasons a person should look at it
     ignored: bool = False  # judged not a room (vision): set aside, for a person to restore
+    open_ground: bool = False  # a roof's open ground round the rooms on it (find_spaces' open_ground)
 
 
 @dataclass
@@ -583,10 +584,11 @@ class FoundSpaces:
 
 
 def find_spaces(plan: PlanDrawn, profile: Profile, labels: list[Label], lines: list, fills: list,
-                drawn_walls: list | None, offset) -> FoundSpaces:
+                drawn_walls: list | None, offset, open_ground: bool = False) -> FoundSpaces:
     """The floor's spaces (extract_floor's second step): its outlines, else what its
     walls (``lines``, ``fills``: plan_walls) enclose, those holding several rooms'
-    labels divided between them."""
+    labels divided between them. ``open_ground``: a roof's plan, whose open ground round
+    the rooms on it is kept (spaces_from_walls), marked so (on_the_roof types it)."""
     method = profile.spaces.method
     warnings: list[str] = []
     doorways: list[Polygon] = []
@@ -598,9 +600,11 @@ def find_spaces(plan: PlanDrawn, profile: Profile, labels: list[Label], lines: l
     used = "outlines"
     if not spaces and method != "outlines" and (lines or fills):
         found = spaces_from_walls(lines, fills, plan.door_shapes, plan.opening_lines, [lb.point for lb in labels],
-                                  profile.walls, profile.spaces.min_area)
-        spaces = [ExtractedSpace(polygon=p, layer="walls") for p in _without_spikes(found.polygons)
-                  if p.area >= profile.spaces.min_area]
+                                  profile.walls, profile.spaces.min_area, open_ground=open_ground)
+        grounds = unary_union(found.grounds) if found.grounds else None
+        spaces = [ExtractedSpace(polygon=p, layer="walls", open_ground=grounds is not None
+                                 and grounds.contains(p.representative_point()))
+                  for p in _without_spikes(found.polygons) if p.area >= profile.spaces.min_area]
         doorways, open_edges, fabric = found.doorways, found.open_edges, found.fabric
         outline, used, envelope = found.outline, "walls", found.envelope
         pockets = [p for p, _ in found.pockets]
@@ -1035,6 +1039,45 @@ def _attached(walls, rooms, touch: float = 0.1):
                 kept.add(int(j))
                 todo.append(int(j))
     return unary_union([pieces[i] for i in sorted(kept)]) or None
+
+
+MACHINE_ROOM_NOTE = ("on the roof, read as a lift: the lift's machine room or the top of its shaft, typed utility "
+                     "(no stop); type it a lift if the lift stops on the roof")
+
+
+def on_the_roof(ex: FloorExtraction, deck_only: bool = False) -> None:
+    """A roof level read as the roof it is (format 0.11): its open ground is the roof's
+    deck (type roof: open to the sky, behind its parapets), not the outside and not a
+    room; the rooms standing on it (stair and lift rooms, plant rooms, a penthouse) keep
+    their own types. The deck is what has no name of its own and was found as the open
+    ground round the rooms (find_spaces' open_ground), holds rooms in its holes, or was
+    read as no room in particular (untyped, an open area, a terrace or not a room to
+    vision). A lift read on a roof is its machine room or the top of its shaft (utility):
+    the lift does not stop there unless a person types it a lift. ``deck_only`` (before
+    vision looks at the rooms): only the open ground found round the rooms, and what
+    holds rooms, is taken for the deck yet, so vision is not asked about it and types the
+    rest."""
+    units = ex.units()
+    points = [u.polygon.representative_point() for u in units]
+    for i, u in enumerate(units):
+        if u.layer == "drawn":  # (a person drew it: as they typed it)
+            continue
+        if u.type == SpaceType.ELEVATOR:
+            u.type, u.type_source = SpaceType.UTILITY, "roof"
+            u.issues.append(MACHINE_ROOM_NOTE)
+            continue
+        if u.name or u.type == SpaceType.ROOF:
+            continue
+        holes = [Polygon(ring) for p in as_polygons(u.polygon) for ring in p.interiors]
+        holds = any(h.contains(points[j]) for h in holes for j in range(len(units)) if j != i)
+        aside = u.ignored and any(x.startswith("vision: not a room") for x in u.issues)
+        deck = u.open_ground or holds or not deck_only and (
+            aside or u.type in (SpaceType.UNSPECIFIED, SpaceType.OPEN_AREA)
+            or u.type == SpaceType.TERRACE and u.type_source == "vision")
+        if not deck:
+            continue
+        u.type, u.type_source, u.ignored = SpaceType.ROOF, "roof", False
+        u.issues = [x for x in u.issues if not x.startswith(("vision: not a room", "vision: typed"))]
 
 
 OUTSIDE_REACH_M = 0.6  # an area set aside this close to the outline's edge is outside…

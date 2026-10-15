@@ -448,7 +448,8 @@ def _tree_rows(ws: Workspace) -> dict[tuple, tuple[dict, Any]]:
 
 def _floor_row(f) -> dict:
     d = f.model_dump(mode="json")
-    return {k: d[k] for k in ("name", "ordinal", "elevation", "height", "host", "above_host", "parapet_height", "source", "outline",
+    return {k: d[k] for k in ("name", "ordinal", "elevation", "height", "type", "host", "above_host", "parapet_height",
+                              "source", "outline",
                               "converted_at", "method", "warnings", "layers", "walls", "wall_thickness",
                               "symbols", "symbols_key", "edits")}
 
@@ -480,7 +481,7 @@ _OBJECT_JSON = ("jsonb_build_object('id', o.id, 'kind', o.kind, 'type', o.type, 
                 "'name', o.name, 'number', o.number, 'label', o.label, 'geometry', o.geometry, 'status', o.status, "
                 "'created_at', o.created_at, 'retired_at', o.retired_at) || o.more")
 _FLOOR_JSON = ("jsonb_build_object('code', f.code, 'name', f.name, 'ordinal', f.ordinal, 'elevation', f.elevation, "
-               "'height', f.height, 'host', f.host, 'above_host', f.above_host, "
+               "'height', f.height, 'type', f.type, 'host', f.host, 'above_host', f.above_host, "
                "'parapet_height', f.parapet_height, 'source', f.source, 'outline', f.outline, "
                "'converted_at', f.converted_at, 'method', f.method, 'warnings', f.warnings, 'layers', f.layers, "
                "'walls', f.walls, 'wall_thickness', f.wall_thickness, 'symbols', f.symbols, "

@@ -242,3 +242,13 @@ def default_mezzanine_code(ordinal: int, taken=()) -> str:
         if base + suffix not in taken:
             return base + suffix
     raise ValueError(f"too many mezzanines on floor {ordinal}: give this one a code")
+
+
+def default_roof_code(taken=()) -> str:
+    """A roof's code: RF; a second roof (over the rooms standing on the first) RF2, then
+    RF3… The first of those not ``taken``."""
+    for n in range(1, 100):
+        code = "RF" if n == 1 else f"RF{n}"
+        if code not in taken:
+            return code
+    raise ValueError("too many roofs: give this one a code")

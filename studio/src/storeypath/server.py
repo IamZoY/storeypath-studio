@@ -108,10 +108,11 @@ from .assets import asset_dir
 from .backup import backup_name, write_backup
 from .bundle import ProjectExists
 from .db.store import Editor, StepLock, drawing_name
-from .ids import default_floor_code, default_mezzanine_code, make_id, normalize_item_id, validate_segment
+from .ids import (default_floor_code, default_mezzanine_code, default_roof_code, make_id, normalize_item_id,
+                  validate_segment)
 from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_unit, read_drawing
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
-from .sheets import mezzanine_of, read_title
+from .sheets import mezzanine_of, read_title, title_level
 from .profile import AUTO, load_profile
 from .levels import DEFAULT_HEIGHT_M, DEFAULT_PARAPET_M, HEIGHT_M, floor_levels, plan_level, read_level_marks
 from .reading import NOT_A_ROOM, read_units
@@ -121,7 +122,7 @@ from .privacy import words
 from .errors import Busy
 from .review import File, NotFound, Review
 from .sealed import sealed_name
-from .types import SpaceType
+from .types import FloorType, SpaceType
 from .workspace import Placement, SourceDrawing, Workspace, floor_order
 
 DRAWING_TYPES = (".dwg", ".dxf")
@@ -625,8 +626,8 @@ class Studio:
                                 "method": f.method, "rooms": rooms.get(f"{b_id}-{f.code}", 0),
                                 "items": items.get(f"{b_id}-{f.code}", 0),
                                 "code": f.code, "elevation": f.elevation, "height": f.height,
-                                # a mezzanine: the floor it stands in, and how far above it
-                                "mezzanine": f.mezzanine,
+                                # what level it is; a mezzanine's floor it stands in, and how far above it
+                                "type": f.type.value,
                                 "host": f"{b_id}-{f.host}" if f.mezzanine else None,
                                 "host_name": next((h.name for h in b.floors if h.code == f.host), None)
                                 if f.mezzanine else None,
@@ -965,10 +966,17 @@ class Studio:
                 floor = r.floor if r and r.floor is not None else (rule[1] if rule and rule[1] is not None else v.ordinal)
                 if kind == "roof_plan" and floor is None:
                     floor = v.ordinal
-                # a mezzanine's plan (its title says so): the floor it stands in
-                host = mezzanine_of(v.title) if kind == "floor_plan" else None
+                # what level its title says: a mezzanine's plan (its floor the one it stands in), the
+                # roof's (or the roof of what stands on it: an upper roof), a penthouse's (a floor)
+                said = title_level(v.title) if kind in ("floor_plan", "roof_plan") else None
+                host = mezzanine_of(v.title) if kind == "floor_plan" and said == "mezzanine" else None
+                level = (FloorType.MEZZANINE if host is not None
+                         else FloorType.ROOF if said in ("roof", "upper roof") or kind == "roof_plan" and said is None
+                         else FloorType.FLOOR)
                 out.append({"index": v.index, "title": v.title, "kind": kind,
-                            "floor": host if host is not None else floor, "mezzanine": host is not None,
+                            "floor": host if host is not None else floor, "type": level.value,
+                            "upper": said == "upper roof",  # (not chosen to start with: not a level people use)
+                            "name": "Penthouse" if said == "penthouse" else None,
                             "building": r.building if r else None, "size": v.size, "region": v.region,
                             "preview": v.preview})
             # Floor heights and the roof's parapet, from the levels on its sections, and
@@ -977,11 +985,11 @@ class Studio:
             found = floor_levels(read_level_marks(doc, self.model if self.model.available() else None))
             marked = {}
             for v, o in zip(views, out):
-                if o["kind"] in ("floor_plan", "roof_plan") and o["floor"] is not None and not o["mezzanine"] \
+                if o["kind"] in ("floor_plan", "roof_plan") and o["floor"] is not None and o["type"] != "mezzanine" \
                         and o["floor"] not in marked:
                     o["level"] = marked[o["floor"]] = plan_level(doc, v.region)
             for v, o in zip(views, out):
-                if o["mezzanine"]:
+                if o["type"] == "mezzanine":
                     o["level"] = level = plan_level(doc, v.region)
                     host_level = marked.get(o["floor"])
                     if level is not None and host_level is not None and 0 < level - host_level <= HEIGHT_M[1]:
@@ -1017,8 +1025,8 @@ class Studio:
                 replaced: set[str] = set()  # floors given this drawing in place of theirs
                 made_locations: dict[str, str] = {}
                 made_buildings: dict[tuple[str, str], str] = {}
-                # (a mezzanine after the floors: the one it stands in may be among them)
-                for place in sorted(places, key=lambda x: x.mezzanine):
+                # (the floors first: a mezzanine's may be among them; then the roofs, above them)
+                for place in sorted(places, key=lambda x: LEVEL_ORDER.index(x.type)):
                     p = place.plan
                     loc_id = place.location_id
                     if loc_id is None:
@@ -1052,14 +1060,16 @@ class Studio:
                         replaced.add(f_id)
                         job.say(f"floor {f_id}: its drawing is now {p.get('title') or 'plan ' + str(p.get('index'))}")
                     else:
+                        mezzanine = place.type == FloorType.MEZZANINE
                         f_id = ws.add_floor(b_id, place.ordinal, code=place.code, name=p.get("name") or None,
                                             source=source, height=float(p.get("height") or DEFAULT_HEIGHT_M),
                                             parapet_height=float(p["parapet"]) if p.get("parapet") else None,
-                                            mezzanine=place.mezzanine,
-                                            above_host=float(p["above_host"]) if place.mezzanine and p.get("above_host")
+                                            type=place.type,
+                                            above_host=float(p["above_host"]) if mezzanine and p.get("above_host")
                                             else None)
                         job.say(f"floor {f_id}: {p.get('title') or 'plan ' + str(p.get('index'))}"
-                                + (f", a mezzanine of floor {place.ordinal}" if place.mezzanine else ""))
+                                + (f", a mezzanine of floor {place.ordinal}" if mezzanine
+                                   else ", the roof" if place.type == FloorType.ROOF else ""))
                     added.setdefault(b_id, []).append(f_id)
                 for b_id in added:
                     ws.restack(b_id)  # elevations from the heights
@@ -2094,11 +2104,15 @@ class Download:
     name: str
 
 
+LEVEL_ORDER = (FloorType.FLOOR, FloorType.MEZZANINE, FloorType.ROOF)  # the order plans are added in
+
+
 class FloorPlace(NamedTuple):
     """Where a chosen plan goes: its location and building (an ID when they exist,
     else a new code and name), its floor, and the floor it replaces (its ID) when it
-    is a new drawing of a floor the building has. A mezzanine's floor is the one it
-    stands in (its host), and its code is its own (``code``)."""
+    is a new drawing of a floor the building has. What level it is (``type``): a
+    mezzanine's floor is the one it stands in (its host); a mezzanine's code and a
+    roof's are their own (``code``)."""
 
     location_id: str | None
     location: tuple[str, str] | None  # (code, name) of a new location
@@ -2107,8 +2121,8 @@ class FloorPlace(NamedTuple):
     ordinal: int
     plan: dict
     replaces: str | None
-    mezzanine: bool = False
-    code: str | None = None  # the floor's code (a mezzanine's: as chosen, else its default)
+    type: FloorType = FloorType.FLOOR
+    code: str | None = None  # the floor's code (a mezzanine's or a roof's: as chosen, else its default)
 
 
 def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[FloorPlace]:
@@ -2118,19 +2132,22 @@ def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[FloorPlace]:
     any, the project's first location, and a building of that name or "Main
     building". New ones get codes from their names that no other has. A plan on a
     floor the building has replaces that floor's drawing (its spaces keep their IDs)
-    when it says ``replace``. A plan that is a ``mezzanine`` stands in the building's
-    floor of its ordinal (there, or among these plans), ``above_host`` metres above it,
-    with a ``code`` of its own (by default M00 over F00, M00B for a second): it replaces
-    the drawing of the building's mezzanine of that code on that floor when it says
-    ``replace``. Fails, before anything changes, when two plans would be the same floor
-    (or two mezzanines one code), a plan a floor that exists and is not to be replaced,
-    or a mezzanine a floor the building does not have."""
+    when it says ``replace``. A plan's ``type`` is the level it is: a floor (by
+    default); a mezzanine, standing in the building's floor of its ordinal (there, or
+    among these plans), ``above_host`` metres above it, with a ``code`` of its own (by
+    default M00 over F00, M00B for a second); or a roof, above every floor of the
+    building (its own and these plans'), with a ``code`` of its own (by default RF, RF2
+    for a second). A mezzanine or a roof replaces the drawing of the building's own of
+    that code when it says ``replace``. A floor added at or above a roof puts the roof
+    above it. Fails, before anything changes, when two plans would be the same floor
+    (or two of them one code), a plan a floor that exists and is not to be replaced, a
+    mezzanine a floor the building does not have, or a roof not above every floor."""
     loc_codes = {loc.code for loc in ws.locations}
     new_locations: dict[str, tuple[str, str]] = {}  # name (lower) -> (code, name)
     new_buildings: dict[tuple[str, str], tuple[str, str]] = {}  # (location key, name lower) -> (code, name)
     chosen: dict[tuple[str, int], str] = {}  # (building, ordinal) -> the plan that is that floor
     codes: dict[str, dict[str, str]] = {}  # building -> code -> what has it (a floor, or a plan)
-    mezzanines = []  # (index in out, building key, building, its name, title): their hosts checked last
+    later = []  # (index in out, building key, building, its name, title): mezzanines' hosts, roofs' places
     out = []
     for p in plans:
         if not isinstance(p, dict):
@@ -2188,32 +2205,37 @@ def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[FloorPlace]:
         b_name = building.name if building is not None else new_b[1]
         # the floor
         ordinal = int(p["ordinal"])
+        level = FloorType(p.get("type") or FloorType.FLOOR)
         floors = building.floors if building is not None else []
         taken = codes.setdefault(b_key, {f.code: f"{f.name} ({f.code})" for f in floors})
-        if p.get("mezzanine"):
+        if level != FloorType.FLOOR:  # a mezzanine or a roof: by its code
+            what = "mezzanine" if level == FloorType.MEZZANINE else "roof"
             code = p.get("code") or None
             if code is not None:
                 try:
                     validate_segment(code)
                 except ValueError:
                     raise ValueError(f"{title}: its code is 1 to 16 capital letters or digits, no hyphens ({code!r})") from None
-            has = next((f for f in floors if f.mezzanine and f.code == code and f.ordinal == ordinal), None)
+            has = next((f for f in floors if f.type == level and f.code == code
+                        and (level == FloorType.ROOF or f.ordinal == ordinal)), None)
             if has and not p.get("replace"):
-                raise ValueError(f"{b_name} already has {has.name} ({has.code}) on floor {ordinal}: give {title} "
-                                 "another code, or replace that mezzanine's drawing")
-            code = code or default_mezzanine_code(ordinal, taken)
+                where = f" on floor {ordinal}" if level == FloorType.MEZZANINE else ""
+                raise ValueError(f"{b_name} already has {has.name} ({has.code}){where}: give {title} another code, "
+                                 f"or replace that {what}'s drawing")
+            code = code or (default_mezzanine_code(ordinal, taken) if level == FloorType.MEZZANINE
+                            else default_roof_code(taken))
             if has is None and code in taken:
                 raise ValueError(f"{b_name}: the code {code} is {taken[code]}'s: give {title} another code")
             taken[code] = title
-            mezzanines.append((len(out), b_key, building, b_name, title))
+            later.append((len(out), b_key, building, b_name, title))
             out.append(FloorPlace(loc_id, new_loc, b_id, new_b, ordinal, p, f"{b_id}-{has.code}" if has else None,
-                                  True, code))
+                                  level, code))
             continue
         if (b_key, ordinal) in chosen:
             raise ValueError(f"{chosen[b_key, ordinal]} and {title} are both floor {ordinal} of {b_name}: give one "
                              "of them another floor or building, or leave it out")
-        # (a mezzanine on that floor is not that floor)
-        has = next((f for f in floors if f.ordinal == ordinal and not f.mezzanine), None)
+        # (a mezzanine on that floor is not that floor; a roof there goes up above it)
+        has = next((f for f in floors if f.ordinal == ordinal and f.type == FloorType.FLOOR), None)
         if has and not p.get("replace"):
             raise ValueError(f"{b_name} already has floor {ordinal} ({has.name}): give {title} another floor, "
                              "or replace that floor's drawing")
@@ -2223,13 +2245,30 @@ def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[FloorPlace]:
         taken[code] = title
         chosen[b_key, ordinal] = title
         out.append(FloorPlace(loc_id, new_loc, b_id, new_b, ordinal, p, f"{b_id}-{has.code}" if has else None,
-                              False, code))
-    for at, b_key, building, b_name, title in mezzanines:  # each in a floor: the building's, or one of these plans
-        ordinal = out[at].ordinal
-        if (b_key, ordinal) not in chosen and not any(f.ordinal == ordinal and not f.mezzanine
-                                                      for f in (building.floors if building is not None else [])):
-            raise ValueError(f"{title} is a mezzanine of floor {ordinal}, which {b_name} does not have: add that "
-                             "floor too, or choose the floor it stands in")
+                              FloorType.FLOOR, code))
+    for at, b_key, building, b_name, title in later:
+        place = out[at]
+        floors = building.floors if building is not None else []
+        if place.type == FloorType.MEZZANINE:  # in a floor: the building's, or one of these plans
+            if (b_key, place.ordinal) not in chosen and not any(f.ordinal == place.ordinal and f.type == FloorType.FLOOR
+                                                                for f in floors):
+                raise ValueError(f"{title} is a mezzanine of floor {place.ordinal}, which {b_name} does not have: add "
+                                 "that floor too, or choose the floor it stands in")
+            continue
+        if place.replaces:  # (a roof's drawing replaced: it stays where it is)
+            continue
+        # a roof: above every floor, the building's and these plans'; one level of its floor
+        top = max([f.ordinal for f in floors if f.type == FloorType.FLOOR]
+                  + [n for (k, n) in chosen if k == b_key], default=None)
+        if top is not None and place.ordinal <= top:
+            raise ValueError(f"{title} is a roof: give it a floor above {b_name}'s top floor ({top}), "
+                             f"{top + 1} or more")
+        other = chosen.get((b_key, place.ordinal)) or next(
+            (f"{f.name} ({f.code})" for f in floors if f.ordinal == place.ordinal and f.roof), None)
+        if other is not None:
+            raise ValueError(f"{other} and {title} are both floor {place.ordinal} of {b_name}: give one of them "
+                             "another floor")
+        chosen[b_key, place.ordinal] = title
     return out
 
 
@@ -2258,8 +2297,8 @@ def _plan_numbers(p: dict, title: str) -> None:
             if not 0 < value <= 100:
                 raise ValueError(f"{title}: its {key} is metres, more than 0 and at most 100")
             p[key] = value
-    if p.get("mezzanine") not in (None, True, False):
-        raise ValueError(f"{title}: mezzanine is true or false")
+    if p.get("type") not in (None, *(t.value for t in FloorType)):
+        raise ValueError(f"{title}: its type is one of {', '.join(t.value for t in FloorType)}")
     if p.get("code") is not None and not isinstance(p["code"], str):
         raise ValueError(f"{title}: its code is text")
     if p.get("code") is not None:

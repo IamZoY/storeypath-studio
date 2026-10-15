@@ -34,8 +34,19 @@ class SpaceType(StrEnum):
     PRAYER_ROOM = "prayer_room"
     PARKING = "parking"  # garage, carport, parking
     BALCONY = "balcony"
-    TERRACE = "terrace"  # terrace, roof deck, veranda, porch, courtyard
+    TERRACE = "terrace"  # terrace, roof garden, veranda, porch, courtyard
     OPEN_TO_BELOW = "open_to_below"  # a void over the floor below
+    # Added in format 0.11: the open roof of a building, its deck (a roof level's open
+    # ground, behind its parapets), open to the sky
+    ROOF = "roof"
+
+
+class FloorType(StrEnum):
+    """What level of its building a floor is (format 0.11)."""
+
+    FLOOR = "floor"  # a storey: ground floor, first floor, a basement, a top floor
+    MEZZANINE = "mezzanine"  # a floor standing in another floor of its building, over part of it
+    ROOF = "roof"  # the building's roof as a level: open air, the rooms standing on it indoor
 
 
 class OpeningType(StrEnum):

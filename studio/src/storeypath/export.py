@@ -44,7 +44,7 @@ from .levels import DEFAULT_PARAPET_M
 from .navigation import NAVIGATION_FILE, navigation_file
 from . import finishes
 from .stacks import stack_of
-from .types import OpeningType, SpaceType
+from .types import FloorType, OpeningType, SpaceType
 from .workspace import ExportRecord, LastPackage, Placement, SitePosition, Workspace, floor_order, utcnow
 
 COORD_DECIMALS = 7  # ~1 cm
@@ -253,12 +253,12 @@ def placements(ws: Workspace) -> dict[str, tuple[Placement, bool]]:
     return out
 
 
-OUTDOOR = {SpaceType.TERRACE.value, SpaceType.BALCONY.value}
+OUTDOOR = {SpaceType.TERRACE.value, SpaceType.BALCONY.value, SpaceType.ROOF.value}
 
 
 def open_to_the_sky(ws: Workspace, floor_id: str) -> set[str]:
-    """The terraces and balconies that are open to the sky: those with no window of
-    their own. A window in a terrace's own outer wall (one that joins it to nothing
+    """The terraces, balconies and roofs that are open to the sky: those with no window
+    of their own. A window in a terrace's own outer wall (one that joins it to nothing
     else) encloses it, as a glazed veranda; a room's window looking onto it does not."""
     objects = ws.floor_objects(floor_id)
     enclosed = {r.connects[0] for r in objects if r.kind == "opening" and r.type == "window" and len(r.connects) == 1}
@@ -267,8 +267,8 @@ def open_to_the_sky(ws: Workspace, floor_id: str) -> set[str]:
 
 def _walls_and_parapets(walls, spaces, thickness: float | None):
     """A floor's walls, split into those that rise to the ceiling and the parapets. On
-    a floor with a terrace or balcony open to the sky, a wall that encloses no room is
-    low: the wall around a roof, and anything built onto it (a pier, a box for a
+    a floor with a terrace, balcony or roof open to the sky, a wall that encloses no room
+    is low: the wall around a roof, and anything built onto it (a pier, a box for a
     pipe). A room's own walls stay full height, terrace or not beside them.
     ``spaces``: (shape, open to the sky)."""
     if walls is None or walls.is_empty or not any(sky for _, sky in spaces):
@@ -425,8 +425,8 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                         _geo(outline, g) if outline is not None else None,
                         {"kind": "floor", "code": f.code, "name": f.name, "building_id": b_id,
                          "ordinal": f.ordinal, "elevation": f.elevation, "height": f.height,
-                         # a mezzanine (0.11): the floor it stands in, and how far above it
-                         "mezzanine": f.mezzanine,
+                         # what level it is (0.11); a mezzanine's floor it stands in, and how far above it
+                         "type": f.type.value,
                          "host_floor_id": child_id(b_id, f.host) if f.mezzanine else None,
                          "above_host_m": f.above_host if f.mezzanine else None,
                          "walls": _geo(walls, g) if walls is not None else None,
@@ -757,7 +757,7 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
         files={**FILES, "spec": "FORMAT.md", "schemas": "schema/"},
         counts={role: len(fs) for role, fs in features.items()},
         types={"space": [t.value for t in SpaceType], "zone": [t.value for t in SpaceType],
-               "opening": [t.value for t in OpeningType]},
+               "opening": [t.value for t in OpeningType], "floor": [t.value for t in FloorType]},
         sources=[
             SourceInfo(floor_id=fid, file=Path(f.source.path).name, sha256=f.source.sha256)
             for _, _, f, fid in ws.iter_floors() if f.source and scoped(fid)
