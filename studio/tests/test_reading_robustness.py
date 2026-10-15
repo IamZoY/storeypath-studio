@@ -1003,3 +1003,21 @@ def test_a_room_that_cannot_be_drawn_costs_that_room_only():
     model = vision.VisionModel(url="http://vision.invalid/v1", parallel=2)
     vision._ask_each(list(range(6)), draw, lambda item, image: item, kept.append, model)
     assert sorted(kept) == [0, 1, 3, 4, 5] and "could not be drawn" in model.failed
+
+
+def test_an_outline_a_split_left_invalid_is_kept_as_what_it_encloses():
+    # A zone whose outline came out with a hole outside its shell (or a ring crossing
+    # itself) cannot be rounded by GEOS as it is: the floor's whole read failed. It is
+    # kept as what it encloses: the shell less the holes inside it; one outside takes
+    # nothing (GEOS's own repair would add it as a piece of its own)
+    from shapely.geometry import Polygon, shape
+
+    from storeypath.convert import _local
+
+    square = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    outside, inside = [(20, 20), (22, 20), (22, 22), (20, 22)], [(2, 2), (4, 2), (4, 4), (2, 4)]
+    kept = shape(_local(Polygon(square, [outside, inside])))
+    assert kept.is_valid and kept.geom_type == "Polygon" and abs(kept.area - 96.0) < 1e-6
+    bow = shape(_local(Polygon([(0, 0), (10, 10), (10, 0), (0, 10)])))  # a ring crossing itself
+    assert bow.is_valid and abs(bow.area - 50.0) < 1e-6
+    assert shape(_local(Polygon(square))).area == 100.0  # (a valid one as it was)

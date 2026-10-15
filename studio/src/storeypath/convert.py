@@ -14,6 +14,7 @@ from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import shapely
 from shapely import STRtree, set_precision
 from shapely.geometry import Point, mapping, shape
 
@@ -642,8 +643,28 @@ def _sizes_from_the_schedule(ex: FloorExtraction, doc, region, vision, model, sa
 
 
 def _local(geom) -> dict:
-    """GeoJSON geometry in local meters, rounded to 0.1 mm."""
-    return mapping(set_precision(geom, 1e-4))
+    """GeoJSON geometry in local meters, rounded to 0.1 mm. An outline that cannot be
+    rounded as it is (a split that left it invalid: a hole outside its shell, a ring
+    crossing itself) is first taken as what it encloses: rounding it would fail the
+    whole read."""
+    try:
+        return mapping(set_precision(geom, 1e-4))
+    except shapely.errors.GEOSException:
+        return mapping(set_precision(_enclosed(geom), 1e-4))
+
+
+def _enclosed(geom):
+    """What an outline encloses, valid: each shell less its holes. A hole outside its
+    shell takes nothing away (GEOS's own repair would make it a piece of its own)."""
+    parts = []
+    for poly in shapely.get_parts(geom):
+        if poly.geom_type != "Polygon" or poly.is_empty:
+            continue
+        shell = shapely.make_valid(shapely.Polygon(poly.exterior))
+        holes = [shapely.make_valid(shapely.Polygon(r)) for r in poly.interiors]
+        parts.append(shell.difference(shapely.union_all(holes)) if holes else shell)
+    kept = [g for g in shapely.get_parts(shapely.union_all(parts)) if g.geom_type == "Polygon" and not g.is_empty]
+    return shapely.MultiPolygon(kept) if len(kept) > 1 else kept[0] if kept else shapely.Polygon()
 
 
 def _retire(record: ObjectRecord, now, report: ConversionReport) -> None:
