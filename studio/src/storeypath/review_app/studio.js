@@ -1413,12 +1413,15 @@ function exportCard(code, p) {
     title: "The item types the package carries, each once: what another system reads its items by, and may take into its own" },
   el("option", { value: "used" }, "Item types its items use"),
   el("option", { value: "all" }, "Every item type"));
-  // each floor's drawing too: chosen for each export, never by default (all of a drawing goes with it)
-  const drawings = el("input", { type: "checkbox", "data-testid": "export-drawings" });
-  const withDrawings = el("label", { class: "check export-drawings", title: "Each floor's drawing goes in the package as it is drawn: everything on "
+  // each floor's drawing too: chosen for each export, never by default (all of a drawing goes with it);
+  // by who may change the whole project, as who may see a drawing whole
+  const mayDraw = onProject(p, "edit");
+  const drawings = el("input", { type: "checkbox", "data-testid": "export-drawings", disabled: !mayDraw });
+  const withDrawings = el("label", { class: "check export-drawings", title: mayDraw ? "Each floor's drawing goes in the package as it is drawn: everything on "
     + "its part of the drawing, every layer and every text (notes, names, numbers), to whoever receives the package. Studio "
     + "took out the title blocks and private texts it found when the drawing was added, and leaves out phone numbers, emails "
-    + "and names with a title once more; the rest goes. Readers show it under the plan. Big floors take half a minute each." },
+    + "and names with a title once more; the rest goes. Readers show it under the plan. Big floors take half a minute each."
+    : "Exporting with the drawings needs edit rights on the project" },
   drawings, " Include the drawings");
   const button = el("button", { class: "primary", type: "button", disabled: !buildings.length, onclick: async () => {
     try {

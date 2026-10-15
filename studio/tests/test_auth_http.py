@@ -225,6 +225,9 @@ ROWS = [
     Row("POST", C + "/locations/{loc}/placement", {}, ok=400, passes={"admin", "owner"}, hidden=OUTSIDE),
     Row("POST", C + "/export", {"building": "{annex}"}, ok=200, passes={"admin", "owner", "building_editor"},
         hidden=OUTSIDE | {"floor_viewer"}, settle=True),
+    # with its drawings (every layer and text of them): edit on the project too, as a drawing seen whole
+    Row("POST", C + "/export", {"building": "{annex}", "drawings": "yes"}, ok=(400, "drawings: true or false"),
+        passes={"admin", "owner"}, hidden=OUTSIDE | {"floor_viewer"}),
     Row("GET", C + "/exports/{annex_pkg}", ok=200, passes={"admin", "owner", "building_editor"},
         hidden=OUTSIDE | {"floor_viewer"}),
     Row("POST", C + "/exports/{annex_pkg}", {"password": "a long password"}, ok=200,
@@ -441,3 +444,15 @@ def test_whoever_may_see_a_floor_shares_an_area_of_it(site):
         assert site.as_(role, "POST", path, {"area": area})[0] == want, role
     status, got, _ = site.as_("floor_viewer", "POST", path, {"area": [100, 40, 410, 60]})
     assert status == 400 and "at most 300" in got["error"]
+
+
+def test_exporting_with_the_drawings_needs_edit_on_the_project(site):
+    """Who may change one building exports its package, without its drawings: with them
+    (every layer and text of its floors' drawings), edit on the whole project too, as to
+    see a drawing whole or its words."""
+    path = fill(C + "/export", site.ids)
+    status, got, _ = site.as_("building_editor", "POST", path, {"building": site.ids["annex"], "drawings": True})
+    assert status == 403 and "exporting with the drawings needs edit rights on the project" in got["error"]
+    status, got, _ = site.as_("building_editor", "POST", path, {"building": site.ids["annex"], "drawings": False})
+    assert status == 200, got
+    site.wait_jobs()

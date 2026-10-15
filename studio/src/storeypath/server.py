@@ -49,7 +49,8 @@ each call needs is checked first in route() (the table is in studio/README.md):
     POST /api/projects/<code>/export {building, item_types?, drawings?} → job: that
                                                building's package (one building per
                                                package); drawings: true, each floor's
-                                               drawing in it too (format 0.10.1)
+                                               drawing in it too (format 0.10.1): edit
+                                               on the project too
     GET  /api/projects/<code>/exports/<file>
     GET  /api/projects/<code>/preview.storeypath[?building=<id>]   the project (or one
                                                building) as it is now, for Studio's viewers
@@ -2535,12 +2536,16 @@ class Gate:
         return sight
 
     def export(self, code: str, body: dict) -> str:
-        """A building's package made: edit on the building (it holds every floor of it)."""
+        """A building's package made: edit on the building (it holds every floor of it).
+        With its drawings (``drawings``), edit on the whole project too, as to see a
+        drawing whole (its every layer and text) or its words."""
         sight = self.see(code)
         building = self.studio.export_building(code, body)
         if not sight.sees_building(building):
             raise NotFound(f"no building {building}")
         _need(sight.building(building), "edit", "the whole building")
+        if (body or {}).get("drawings") not in (None, False) and rank(sight.project) < rank("edit"):
+            raise Forbidden("exporting with the drawings needs edit rights on the project")
         return building
 
     def export_file(self, code: str, name: str) -> Sight:

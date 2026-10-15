@@ -391,7 +391,9 @@ with links to view it as a *2D plan*, in *3D*, or as *Rooms by type*.
   permit, plot or licence number, and takes names with a title (Mr, Dr, Eng …) out of
   their texts; the rest goes. A big floor takes about half a minute to draw the first
   time (the export says which it is drawing), and is kept, so the next export with them
-  is quick. The project's history says the export carried its drawings.
+  is quick. The project's history says the export carried its drawings. Only who may
+  change the whole project may tick it, as only they may see a drawing whole or its
+  words: whoever may change one building alone exports it without its drawings.
 
 ### Sending a project to another Studio
 
