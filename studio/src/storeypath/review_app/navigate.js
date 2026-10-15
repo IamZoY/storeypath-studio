@@ -14,6 +14,7 @@ import { accountMenu, sentAway, whoami } from "./account.js";
 import { setupChrome } from "./chrome.js";
 import { WITH_OTHERS, onHold, together, toggled } from "./floorpick.js";
 import { lookOptions, setupLook } from "./look.js";
+import { toast } from "./toast.js";
 import { normalizeItemId } from "/viewer/src/ids.js"; // items' IDs as people type them (the viewers' own)
 
 const $ = (id) => document.getElementById(id);
@@ -70,16 +71,6 @@ function el(tag, attrs = {}, ...children) {
   }
   e.append(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
   return e;
-}
-
-let toastTimer;
-function toast(text, error = false) {
-  const t = $("toast");
-  t.textContent = text;
-  t.classList.toggle("error", error);
-  t.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), error ? 9000 : 3000);
 }
 
 const message = (text) => ($("message").textContent = text || "");

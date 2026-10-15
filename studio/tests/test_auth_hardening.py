@@ -144,6 +144,26 @@ def test_a_file_opened_adds_item_types_only_for_who_may_change_them(campus):
     assert studio.catalogue().get("ZEBRA-DESK") is not None
 
 
+def test_each_file_opened_or_not_is_written_to_studios_log_with_why_and_how_long(campus, caplog):
+    # The page may lose the answer (a proxy in front of Studio that stops waiting), and
+    # its message goes: Studio's log keeps who sent what, what came of it and how long it took
+    import logging
+
+    port, _, _, _, tokens, ids = campus
+    caplog.set_level(logging.INFO, logger="storeypath.open")
+    status, said, _ = call(port, "PUT", "/api/open", raw=b"not a file to open", token=tokens["boss"])
+    assert status == 400
+    status, opened, _ = call(port, "PUT", "/api/open?replace=Demo%20Campus", raw=ids["packages"][0].read_bytes(),
+                             token=tokens["boss"])
+    assert status == 200
+    lines = [(r.levelname, r.getMessage()) for r in caplog.records if r.name == "storeypath.open"]
+    assert len(lines) == 2, lines
+    assert lines[0][0] == "WARNING" and lines[0][1].startswith("a file not opened (by boss, 0.0 MB, ") \
+        and said["error"] in lines[0][1]
+    assert lines[1][0] == "INFO" and lines[1][1].startswith(f"opened {opened['code']} (building; by boss, ") \
+        and lines[1][1].endswith(" s)")
+
+
 # ---- logging in --------------------------------------------------------------------------
 
 class Clock:

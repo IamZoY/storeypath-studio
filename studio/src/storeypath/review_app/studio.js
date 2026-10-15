@@ -11,6 +11,7 @@ import { itemTypesPage } from "./itemtypes.js";
 import { downloadSealed, putFile } from "./seal.js";
 import { openShare } from "./share.js";
 import { ProjectStream } from "./stream.js";
+import { toast } from "./toast.js";
 import { avatar } from "./together.js";
 import { usersPage } from "./users.js";
 import { lengthSaid, onUnits, roundStep, unitsSwitch } from "./units.js";
@@ -78,16 +79,6 @@ function el(tag, attrs = {}, ...children) {
 
 /** The page shown: its parts, those left out (null) not shown. */
 const showPage = (...parts) => $("page").replaceChildren(...parts.filter(Boolean));
-
-let toastTimer;
-function toast(message, error = false, ms = undefined) {
-  const t = $("toast");
-  t.textContent = message;
-  t.classList.toggle("error", error);
-  t.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), ms ?? (error ? 9000 : 3000));
-}
 
 // the jobs this page follows now (runJob): a page opened again follows the others (resume)
 const following = new Set();

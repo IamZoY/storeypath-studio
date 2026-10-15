@@ -18,6 +18,7 @@ import { categoryName } from "./categories.js";
 import { setupChrome } from "./chrome.js";
 import { WITH_OTHERS, onHold, together, toggled } from "./floorpick.js";
 import { lookOptions, setupLook } from "./look.js";
+import { toast } from "./toast.js";
 import { el, icon, save, saved } from "./review/dom.js";
 import { kbd } from "./review/keys.js";
 import { hideTooltip } from "./review/tooltip.js";
@@ -68,16 +69,6 @@ export function ownPackage(raw) {
 const codeOf = (path) => decodeURIComponent(path.split("/")[3] || "");
 
 // ---- small things ---------------------------------------------------------------------------
-
-let toastTimer;
-function toast(text, error = false) {
-  const t = $("toast");
-  t.textContent = text;
-  t.classList.toggle("error", error);
-  t.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), error ? 9000 : 3200);
-}
 
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const typeWords = (t) => cap(state.theme ? state.theme.typeLabel(t || "unspecified") : String(t || "").replaceAll("_", " "));

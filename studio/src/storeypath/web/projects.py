@@ -4,12 +4,20 @@ its floors added and read again, its buildings and sites, and its packages."""
 
 from __future__ import annotations
 
+import logging
+import time
+
 from fastapi import Request, Response
 
+from ..accounts import Refused
+from ..bundle import ProjectExists
+from ..errors import Busy, NotFound
 from .calls import Body, Calls, May, Query, Sent, TheStudio, answer, unsealed, web_of
 
 calls = Calls()
 P = "/api/projects/{code}"
+log = logging.getLogger("storeypath.open")
+REFUSED = (ValueError, Refused, ProjectExists, NotFound, Busy)  # said to the person: no fault of Studio's
 
 
 @calls.get("/api/projects")
@@ -26,11 +34,31 @@ def create(request: Request, may: May, studio: TheStudio, body: Body):
 
 @calls.put("/api/open")
 def open_file(request: Request, may: May, studio: TheStudio, sent: Sent, query: Query):
-    """A project file or a package opened (sealed with a password: X-StoreyPath-Password)."""
+    """A project file or a package opened (sealed with a password: X-StoreyPath-Password).
+    Each one opened, or not and why, is written to Studio's log, with how long it took:
+    the page may have lost the answer (a proxy that stopped waiting), the log has it."""
     allow = may.opening()
-    data = unsealed(request, sent.read())
-    return answer(request, may.opened(studio.open(data, (query.get("replace") or [None])[0], allow,
-                                                  learn_types=may.user.can("catalogue"), by=may.user)))
+    started, size, who = time.monotonic(), None, may.user.username
+    try:
+        data = unsealed(request, sent.read())
+        size = len(data)
+        opened = studio.open(data, (query.get("replace") or [None])[0], allow,
+                             learn_types=may.user.can("catalogue"), by=may.user)
+    except Exception as e:
+        said = f"a file not opened ({_opening(who, size, started)}): {type(e).__name__}: {e}"
+        if isinstance(e, REFUSED):
+            log.warning(said)
+        else:
+            log.exception(said)
+        raise
+    log.info(f"opened {opened.get('code')} ({opened.get('how')}; {_opening(who, size, started)})")
+    return answer(request, may.opened(opened))
+
+
+def _opening(who: str, size: int | None, started: float) -> str:
+    """Who sent a file to open, how big it was, how long it took."""
+    big = "size unknown" if size is None else f"{size / 1e6:.1f} MB"
+    return f"by {who}, {big}, {time.monotonic() - started:.0f} s"
 
 
 @calls.get("/api/jobs/{job_id}")

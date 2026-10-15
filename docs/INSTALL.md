@@ -39,13 +39,13 @@ with Docker.
 | The first admin's password | `admin` / `admin` at the first start; `-e STOREYPATH_ADMIN_PASSWORD=…` to start with another |
 | Let others on your network use it | publish the port on all interfaces: `-p 8080:8080`, and add them on the Users page. They reach it by the machine's address or name: give it with `-e STOREYPATH_ALLOWED_HOSTS=studio.example,192.168.1.20` so it is on the certificate (Studio also refuses requests addressed to names it does not know, so a web page cannot reach it through DNS rebinding) |
 | Your organization's certificate | mount it and pass it: `-v /etc/studio-tls:/tls:ro ghcr.io/storeypath/studio serve --host 0.0.0.0 --port 8080 --data /data --cert /tls/cert.pem --key /tls/key.pem` |
-| Behind a proxy that speaks HTTPS | `… serve --host 0.0.0.0 --port 8080 --data /data --http --secure-cookies --allowed-host studio.example --trusted-proxy 10.0.0.5` (the proxy's address or network; or `-e STOREYPATH_TRUSTED_PROXIES=…`). The proxy must pass who is asking in `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`): Studio refuses calls through it without |
+| Behind a proxy that speaks HTTPS | `… serve --host 0.0.0.0 --port 8080 --data /data --http --secure-cookies --allowed-host studio.example --trusted-proxy 10.0.0.5` (the proxy's address or network; or `-e STOREYPATH_TRUSTED_PROXIES=…`). The proxy must pass who is asking in `X-Real-IP` (nginx: `proxy_set_header X-Real-IP $remote_addr;`): Studio refuses calls through it without. A project file is large and opening one takes a while: let the proxy take the size and wait (nginx: `client_max_body_size 512m;`, what Studio takes, and `proxy_read_timeout 600s;`), or the page says it failed while Studio goes on and opens it |
 | Users, backups | the person menu (top right): *Users* for admins, *Download a backup*; or `docker exec storeypath storeypath users list`, `docker exec storeypath storeypath backup --out /tmp/studio.backup` ([Users, sharing and backups](ACCOUNTS.md)) |
 | Look at the plans with GPU helpers | `-e STOREYPATH_VISION_URL=https://gpu1:8105/v1,https://gpu2:8105/v1 -e STOREYPATH_VISION_KEY=…` (the helpers' key): [Run the GPU helper](GPU.md#run-the-gpu-helper). Any OpenAI-compatible endpoint that takes images works too |
 | Its database | inside, reached over a socket only (no port): `docker exec -it storeypath psql`. Its log: `/data/pg/log` |
 | Another database | `-e STOREYPATH_DATABASE_URL=postgresql://user:password@host/storeypath`: your own PostgreSQL 17 with PostGIS 3, in place of the one inside (which then does not start). Optional: Studio needs none |
 | Docker Compose | `docker compose -f docker/compose.yml up -d`, the same Studio and volume; `--profile gpu` adds the GPU helper beside it ([docker/compose.yml](../docker/compose.yml)) |
-| Logs | `docker logs -f storeypath` |
+| Logs | `docker logs -f storeypath`: each file opened, or not and why, with who sent it, its size and how long it took |
 
 The same image is the command-line tool: `docker run --rm -v "$PWD:/data"
 ghcr.io/storeypath/studio views house.dwg`. [The command line](CLI.md) lists the

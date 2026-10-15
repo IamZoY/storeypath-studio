@@ -206,14 +206,23 @@ kbd + kbd { margin-left: 2px; }
 }
 .swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; display: inline-block; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18); }
 
-/* ---- toast: a message a moment, at the foot of the page ---------------------------------- */
+/* ---- toast: a message a moment, at the foot of the page (toast.js; what went wrong stays) - */
 #toast {
   position: fixed; left: 50%; bottom: calc(var(--status-h, 0px) + 16px); transform: translateX(-50%);
   z-index: var(--z-toast); pointer-events: none; max-width: min(560px, 90vw);
   padding: var(--sp-2) var(--sp-4); border-radius: var(--r-lg); background: var(--overlay); color: var(--text);
   border: 1px solid var(--border-strong); box-shadow: var(--shadow-lg); font-size: var(--fs-md); white-space: pre-line;
 }
-#toast.error { background: var(--danger); border-color: transparent; color: #fff; }
+#toast.error {
+  background: var(--danger); border-color: transparent; color: #fff;
+  display: flex; align-items: flex-start; gap: var(--sp-3); pointer-events: auto; user-select: text; /* (it stays: closed, or copied) */
+}
+#toast .toast-close {
+  flex: none; margin: -2px -6px 0 0; padding: 0 4px; border: 0; background: none; color: inherit;
+  font: inherit; font-size: 18px; line-height: 1; cursor: pointer; opacity: .85;
+}
+#toast .toast-close::before { content: "×"; }
+#toast .toast-close:hover { opacity: 1; }
 
 /* ---- dialogs ---------------------------------------------------------------------------- */
 dialog.dialog {

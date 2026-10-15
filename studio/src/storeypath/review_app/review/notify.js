@@ -2,8 +2,8 @@
 // went wrong), and the line of what is under way (a print drawn, a floor read again).
 
 import { $ } from "./dom.js";
+import { toast as show } from "../toast.js";
 
-let toastTimer;
 const listeners = new Set();
 
 /** ``fn(message, error)`` for each toast (the status bar keeps the last error). */
@@ -11,14 +11,9 @@ export function onToast(fn) {
   listeners.add(fn);
 }
 
+/** ``message`` for a moment; ``error``: until it is closed. */
 export function toast(message, error = false) {
-  const t = $("toast");
-  if (!t) return;
-  t.textContent = message;
-  t.classList.toggle("error", error);
-  t.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), error ? 8000 : 2500);
+  show(message, error, 2500);
   for (const fn of listeners) fn(message, error);
 }
 

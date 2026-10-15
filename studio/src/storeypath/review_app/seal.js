@@ -111,6 +111,19 @@ export async function putFile(path, file) {
       if (password === null) return null;
       continue;
     }
-    throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), { status: res.status, data });
+    throw Object.assign(new Error(data.error || notStudios(res)), { status: res.status, data });
   }
+}
+
+/** What an answer that is not Studio's says (no error of its own: a proxy in front of it). */
+function notStudios(res) {
+  const said = `${res.status} ${res.statusText}`.trim();
+  if (res.status === 413) {
+    return `${said}: the file is larger than the proxy in front of Studio takes; raise its limit (nginx: client_max_body_size)`;
+  }
+  if (res.status === 502 || res.status === 504) {
+    return `${said}: the proxy in front of Studio stopped waiting for its answer. Studio may still be opening the file: `
+      + "look at the Projects page in a minute (and raise the proxy's time limit, nginx: proxy_read_timeout)";
+  }
+  return said;
 }

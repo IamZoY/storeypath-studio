@@ -753,6 +753,14 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
     stale = viewer_out_of_date()
     if stale:
         typer.echo(f"WARNING: {stale}", err=True)
+    import logging
+
+    # Studio's own lines (a file opened, or not and why), each with its time: in the
+    # terminal, and in `docker logs`
+    out = logging.StreamHandler()
+    out.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S"))
+    logging.getLogger("storeypath").addHandler(out)
+    logging.getLogger("storeypath").setLevel(logging.INFO)
     from .workers import default_count
 
     studio = Studio(data, db=db, read_workers=default_count())
