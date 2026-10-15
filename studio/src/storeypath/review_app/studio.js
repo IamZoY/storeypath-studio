@@ -694,20 +694,39 @@ async function showPlans(code, drawing, area, result, found = null, jobId = null
     chosen.forEach((c) => byPlace.set(c.place().key, [...(byPlace.get(c.place().key) || []), c]));
     let clash = null;
     for (const c of cards) {
-      const { key, building, floor } = c.place();
+      const { key, on, building, floor, code, mezzanine } = c.place();
+      // a floor, or a mezzanine on it: told apart (a mezzanine is its building's by its code)
+      const what = mezzanine ? `mezzanine ${code}` : `floor ${floor}`;
       const others = (byPlace.get(key) || []).filter((o) => o !== c).map((o) => o.plan.title || `plan ${o.plan.index}`);
-      const has = c.existing();
+      const has = c.existing(), taken = c.codeTaken();
+      // a mezzanine stands in one of the building's floors, or one of these plans
+      const hostless = mezzanine && c.chosen() && !c.host() && !(byPlace.get(on) || []).length;
       if (has && c.chosen() && !c.replacing()) {
-        c.say(`${building} already has floor ${floor} (${has.name}${has.drawing ? `, from ${has.drawing}` : ""}): replace its drawing, or give this plan another floor.`, true);
-        clash = { building, floor };
-      } else if (!others.length) c.say(has && c.replacing() ? `Replaces the drawing of ${has.name}: its rooms keep their IDs.` : "");
-      else if (c.chosen()) {
-        c.say(`${others.join(", ")} is also floor ${floor} of ${building}: give one of them another floor or building.`, true);
-        clash = { building, floor };
-      } else c.say(`Floor ${floor} of ${building} is ${others.join(", ")}. To add this plan too, give it another building or floor.`);
+        c.say(mezzanine
+          ? `${building} already has ${has.name} (${has.code}) on floor ${floor}${has.drawing ? `, from ${has.drawing}` : ""}: replace its drawing, or give this plan another code.`
+          : `${building} already has floor ${floor} (${has.name}${has.drawing ? `, from ${has.drawing}` : ""}): replace its drawing, or give this plan another floor.`, true);
+        clash = `${building} already has ${what}`;
+      } else if (mezzanine && c.chosen() && !code) {
+        c.say("A mezzanine needs a code of its own (M00).", true);
+        clash = "A mezzanine needs a code";
+      } else if (mezzanine && c.chosen() && !/^[A-Z0-9]{1,16}$/.test(code)) {
+        c.say(`${code}: a code is capital letters and digits, no hyphens.`, true);
+        clash = `The code ${code} is not a code`;
+      } else if (taken && c.chosen()) {
+        c.say(`The code ${code} is ${taken.name}'s: give this mezzanine another code.`, true);
+        clash = `The code ${code} is taken`;
+      } else if (hostless) {
+        c.say(`${building} has no floor ${floor} for this mezzanine to stand in: add that floor too (choose its plan), or give it another floor.`, true);
+        clash = `${building} has no floor ${floor}`;
+      } else if (!others.length) {
+        const onHost = mezzanine && c.chosen() ? `Stands in ${c.host() ? c.host().name : `floor ${floor}, added with it`}.` : "";
+        c.say(has && c.replacing() ? `Replaces the drawing of ${has.name}: its rooms keep their IDs.` : onHost);
+      } else if (c.chosen()) {
+        c.say(`${others.join(", ")} is also ${what} of ${building}: give one of them another ${mezzanine ? "code" : "floor"} or building.`, true);
+        clash = `Two plans are ${what} of ${building}`;
+      } else c.say(`${what[0].toUpperCase()}${what.slice(1)} of ${building} is ${others.join(", ")}. To add this plan too, give it another building or ${mezzanine ? "code" : "floor"}.`);
     }
-    add.textContent = clash ? `Two plans are floor ${clash.floor} of ${clash.building}`
-      : chosen.length ? `Add ${chosen.length} floor${chosen.length === 1 ? "" : "s"}` : "Choose plans to add";
+    add.textContent = clash || (chosen.length ? `Add ${chosen.length} floor${chosen.length === 1 ? "" : "s"}` : "Choose plans to add");
     add.disabled = !chosen.length || clash !== null;
   };
   cards.forEach((c) => c.onChange(updateCount));
@@ -740,6 +759,17 @@ async function showPlans(code, drawing, area, result, found = null, jobId = null
 
 const NEW = "__new__"; // a new location or building, named in the box beside it
 
+/** A mezzanine's default code on floor ``n`` of a building whose codes are ``taken``:
+ * M00 over the ground floor, M01 over the first, MB01 over the first basement; a second
+ * on the same floor M00B, then M00C… (ids.default_mezzanine_code). */
+function mezzanineCode(n, taken) {
+  const base = n >= 0 ? `M${String(n).padStart(2, "0")}` : `MB${String(-n).padStart(2, "0")}`;
+  for (const suffix of ["", ..."BCDEFGHJKMNPQRSTVWXYZ"]) if (!taken.has(base + suffix)) return base + suffix;
+  return base;
+}
+
+const MIN_ABOVE_HOST = 2.4; // a mezzanine's default level above its floor, at least (workspace.MIN_ABOVE_HOST)
+
 function planCard(plan, top, levels, project) {
   const isFloor = plan.kind === "floor_plan" || plan.kind === "roof_plan";
   const ordinal = plan.kind === "roof_plan" ? top + 1 : plan.floor;
@@ -767,34 +797,74 @@ function planCard(plan, top, levels, project) {
   };
   if (!locations.length) location.value = NEW;
   fillBuildings();
+  // A floor, or a mezzanine: a floor standing in one of the building's floors (the Floor
+  // field then picks that floor), over part of it, with a code of its own (M00) and its
+  // level above that floor's.
+  const kind = el("select", { "aria-label": "Floor or mezzanine", "data-testid": "plan-level-kind",
+    title: "A mezzanine stands in one of the building's floors, over part of it: it keeps that floor's number, has its own code and level" },
+  el("option", { value: "floor" }, "Floor"), el("option", { value: "mezzanine" }, "Mezzanine"));
+  kind.value = plan.mezzanine ? "mezzanine" : "floor";
+  const mezzanine = () => kind.value === "mezzanine";
   const floor = el("input", { type: "number", step: "1", value: ordinal ?? 0 });
-  const name = el("input", { type: "text", value: plan.kind === "roof_plan" ? "Roof" : FLOOR_NAMES[ordinal ?? 0] || `Floor ${ordinal}` });
-  floor.addEventListener("input", () => { name.value = FLOOR_NAMES[floor.value] || `Floor ${floor.value}`; });
+  const floorLabel = el("span", {}, "Floor");
+  const floorName = () => (plan.kind === "roof_plan" && !mezzanine() ? "Roof"
+    : mezzanine() ? "Mezzanine" : FLOOR_NAMES[floor.value] || `Floor ${floor.value}`);
+  const name = el("input", { type: "text", value: "" });
+  let nameSet = false;
+  name.addEventListener("input", () => { nameSet = true; });
+  const code = el("input", { type: "text", maxlength: "16", spellcheck: "false", "data-testid": "plan-code",
+    title: "Its code in its IDs (…-M00-0001): capital letters and digits" });
+  let codeSet = false;
+  code.addEventListener("input", () => { codeSet = true; code.value = code.value.toUpperCase(); });
   // Height and parapet from the drawing's levels, following the floor number until changed by hand.
   const heightOf = (n) => levels.heights[String(n)] ?? levels.height;
   const parapetOf = (n) => (levels.parapet !== null && n === levels.roof ? levels.parapet : levels.default_parapet);
   const height = el("input", { type: "number", step: "0.05", min: "2", value: heightOf(ordinal ?? 0) });
   const parapet = el("input", { type: "number", step: "0.05", min: "0", value: parapetOf(ordinal ?? 0) });
-  let heightSet = false, parapetSet = false;
+  const above = el("input", { type: "number", step: "0.05", min: "0.5", "data-testid": "plan-above-host" });
+  let heightSet = false, parapetSet = false, aboveSet = false;
   height.addEventListener("input", () => { heightSet = true; });
   parapet.addEventListener("input", () => { parapetSet = true; });
-  floor.addEventListener("input", () => {
-    if (!heightSet) height.value = heightOf(Number(floor.value));
-    if (!parapetSet) parapet.value = parapetOf(Number(floor.value));
-  });
-  const existing = () => chosenBuilding()?.floors.find((f) => f.ordinal === Number(floor.value)) || null;
+  above.addEventListener("input", () => { aboveSet = true; });
+  /** The floor a mezzanine stands in, of the building's (null: none there, or a new building). */
+  const host = () => chosenBuilding()?.floors.find((f) => f.ordinal === Number(floor.value) && !f.mezzanine) || null;
+  const hostHeight = () => host()?.height ?? heightOf(Number(floor.value));
+  const existing = () => chosenBuilding()?.floors.find((f) => f.ordinal === Number(floor.value)
+    && (mezzanine() ? f.mezzanine && f.code === code.value.trim() : !f.mezzanine)) || null;
+  /** Each field that follows the floor, as it is until changed by hand. */
+  const follow = () => {
+    const n = Number(floor.value);
+    if (!nameSet) name.value = floorName();
+    if (!codeSet) code.value = mezzanine() ? mezzanineCode(n, new Set((chosenBuilding()?.floors || []).map((f) => f.code))) : "";
+    if (!aboveSet) above.value = plan.above_host ?? Math.max(MIN_ABOVE_HOST, Math.round(hostHeight() * 50) / 100);
+    if (!heightSet) {
+      height.value = mezzanine() ? Math.max(MIN_ABOVE_HOST, Math.round((hostHeight() - Number(above.value)) * 100) / 100)
+        : heightOf(n);
+    }
+    if (!parapetSet) parapet.value = parapetOf(n);
+  };
+  const codeLabel = el("label", { title: "Its code in its IDs: a second mezzanine on one floor M00B, then M00C…" }, "Code", code);
+  const aboveLabel = el("label", { title: "How far its floor is above the floor it stands in" }, "Height above that floor (m)", above);
   const show = () => {
     locationName.hidden = location.value !== NEW;
     buildingName.hidden = building.value !== NEW;
     const b = chosenBuilding();
-    floors.textContent = b ? (b.floors.length ? `${b.name} has: ${b.floors.map((f) => `${f.name} (${f.ordinal})`).join(", ")}` : `${b.name} has no floors yet`) : "";
+    const listed = (f) => (f.mezzanine ? `${f.name} (${f.code}, in floor ${f.ordinal})` : `${f.name} (${f.ordinal})`);
+    floors.textContent = b ? (b.floors.length ? `${b.name} has: ${b.floors.map(listed).join(", ")}` : `${b.name} has no floors yet`) : "";
     floors.hidden = !b;
+    floorLabel.textContent = mezzanine() ? "In floor" : "Floor";
+    floor.title = mezzanine() ? "The floor it stands in, by its number: 0 the ground floor" : "";
+    codeLabel.hidden = aboveLabel.hidden = !mezzanine();
     replaceLabel.hidden = !existing();
     if (!existing()) replace.checked = false;
   };
-  location.addEventListener("change", () => { fillBuildings(); show(); });
-  building.addEventListener("change", show);
-  floor.addEventListener("input", show);
+  follow();
+  location.addEventListener("change", () => { fillBuildings(); follow(); show(); });
+  building.addEventListener("change", () => { follow(); show(); });
+  floor.addEventListener("input", () => { follow(); show(); });
+  kind.addEventListener("change", () => { follow(); show(); });
+  above.addEventListener("input", () => { if (!heightSet && mezzanine()) follow(); });
+  code.addEventListener("input", show);
   show();
   const note = el("p", { class: "small", hidden: true });
   const node = el("article", { class: "plan" },
@@ -808,9 +878,12 @@ function planCard(plan, top, levels, project) {
       el("div", { class: "fields" },
         el("label", { style: "grid-column: 1 / -1" }, "Location", location, locationName),
         el("label", { style: "grid-column: 1 / -1" }, "Building", building, buildingName),
-        el("label", {}, "Floor", floor),
+        el("label", {}, "Level", kind),
+        el("label", {}, floorLabel, floor),
+        codeLabel,
         el("label", {}, "Floor name", name),
-        el("label", { title: "Floor to floor" }, "Height (m)", height),
+        aboveLabel,
+        el("label", { title: "Floor to floor (a mezzanine's: its own, to the ceiling over it)" }, "Height (m)", height),
         el("label", { title: "The low walls around its terraces and balconies" }, "Parapet (m)", parapet)),
       floors, replaceLabel,
       note));
@@ -823,27 +896,41 @@ function planCard(plan, top, levels, project) {
     chosen: () => check.checked,
     choose: (yes) => { check.checked = yes; sync(); },
     existing,
+    host,
+    mezzanine,
     replacing: () => replace.checked,
     /** The chosen building's next floor (0 for a new building), chosen. */
     nextFloor: () => {
       const b = chosenBuilding();
-      floor.value = b && b.floors.length ? Math.max(...b.floors.map((f) => f.ordinal)) + 1 : 0;
+      const plain = (b?.floors || []).filter((f) => !f.mezzanine);
+      kind.value = "floor";
+      floor.value = plain.length ? Math.max(...plain.map((f) => f.ordinal)) + 1 : 0;
       floor.dispatchEvent(new Event("input"));
       check.checked = true;
       sync();
     },
-    /** The floor of a building this plan would be. */
+    /** The floor of a building this plan would be (a mezzanine: by its code; ``on``, the
+     * key of the floor it stands in). */
     place: () => {
       const b = chosenBuilding();
       const locKey = location.value === NEW ? `new:${locationName.value.trim().toLowerCase()}` : location.value;
       const bName = b ? b.name : buildingName.value.trim() || "Main building";
       const bKey = b ? b.id : `${locKey}|new:${bName.toLowerCase()}`;
-      return { key: `${bKey}|${Number(floor.value)}`, building: bName, floor: Number(floor.value) };
+      const n = Number(floor.value);
+      return mezzanine()
+        ? { key: `${bKey}|code:${code.value.trim()}`, on: `${bKey}|${n}`, building: bName, floor: n, code: code.value.trim(), mezzanine: true }
+        : { key: `${bKey}|${n}`, building: bName, floor: n, mezzanine: false };
+    },
+    /** The building's floor (not this one) that has its code, when it is a mezzanine's. */
+    codeTaken: () => {
+      if (!mezzanine()) return null;
+      const c = code.value.trim();
+      return chosenBuilding()?.floors.find((f) => f.code === c && !(f.mezzanine && f.ordinal === Number(floor.value))) || null;
     },
     say: (text, warn = false) => { note.textContent = text; note.hidden = !text; note.className = warn ? "unsure small" : "muted small"; },
     onChange: (fn) => {
       check.addEventListener("change", () => { sync(); fn(); });
-      for (const input of [location, locationName, building, buildingName, floor, replace]) {
+      for (const input of [location, locationName, building, buildingName, floor, replace, kind, code]) {
         input.addEventListener(input.tagName === "SELECT" || input.type === "checkbox" ? "change" : "input", fn);
       }
     },
@@ -854,6 +941,7 @@ function planCard(plan, top, levels, project) {
         ...(location.value === NEW ? { location: locationName.value.trim() || project.project.name } : { location_id: location.value }),
         ...(b ? { building_id: b.id } : { building: buildingName.value.trim() || "Main building" }),
         ordinal: Number(floor.value), name: name.value, height: Number(height.value), parapet: Number(parapet.value),
+        ...(mezzanine() ? { mezzanine: true, code: code.value.trim() || null, above_host: Number(above.value) } : {}),
         replace: Boolean(existing() && replace.checked),
       };
     },
@@ -908,7 +996,10 @@ function buildingsCard(code, p) {
     el("table", { class: "floors" },
       el("thead", {}, el("tr", {}, el("th", {}, "Floor"), el("th", {}, "From"), el("th", {}, "How it was read"), el("th", {}, ""))),
       el("tbody", {}, b.floors.map((f) => el("tr", { "data-floor": f.id },
-        el("td", {}, el("strong", {}, f.name), el("div", { class: "muted small" }, `${f.ordinal} · ${f.id.split("-").at(-1)}`),
+        el("td", {}, el("strong", {}, f.name), el("div", { class: "muted small" }, f.mezzanine
+          // a mezzanine: its code, and the floor it stands in
+          ? `${f.code} · ${Number(f.above_host).toFixed(1)} m above ${f.host_name || f.host}`
+          : `${f.ordinal} · ${f.id.split("-").at(-1)}`),
           el("div", { class: "on-floor", "data-on-floor": f.id })),
         el("td", {}, f.drawing || "–", el("div", { class: "muted small" }, f.view || "")),
         el("td", {}, f.layers.length

@@ -53,7 +53,7 @@ function floorMenu() {
   }
   for (const [name, floors] of groups) {
     items.push(el("div", { class: "menu-section" }, name));
-    for (const f of [...floors].sort((a, b) => b.ordinal - a.ordinal)) {
+    for (const f of [...floors].sort((a, b) => b.ordinal - a.ordinal || b.elevation - a.elevation)) { // (a mezzanine above its floor)
       const b = menuItem(f.name, () => openFloorById(f.id), { ico: f.id === state.floor?.id ? "check" : null,
         hint: f.converted ? "" : "not converted" });
       if (f.review) b.append(el("span", { class: "badge warn", "data-tip": `${f.review} to review` }, String(f.review)));

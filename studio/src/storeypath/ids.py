@@ -231,3 +231,14 @@ def format_object_code(sequence: int) -> str:
 def default_floor_code(ordinal: int) -> str:
     """F00 for the ground floor, F01, F02… above it, B01, B02… below it."""
     return f"F{ordinal:02d}" if ordinal >= 0 else f"B{-ordinal:02d}"
+
+
+def default_mezzanine_code(ordinal: int, taken=()) -> str:
+    """A mezzanine's code, by the floor it stands in: M00 over the ground floor, M01 over
+    the first, MB01 over the first basement; a second on the same floor M00B, then M00C…
+    The first of those not ``taken``."""
+    base = f"M{ordinal:02d}" if ordinal >= 0 else f"MB{-ordinal:02d}"
+    for suffix in ("", *"BCDEFGHJKMNPQRSTVWXYZ"):  # (no I, L, O or U: read as 1, 0, V)
+        if base + suffix not in taken:
+            return base + suffix
+    raise ValueError(f"too many mezzanines on floor {ordinal}: give this one a code")

@@ -45,7 +45,7 @@ from .navigation import NAVIGATION_FILE, navigation_file
 from . import finishes
 from .stacks import stack_of
 from .types import OpeningType, SpaceType
-from .workspace import ExportRecord, LastPackage, Placement, SitePosition, Workspace, utcnow
+from .workspace import ExportRecord, LastPackage, Placement, SitePosition, Workspace, floor_order, utcnow
 
 COORD_DECIMALS = 7  # ~1 cm
 LOCAL_DECIMALS = 4  # metres, in a building's own frame: a tenth of a millimetre
@@ -409,7 +409,7 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
             # each lift's and stairs' key, the same on every floor it serves
             stack = stack_of(ws, b_id) if whole else {}
             outlines = []
-            for f in sorted(b.floors, key=lambda f: f.ordinal):
+            for f in sorted(b.floors, key=floor_order):  # (lowest first: a mezzanine after its floor)
                 f_id = child_id(b_id, f.code)
                 outline = shape(f.outline) if f.outline else None
                 if outline is not None:
@@ -425,6 +425,10 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                         _geo(outline, g) if outline is not None else None,
                         {"kind": "floor", "code": f.code, "name": f.name, "building_id": b_id,
                          "ordinal": f.ordinal, "elevation": f.elevation, "height": f.height,
+                         # a mezzanine (0.11): the floor it stands in, and how far above it
+                         "mezzanine": f.mezzanine,
+                         "host_floor_id": child_id(b_id, f.host) if f.mezzanine else None,
+                         "above_host_m": f.above_host if f.mezzanine else None,
                          "walls": _geo(walls, g) if walls is not None else None,
                          "wall_thickness_m": f.wall_thickness,
                          "parapets": _geo(parapets, g) if parapets is not None else None,
@@ -486,7 +490,7 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
                             )
                         )
             # the furniture and equipment on each floor
-            for f in sorted(b.floors, key=lambda f: f.ordinal) if whole else ():
+            for f in sorted(b.floors, key=floor_order) if whole else ():
                 f_id = child_id(b_id, f.code)
                 units = floor_units(ws, f_id)
                 doors = {r.id for r in walked_doors(ws, f_id)}
@@ -642,7 +646,7 @@ def export_package(ws: Workspace, out_path, *, building: str | None = None, reco
     it to choose which to take); with them the 3D model of each that has one
     (``models``: a type's code → its file, or None; format 0.9.2).
 
-    With ``drawings`` it carries each floor's drawing too (format 0.10.1): its part of
+    With ``drawings`` it carries each floor's drawing too (format 0.11): its part of
     its drawing as drawn, every layer and text, in the building's own frame
     (``drawings/<floor-id>.view``, the manifest's source of the floor naming it).
     ``drawings(floors)`` makes them: given [(floor ID, its SourceDrawing)], the view of
@@ -790,7 +794,7 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
             manifest.files["world"] = WORLD_DIR
         (say or log.info)(f"3D pre-built: {len(world)} floor(s)" if world else f"3D not pre-built: {why}")
 
-    # each floor's drawing as drawn (format 0.10.1), when asked for: its source names it
+    # each floor's drawing as drawn (format 0.11), when asked for: its source names it
     views: dict[str, bytes] = {}
     if drawings is not None:
         floors = [(fid, f.source) for _, _, f, fid in ws.iter_floors() if f.source and scoped(fid)]

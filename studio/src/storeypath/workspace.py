@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 from .ids import (
     child_id,
     default_floor_code,
+    default_mezzanine_code,
     format_object_code,
     generate_project_code,
     is_item_id,
@@ -36,6 +37,8 @@ from .types import SpaceType
 WORKSPACE_FORMAT = "storeypath-workspace"
 WORKSPACE_VERSION = 1
 DEFAULT_FLOOR_HEIGHT = 3.5
+MEZZANINE_NAME = "Mezzanine"
+MIN_ABOVE_HOST = 2.4  # metres: a mezzanine's default level above its host floor, at least
 
 
 def utcnow() -> datetime:
@@ -107,9 +110,15 @@ class FloorEdits(BaseModel):
 class Floor(BaseModel):
     code: str
     name: str
-    ordinal: int
+    ordinal: int  # 0 the ground floor, 1 the first, -1 the first basement; a mezzanine: its host's
     elevation: float  # meters above the building's ground floor
     height: float = DEFAULT_FLOOR_HEIGHT
+    # A mezzanine: a floor standing in another floor of its building, over part of it. The
+    # code of that floor (its host: one of the building's floors that is not a mezzanine),
+    # and how far above that floor's level its own is (metres): its elevation is the host's
+    # and that. None: not a mezzanine.
+    host: str | None = None
+    above_host: float | None = None
     parapet_height: float | None = None  # meters, the low walls around its terraces and balconies
     source: SourceDrawing | None = None
     outline: dict[str, Any] | None = None  # GeoJSON geometry, local meters
@@ -124,6 +133,22 @@ class Floor(BaseModel):
     symbols: list[dict[str, Any]] | None = None
     symbols_key: str | None = None
     edits: FloorEdits = Field(default_factory=FloorEdits)  # drawn by a person in review
+
+    @property
+    def mezzanine(self) -> bool:
+        return self.host is not None
+
+
+def floor_order(f: Floor) -> tuple:
+    """Where a floor comes in its building, lowest first: by ordinal, then elevation (a
+    mezzanine after the floor it stands in, before the next one up), then code."""
+    return f.ordinal, f.elevation, f.code
+
+
+def default_above_host(host_height: float) -> float:
+    """How far above its host floor a mezzanine stands when nothing says: half the host's
+    floor-to-floor height, at least MIN_ABOVE_HOST."""
+    return round(max(host_height / 2, MIN_ABOVE_HOST), 2)
 
 
 class SitePosition(BaseModel):
@@ -392,7 +417,7 @@ class Workspace(BaseModel):
         """Yield (location, building, floor, floor_id) for every floor."""
         for loc in self.locations:
             for b in loc.buildings:
-                for f in sorted(b.floors, key=lambda f: f.ordinal):
+                for f in sorted(b.floors, key=floor_order):
                     yield loc, b, f, make_id(self.id, loc.code, b.code, f.code)
 
     def add_location(self, code: str, name: str, address: str | None = None) -> str:
@@ -427,31 +452,64 @@ class Workspace(BaseModel):
         height: float = DEFAULT_FLOOR_HEIGHT,
         parapet_height: float | None = None,
         source: SourceDrawing | None = None,
+        mezzanine: bool = False,
+        above_host: float | None = None,
     ) -> str:
+        """A floor added to a building: one per ordinal, else ``mezzanine``: one standing in
+        the building's floor of that ordinal (its host), ``above_host`` metres above it (by
+        default, half its height), any number of them on a floor. Codes are the building's
+        own: F00, F01, B01 by ordinal; M00 for a mezzanine over F00, M00B for a second."""
         b = self.building(building_id)
-        code = validate_segment(code or default_floor_code(ordinal))
-        if any(f.code == code for f in b.floors):
+        taken = {f.code for f in b.floors}
+        host = None
+        if mezzanine:
+            host = next((f for f in b.floors if f.ordinal == ordinal and not f.mezzanine), None)
+            if host is None:
+                raise ValueError(f"a mezzanine stands in a floor: {building_id} has no floor {ordinal}")
+            if elevation is not None:
+                raise ValueError("a mezzanine's elevation is its host floor's and above_host")
+            above_host = default_above_host(host.height) if above_host is None else float(above_host)
+            if not math.isfinite(above_host) or above_host <= 0:
+                raise ValueError("a mezzanine stands above its host floor: above_host is metres, more than 0")
+            code = validate_segment(code or default_mezzanine_code(ordinal, taken))
+        else:
+            if above_host is not None:
+                raise ValueError("above_host is a mezzanine's")
+            code = validate_segment(code or default_floor_code(ordinal))
+            if any(f.ordinal == ordinal and not f.mezzanine for f in b.floors):
+                raise ValueError(f"floor ordinal {ordinal} already used in {building_id}")
+        if code in taken:
             raise ValueError(f"floor code {code} already used in {building_id}")
-        if any(f.ordinal == ordinal for f in b.floors):
-            raise ValueError(f"floor ordinal {ordinal} already used in {building_id}")
         b.floors.append(
             Floor(
                 code=code,
-                name=name or f"Floor {ordinal}",
+                name=name or (MEZZANINE_NAME if mezzanine else f"Floor {ordinal}"),
                 ordinal=ordinal,
-                elevation=ordinal * height if elevation is None else elevation,
+                elevation=(round(host.elevation + above_host, 3) if host is not None
+                           else ordinal * height if elevation is None else elevation),
                 height=height,
                 parapet_height=parapet_height,
                 source=source,
+                host=host.code if host is not None else None,
+                above_host=above_host if host is not None else None,
             )
         )
         return child_id(building_id, code)
 
+    def host_of(self, floor_id: str) -> Floor | None:
+        """The floor a mezzanine stands in (None for a floor that is not one)."""
+        f = self.floor(floor_id)
+        if not f.mezzanine:
+            return None
+        return next((h for h in self.building(floor_id.rsplit("-", 1)[0]).floors if h.code == f.host), None)
+
     def restack(self, building_id: str) -> None:
         """Each floor's elevation from the heights of the floors below it (and above
         it, below ground), with the ground floor at 0. A missing floor is taken to be
-        as high as the one below it."""
-        floors = sorted(self.building(building_id).floors, key=lambda f: f.ordinal)
+        as high as the one below it. A mezzanine stands its height above its host's
+        level, wherever that is now."""
+        b = self.building(building_id)
+        floors = sorted((f for f in b.floors if not f.mezzanine), key=lambda f: f.ordinal)
         above = [f for f in floors if f.ordinal >= 0]
         below = [f for f in floors if f.ordinal < 0][::-1]
         prev = None
@@ -463,6 +521,10 @@ class Workspace(BaseModel):
         for f in below:
             f.elevation = round((top.elevation if top else 0.0) - f.height * (top.ordinal - f.ordinal if top else -f.ordinal), 3)
             top = f
+        hosts = {f.code: f for f in floors}
+        for f in b.floors:
+            if f.mezzanine and f.host in hosts:
+                f.elevation = round(hosts[f.host].elevation + (f.above_host or 0.0), 3)
 
     # ---- objects -----------------------------------------------------------
 

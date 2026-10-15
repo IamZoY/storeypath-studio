@@ -49,6 +49,7 @@ NTH_BASEMENT = re.compile(r"\b(?:(first|1st|second|2nd|third|3rd|fourth|4th)\s+(
                           r"|(?:basement|cellar)\s*(?:level\s*)?-?\s*(\d))\b", re.I)
 NTH = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3, "fourth": 4, "4th": 4}
 ROOF_WORDS = re.compile(r"\b(roof|terrace|penthouse)\b", re.IGNORECASE)
+MEZZANINE_WORDS = re.compile(r"\bmezz(anine)?\b", re.IGNORECASE)
 NOT_PLAN_WORDS = re.compile(r"\b(elevation|section|facade|detail)\b", re.IGNORECASE)
 
 
@@ -281,7 +282,7 @@ PLAIN_TITLE_WORDS = re.compile(
     r"\b(modified|proposed|existing|new|revised|typical|the|of|floor|level|plan|layout|drawing|"
     r"ground|first|second|third|fourth|basement|roof|deck|1st|2nd|3rd|4th|g\.?f\.?|elevations?|front|rear|back|"
     r"left|right|side|north|south|east|west|sections?|cross|site|location|development|key|schedule|of|"
-    r"openings?|doors?|windows?|scale|[a-z]-[a-z]|\d+)\b|[^\w]", re.I)
+    r"openings?|doors?|windows?|scale|mezz|mezzanine|[a-z]-[a-z]|\d+)\b|[^\w]", re.I)
 
 
 def read_title(title: str | None):
@@ -296,9 +297,21 @@ def read_title(title: str | None):
         if pattern.search(title):
             floor = _ordinal(title) if kind == "floor_plan" else None
             if kind == "floor_plan" and floor is None:
+                floor = mezzanine_of(title)  # (the floor a mezzanine stands in)
+            if kind == "floor_plan" and floor is None:
                 return None
             return kind, floor
     return None
+
+
+def mezzanine_of(title: str | None) -> int | None:
+    """The floor a mezzanine's plan stands in, from its title's words: a MEZZANINE FLOOR
+    PLAN the ground floor's (most are), a FIRST FLOOR MEZZANINE PLAN the first's. None
+    for a title that names no mezzanine."""
+    if not title or not MEZZANINE_WORDS.search(title):
+        return None
+    floor = _ordinal(title)
+    return 0 if floor is None else floor
 
 
 def _ordinal(title: str | None) -> int | None:

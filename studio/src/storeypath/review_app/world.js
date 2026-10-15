@@ -196,7 +196,7 @@ function stepFloor(step) {
   const list = pkg.floorsOf(w.building);
   if (!list.length) return;
   const i = list.findIndex((f) => f.id === w.floor);
-  const ground = Math.max(0, list.findIndex((f) => f.properties.ordinal === 0));
+  const ground = Math.max(0, list.indexOf(pkg.groundFloor(w.building))); // (not a mezzanine on it)
   const next = i < 0 ? ground : i + step;
   if (next < 0 || next >= list.length) return toast(step > 0 ? "This is the top floor" : "This is the lowest floor");
   w.setFloor(list[next].id);

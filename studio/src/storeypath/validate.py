@@ -145,6 +145,7 @@ def validate_package(path: str | Path) -> list[str]:
             expect_parent(f.id, f.properties.location_id, "location")
         for f in collections.get("floors", []):
             expect_parent(f.id, f.properties.building_id, "building")
+        _check_floors(collections.get("floors", []), errors)
         for f in collections.get("spaces", []) + collections.get("zones", []):
             q = f.properties
             if (q.capacity is None) != (q.capacity_from is None):  # (0.7) a capacity says what says so
@@ -261,7 +262,7 @@ def validate_package(path: str | Path) -> list[str]:
                     if len(e.path) < 2:
                         errors.append(f"{name}: the edge from {e.from_} to {e.to} has no line")
 
-        # Drawings (format 0.10.1): each floor's drawing as drawn, when the export carried
+        # Drawings (format 0.11): each floor's drawing as drawn, when the export carried
         # them: named by its floor's source, in the folder the manifest lists, a view of a
         # format this reader reads, in metres (the building's own frame)
         views = {s.view: s.floor_id for s in manifest.sources if s.view is not None}
@@ -326,6 +327,48 @@ def validate_package(path: str | Path) -> list[str]:
                 errors.append(f"{name}: previous_sequence {changes.previous_sequence} is not before "
                               f"this export's {changes.sequence}")
     return errors
+
+
+ELEVATION_AGREES_M = 0.01  # a mezzanine's elevation: its host's and its height above it
+
+
+def _check_floors(floors, errors: list[str]) -> None:
+    """A building's floors (0.11): one of each ordinal that is not a mezzanine, any
+    number of mezzanines on it, each code once. A mezzanine stands in a floor of its
+    building that is not one, of its ordinal, above_host_m above it (its elevation the
+    host's and that); a floor that is not one has neither."""
+    held = {f.id: f.properties for f in floors}
+    plain: dict[tuple[str, int], str] = {}  # (building, ordinal) -> its floor that is not a mezzanine
+    codes: dict[tuple[str, str], str] = {}  # (building, code) -> the floor of that code
+    for f in floors:
+        q = f.properties
+        if (q.building_id, q.code) in codes:
+            errors.append(f"{f.id}: code {q.code} is {codes[q.building_id, q.code]}'s too")
+        codes.setdefault((q.building_id, q.code), f.id)
+        if q.mezzanine:
+            continue
+        if q.host_floor_id is not None or q.above_host_m is not None:
+            errors.append(f"{f.id}: not a mezzanine, but with a host floor or a height above one")
+        if (q.building_id, q.ordinal) in plain:
+            errors.append(f"{f.id}: {plain[q.building_id, q.ordinal]} is floor {q.ordinal} of its building already "
+                          "(only a mezzanine shares a floor's ordinal)")
+        plain.setdefault((q.building_id, q.ordinal), f.id)
+    for f in floors:
+        q = f.properties
+        if not q.mezzanine:
+            continue
+        host = held.get(q.host_floor_id) if q.host_floor_id is not None else None
+        if host is None or host.building_id != q.building_id:
+            errors.append(f"{f.id}: a mezzanine of floor {q.host_floor_id}, which is not a floor of its building")
+        elif host.mezzanine:
+            errors.append(f"{f.id}: a mezzanine of {q.host_floor_id}, itself a mezzanine")
+        elif host.ordinal != q.ordinal:
+            errors.append(f"{f.id}: a mezzanine of floor {host.ordinal} ({q.host_floor_id}), its ordinal {q.ordinal}")
+        if q.above_host_m is None:
+            errors.append(f"{f.id}: a mezzanine without its height above its host floor (above_host_m)")
+        elif host is not None and not abs(host.elevation + q.above_host_m - q.elevation) <= ELEVATION_AGREES_M:
+            errors.append(f"{f.id}: elevation {q.elevation:g}, not its host floor's ({host.elevation:g}) and "
+                          f"{q.above_host_m:g} above it")
 
 
 def validate_across(paths) -> list[str]:

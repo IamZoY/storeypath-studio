@@ -806,6 +806,9 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
         walls = [local.geometry(g) for g in (p.get("walls"), p.get("parapets")) if g]
         buildings[b_id].floors.append(Floor(
             code=p["code"], name=p["name"], ordinal=p["ordinal"], elevation=p["elevation"], height=p["height"],
+            # a mezzanine (0.11): the floor it stands in, by its code, and how far above it
+            host=p["host_floor_id"].rsplit("-", 1)[-1] if p.get("mezzanine") and p.get("host_floor_id") else None,
+            above_host=p.get("above_host_m") if p.get("mezzanine") and p.get("host_floor_id") else None,
             parapet_height=p.get("parapet_height_m") if p.get("parapets") else None,
             outline=mapping(local.geometry(f["geometry"])) if f.get("geometry") else None,
             walls=mapping(unary_union(walls)) if walls else None, wall_thickness=p.get("wall_thickness_m"),

@@ -17,7 +17,7 @@ from .catalogue import OLD_CATEGORIES, Category
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.10.1"
+FORMAT_VERSION = "0.11.0"
 FILE_EXTENSION = ".storeypath"
 # one building per package from 0.7 (before: a whole project, or a part of it)
 ONE_BUILDING_FROM = (0, 7)
@@ -25,7 +25,7 @@ ONE_BUILDING_FROM = (0, 7)
 ASSET_IDS_FROM = (0, 8)
 # rooms' floor and wall finishes from 0.9 (spec/finishes.json)
 FINISHES_FROM = (0, 9)
-# each floor's drawing, when the export was asked to carry them (0.10.1): drawings/<floor-id>.view
+# each floor's drawing, when the export was asked to carry them (0.11): drawings/<floor-id>.view
 DRAWINGS = "drawings/"
 
 FILES = {
@@ -103,9 +103,20 @@ class FloorProps(_Props):
     code: str
     name: str
     building_id: str
-    ordinal: int = Field(description="0 = ground floor, negative = below ground")
+    ordinal: int = Field(description="0 = ground floor, negative = below ground; a mezzanine's is its host floor's. "
+                                     "A building has one floor of each ordinal that is not a mezzanine, and any "
+                                     "number of mezzanines on it: its floors are in order of ordinal, then elevation")
     elevation: float = Field(description="meters above the building's ground floor")
-    height: float = Field(description="floor-to-floor height in meters")
+    height: float = Field(description="floor-to-floor height in meters (a mezzanine's: its own)")
+    mezzanine: bool = Field(False, description=(
+        "a floor standing in another floor of its building, over part of it (format 0.11): its host_floor_id, "
+        "its level above_host_m above that floor's"))
+    host_floor_id: str | None = Field(None, description=(
+        "a mezzanine's host: the floor of its building it stands in, which is not a mezzanine and has its ordinal; "
+        "null for a floor that is not a mezzanine"))
+    above_host_m: float | None = Field(None, gt=0, description=(
+        "how far a mezzanine's level is above its host floor's, metres: its elevation is the host's and this; "
+        "null for a floor that is not a mezzanine"))
     walls: Polygonal | None = Field(None, description="the walls as drawn, with their door and window gaps; "
                                                      "full height, except the parapets")
     wall_thickness_m: float | None = Field(None, description="the walls' typical thickness")
@@ -333,7 +344,7 @@ class SourceInfo(_Model):
     file: str = Field(description="file name only; local paths are not exported")
     sha256: str | None = None
     view: str | None = Field(None, description=(
-        "the floor's drawing as drawn, in the package (format 0.10.1, when the export carries the drawings): "
+        "the floor's drawing as drawn, in the package (format 0.11, when the export carries the drawings): "
         "drawings/<floor-id>.view, a drawing view (spec/DRAWING-VIEW.md) of the floor's part of the drawing in "
         "the building's own frame; null: not carried"))
 

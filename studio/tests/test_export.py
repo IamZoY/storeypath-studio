@@ -289,7 +289,7 @@ def test_a_preview_of_one_building_holds_it_as_a_preview_of_them_all_does(tmp_pa
         assert one == held and (one or name in ("zones", "items")), name  # (the demo has no items)
 
 
-# ---- a package that carries its floors' drawings (format 0.10.1) ---------------------------
+# ---- a package that carries its floors' drawings (format 0.11) ---------------------------
 
 @pytest.fixture
 def two_floors(tmp_path):
@@ -350,7 +350,7 @@ def test_a_package_carries_each_floors_drawing_in_its_own_frame_only_when_asked(
     assert validate_package(pkg) == []
     assert "drawings: 2 of 2 floor(s)" in said and [line for line in said if line.startswith("reading")] == ["reading sheet.dxf"]
     manifest = _read(pkg, "manifest.json")
-    assert manifest["format_version"] == "0.10.1" and manifest["files"]["drawings"] == "drawings/"
+    assert manifest["format_version"] == "0.11.0" and manifest["files"]["drawings"] == "drawings/"
     assert {s["floor_id"]: s["view"] for s in manifest["sources"]} == {f: f"drawings/{f}.view" for f in (f0, f1)}
     floors = {f["id"]: f for f in _read(pkg, "floors.geojson")["features"]}
     g = Georeferencer(Placement(**{k: manifest["placements"][f"{ws.id}-SITE-HQ"][k] for k in ("lon", "lat", "x", "y", "bearing")}))

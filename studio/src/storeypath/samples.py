@@ -116,6 +116,65 @@ def office_floor(ordinal: int) -> list[Cell]:
     return cells
 
 
+MEZZANINE_AT = (0.0, 11.5)  # where mezzanine_floor's (0, 0) is on an office_floor
+
+
+def mezzanine_floor() -> list[Cell]:
+    """A mezzanine over the west end of an office_floor: a block of rooms 20 × 8.5 m at the
+    top of the floor's STAIR A, along a corridor: an office and a store. In a frame of its
+    own: its (0, 0) is the office floor's MEZZANINE_AT, where its stairs are over the
+    floor's (and under the floor's above)."""
+    return [
+        Cell(0, 0, 20, 2.5, ["CORRIDOR"], "corridor"),
+        Cell(0, 2.5, 8, 8.5, ["STAIR A"], "stairs", Door(5.5, 2.5, "h", +1)),
+        Cell(8, 2.5, 14, 8.5, ["OFFICE", "M01"], "office", Door(11, 2.5, "h", +1)),
+        Cell(14, 2.5, 20, 8.5, ["STORAGE", "M02"], "storage", Door(17, 2.5, "h", +1)),
+    ]
+
+
+def add_footprint(path: str | Path, ring: list[tuple[float, float]], *, origin=(125.0, 48.0),
+                  layer: str = "FOOTPRINT") -> None:
+    """The building's outline drawn round a plan, alone on a layer of its own (a
+    mezzanine's drawing often holds it, to show where the mezzanine stands): ``ring`` in
+    metres from the plan's ``origin``, as its cells."""
+    doc = ezdxf.readfile(path)
+    ox, oy = origin
+    doc.modelspace().add_lwpolyline([((ox + x) * 1000, (oy + y) * 1000) for x, y in ring], close=True,
+                                    dxfattribs={"layer": layer})
+    doc.saveas(path)
+
+
+def mezzanine_warehouse(directory: str | Path, *, origin=(20.0, 10.0)):
+    """A made-up warehouse with a mezzanine, read: its ground floor, 7 m high, and its first
+    floor are office floors (office_floor), each drawing of its own; the mezzanine (M00)
+    stands in the ground floor 3.5 m above it, a block of rooms at the top of STAIR A
+    (mezzanine_floor), its drawing holding the building's outline too (add_footprint).
+    The stairs are one stack through all three floors; the lifts pass the mezzanine.
+    Returns the workspace (not saved), its drawings in ``directory``."""
+    from .convert import convert_floor
+    from .workspace import Placement, SourceDrawing, Workspace
+
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    above = (origin[0] + MEZZANINE_AT[0], origin[1] + MEZZANINE_AT[1])  # (each drawing in the building's frame)
+    for name, cells, at, title in (("ground.dxf", office_floor(0), origin, "GROUND FLOOR PLAN"),
+                                   ("mezzanine.dxf", mezzanine_floor(), above, "MEZZANINE FLOOR PLAN"),
+                                   ("first.dxf", office_floor(1), origin, "FIRST FLOOR PLAN")):
+        write_floor_dxf(directory / name, cells, origin=at, title=title)
+    add_footprint(directory / "mezzanine.dxf", [(-1, -1), (49, -1), (49, 21), (-1, 21)], origin=origin)
+    ws = Workspace.new("Warehouse with a mezzanine")
+    loc = ws.add_location("MAIN", "Main site")
+    b_id = ws.add_building(loc, "WH", "Warehouse")
+    ws.building(b_id).placement = Placement(lon=10.0, lat=50.0, x=44.0, y=20.0, bearing=15)
+    ws.add_floor(b_id, 0, name="Ground floor", height=7.0, source=SourceDrawing(path="ground.dxf"))
+    ws.add_floor(b_id, 1, name="First floor", source=SourceDrawing(path="first.dxf"))
+    ws.add_floor(b_id, 0, mezzanine=True, above_host=3.5, height=3.5, source=SourceDrawing(path="mezzanine.dxf"))
+    ws.restack(b_id)
+    for *_, f_id in ws.iter_floors():  # (lowest first: the mezzanine's stairs take the ground floor's code)
+        convert_floor(ws, f_id, directory)
+    return ws
+
+
 def simple_office() -> list[Cell]:
     """wayfinder's "simple-office" floor (its PDF test fixture, same rooms and
     numbers), with an open office on the east whose two halves are numbered

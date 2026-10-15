@@ -455,7 +455,8 @@ class Review:
         for loc, b, f, fid in ws.iter_floors():
             spaces = [r for r in ws.floor_objects(fid) if r.kind in ("space", "zone") and not r.zones]
             floors.append({
-                "id": fid, "name": f.name, "ordinal": f.ordinal,
+                "id": fid, "name": f.name, "ordinal": f.ordinal, "elevation": f.elevation,
+                "mezzanine": f.mezzanine,  # (standing in its building's floor of that ordinal)
                 "building": b.name, "building_id": fid.rsplit("-", 1)[0], "location": loc.name,
                 "source": Path(f.source.path).name if f.source else None,
                 "converted": f.converted_at is not None,

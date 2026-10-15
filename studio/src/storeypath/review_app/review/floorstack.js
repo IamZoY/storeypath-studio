@@ -15,11 +15,13 @@ import { toggleFloor3d } from "./view3d.js";
 /** A floor's short name: its code (F00, B1…), as its ID ends. */
 export const floorCode = (id) => id.split("-").at(-1);
 
-/** The floors of the building of the floor shown, the top one first. */
+/** The floors of the building of the floor shown, the top one first (a mezzanine above the
+ * floor it stands in: by ordinal, then elevation). */
 export function buildingFloors() {
   if (!state.floor || !state.project) return [];
   const b = buildingOf(state.floor.id);
-  return state.project.floors.filter((f) => buildingOf(f.id) === b).sort((x, y) => y.ordinal - x.ordinal);
+  return state.project.floors.filter((f) => buildingOf(f.id) === b)
+    .sort((x, y) => y.ordinal - x.ordinal || y.elevation - x.elevation);
 }
 
 function render() {

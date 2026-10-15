@@ -5,7 +5,7 @@ blocks, dimensions) worked out by ezdxf's drawing frontend as Studio's prints ar
 (printing.py), in the drawing's own colours (ACI 7 white, on the dark ground CAD programs
 draw model space on), and packed small for a browser to draw with WebGL.
 
-A package may carry each floor's part of its drawing (export, format 0.10.1:
+A package may carry each floor's part of its drawing (export, format 0.11:
 write_floor_views): cut to the floor's region of the drawing, in the floor's own metres
 (where its spaces and walls are), its texts as the privacy rules leave them (privacy.py).
 

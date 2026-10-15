@@ -23,7 +23,7 @@ from .package import json_schemas
 from .profile import AUTO, builtin_profiles, load_profile, resolve_profile
 from .types import SpaceType
 from .validate import validate_across, validate_package
-from .workspace import Override, Placement, SourceDrawing, Workspace
+from .workspace import Override, Placement, SourceDrawing, Workspace, floor_order
 
 app = typer.Typer(no_args_is_help=True, help="Convert DWG/DXF floor plans into indoor map packages.")
 
@@ -129,10 +129,16 @@ def add_floor(
     workspace: WorkspaceArg,
     building_id: str,
     drawing: Annotated[Path, typer.Argument(help="DWG or DXF file of this floor")],
-    ordinal: Annotated[int, typer.Option(help="0 = ground floor, 1 = first floor, -1 = basement")],
-    code: Annotated[Optional[str], typer.Option(help="floor code (default F00, F01…, B01…)")] = None,
+    ordinal: Annotated[int, typer.Option(help="0 = ground floor, 1 = first floor, -1 = basement; a mezzanine: "
+                                              "the floor it stands in")],
+    code: Annotated[Optional[str], typer.Option(help="floor code (default F00, F01…, B01…; a mezzanine M00, M01…, "
+                                                     "MB01…, a second on one floor M00B)")] = None,
     name: Annotated[Optional[str], typer.Option()] = None,
     elevation: Annotated[Optional[float], typer.Option(help="meters (default ordinal × height)")] = None,
+    mezzanine: Annotated[bool, typer.Option("--mezzanine", help="a mezzanine: a floor standing in the building's "
+                                                                "floor --ordinal, over part of it")] = False,
+    above: Annotated[Optional[float], typer.Option(help="a mezzanine's level above the floor it stands in, meters "
+                                                        "(default half that floor's height)")] = None,
     height: Annotated[float, typer.Option(help="floor-to-floor height, meters (see `storeypath levels`)")] = 3.5,
     parapet: Annotated[Optional[float], typer.Option(
         help="height of the low walls around its terraces and balconies, meters (default 1.1)")] = None,
@@ -168,7 +174,8 @@ def add_floor(
         source.region, source.view = _pick_view(drawing, prof, units, view, profile)
     try:
         f_id = ws.add_floor(building_id, ordinal, code=code, name=name, elevation=elevation,
-                            height=height, parapet_height=parapet, source=source)
+                            height=height, parapet_height=parapet, source=source, mezzanine=mezzanine,
+                            above_host=above)
     except (KeyError, ValueError) as e:
         _fail(str(e))
     ws.save(workspace)
@@ -320,7 +327,7 @@ def align(
         b = ws.building(building_id)
     except (KeyError, ValueError) as e:
         _fail(str(e))
-    floors = sorted((f for f in b.floors if f.source), key=lambda f: f.ordinal)
+    floors = sorted((f for f in b.floors if f.source), key=floor_order)
     if len(floors) < 2:
         _fail("align needs at least two floors with drawings")
     if reference:
@@ -378,7 +385,7 @@ def levels(
     (+3.65 FIRST FLOOR SLAB LVL on sections and elevations, or the +0.45 FFL each
     floor's plan marks), and the roof's parapet."""
     from .cad import read_drawing
-    from .levels import floor_levels, plan_level, read_level_marks
+    from .levels import HEIGHT_M, floor_levels, plan_level, read_level_marks
     from .llm import LocalModel
 
     ws = _load(workspace)
@@ -390,14 +397,18 @@ def levels(
     if not paths:
         _fail(f"{building_id} has no floors with drawings")
     model = LocalModel() if use_model else None
-    marks, marked = [], {}
+    marks, marked, mezzanines = [], {}, {}
     try:
         for path in paths:
             doc = read_drawing(workspace.parent / path)
             marks += read_level_marks(doc, model)
             for f in b.floors:  # the level each floor's plan marks ("+0.45 FFL")
                 if f.source and f.source.path == path:
-                    marked[f.ordinal] = plan_level(doc, f.source.region)
+                    level = plan_level(doc, f.source.region)
+                    if f.mezzanine:  # (by its code: a floor may hold several)
+                        mezzanines[f.code] = level
+                    else:
+                        marked[f.ordinal] = level
     except DrawingError as e:
         _fail(str(e))
     finally:
@@ -410,11 +421,16 @@ def levels(
               "set heights with add-floor --height")
     typer.echo(f"levels: {found.summary()}")
     for f in b.floors:
+        if f.mezzanine:  # its own height; its level above its floor's, when both plans mark theirs
+            level, host = mezzanines.get(f.code), marked.get(f.ordinal)
+            if level is not None and host is not None and 0 < level - host <= HEIGHT_M[1]:
+                f.above_host = round(level - host, 2)
+            continue
         f.height = found.height(f.ordinal)
         if found.parapet is not None and f.ordinal == found.roof:
             f.parapet_height = found.parapet
     ws.restack(building_id)
-    for f in sorted(b.floors, key=lambda f: f.ordinal):
+    for f in sorted(b.floors, key=floor_order):
         parapet = f", parapets {f.parapet_height:.2f} m" if f.parapet_height else ""
         typer.echo(f"{building_id}-{f.code}: {f.elevation:.2f} m up, {f.height:.2f} m high{parapet}")
     ws.save(workspace)
@@ -1160,7 +1176,7 @@ def export(
                              "(the whole catalogue, for another system to choose which to take)")] = "used",
     drawings: Annotated[bool, typer.Option(
         "--drawings", help="each floor's drawing in the package too, as drawn: every layer and text of its part "
-                           "of its drawing, to whoever receives the package (format 0.10.1)")] = False,
+                           "of its drawing, to whoever receives the package (format 0.11)")] = False,
 ):
     """Write the exchange package of one building, entered as an export only when it is
     valid. Its items are of the item types of the Studio data folder the project is in

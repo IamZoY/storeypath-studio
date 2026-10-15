@@ -49,7 +49,7 @@ each call needs is checked first in route() (the table is in studio/README.md):
     POST /api/projects/<code>/export {building, item_types?, drawings?} → job: that
                                                building's package (one building per
                                                package); drawings: true, each floor's
-                                               drawing in it too (format 0.10.1): edit
+                                               drawing in it too (format 0.11): edit
                                                on the project too
     GET  /api/projects/<code>/exports/<file>
     GET  /api/projects/<code>/preview.storeypath[?building=<id>]   the project (or one
@@ -108,12 +108,12 @@ from .assets import asset_dir
 from .backup import backup_name, write_backup
 from .bundle import ProjectExists
 from .db.store import Editor, StepLock, drawing_name
-from .ids import make_id, normalize_item_id
+from .ids import default_floor_code, default_mezzanine_code, make_id, normalize_item_id, validate_segment
 from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_unit, read_drawing
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
-from .sheets import read_title
+from .sheets import mezzanine_of, read_title
 from .profile import AUTO, load_profile
-from .levels import DEFAULT_HEIGHT_M, DEFAULT_PARAPET_M, floor_levels, plan_level, read_level_marks
+from .levels import DEFAULT_HEIGHT_M, DEFAULT_PARAPET_M, HEIGHT_M, floor_levels, plan_level, read_level_marks
 from .reading import NOT_A_ROOM, read_units
 from .symbols import SymbolSpotter
 from .vision import VisionModel
@@ -122,7 +122,7 @@ from .errors import Busy
 from .review import File, NotFound, Review
 from .sealed import sealed_name
 from .types import SpaceType
-from .workspace import Placement, SourceDrawing, Workspace
+from .workspace import Placement, SourceDrawing, Workspace, floor_order
 
 DRAWING_TYPES = (".dwg", ".dxf")
 INCOMING = ".incoming-"  # a drawing as sent, until its private copy is made
@@ -623,8 +623,15 @@ class Studio:
                                 "units": f.source.units if f.source else None,
                                 "layers": f.layers, "converted": f.converted_at is not None,
                                 "method": f.method, "rooms": rooms.get(f"{b_id}-{f.code}", 0),
-                                "items": items.get(f"{b_id}-{f.code}", 0)}
-                               for f in sorted(b.floors, key=lambda f: f.ordinal)],
+                                "items": items.get(f"{b_id}-{f.code}", 0),
+                                "code": f.code, "elevation": f.elevation, "height": f.height,
+                                # a mezzanine: the floor it stands in, and how far above it
+                                "mezzanine": f.mezzanine,
+                                "host": f"{b_id}-{f.host}" if f.mezzanine else None,
+                                "host_name": next((h.name for h in b.floors if h.code == f.host), None)
+                                if f.mezzanine else None,
+                                "above_host": f.above_host}
+                               for f in sorted(b.floors, key=floor_order)],
                 })
             tree.append({"id": f"{ws.id}-{loc.code}", "code": loc.code, "name": loc.name, "buildings": buildings,
                          "placement": loc.placement.model_dump() if loc.placement else None})
@@ -958,16 +965,27 @@ class Studio:
                 floor = r.floor if r and r.floor is not None else (rule[1] if rule and rule[1] is not None else v.ordinal)
                 if kind == "roof_plan" and floor is None:
                     floor = v.ordinal
-                out.append({"index": v.index, "title": v.title, "kind": kind, "floor": floor,
+                # a mezzanine's plan (its title says so): the floor it stands in
+                host = mezzanine_of(v.title) if kind == "floor_plan" else None
+                out.append({"index": v.index, "title": v.title, "kind": kind,
+                            "floor": host if host is not None else floor, "mezzanine": host is not None,
                             "building": r.building if r else None, "size": v.size, "region": v.region,
                             "preview": v.preview})
             # Floor heights and the roof's parapet, from the levels on its sections, and
-            # where they give none, from the level each floor's plan marks.
+            # where they give none, from the level each floor's plan marks; a mezzanine's
+            # level above the floor it stands in, from both their plans' levels.
             found = floor_levels(read_level_marks(doc, self.model if self.model.available() else None))
             marked = {}
             for v, o in zip(views, out):
-                if o["kind"] in ("floor_plan", "roof_plan") and o["floor"] is not None and o["floor"] not in marked:
+                if o["kind"] in ("floor_plan", "roof_plan") and o["floor"] is not None and not o["mezzanine"] \
+                        and o["floor"] not in marked:
                     o["level"] = marked[o["floor"]] = plan_level(doc, v.region)
+            for v, o in zip(views, out):
+                if o["mezzanine"]:
+                    o["level"] = level = plan_level(doc, v.region)
+                    host_level = marked.get(o["floor"])
+                    if level is not None and host_level is not None and 0 < level - host_level <= HEIGHT_M[1]:
+                        o["above_host"] = round(level - host_level, 2)
             found.add_plans(marked)
             job.say(f"levels: {found.summary()}" if found.summary() else "no floor levels on its sections or plans")
             levels = {"summary": found.summary() or None, "heights": {str(n): h for n, h in found.heights.items()},
@@ -999,7 +1017,8 @@ class Studio:
                 replaced: set[str] = set()  # floors given this drawing in place of theirs
                 made_locations: dict[str, str] = {}
                 made_buildings: dict[tuple[str, str], str] = {}
-                for place in places:
+                # (a mezzanine after the floors: the one it stands in may be among them)
+                for place in sorted(places, key=lambda x: x.mezzanine):
                     p = place.plan
                     loc_id = place.location_id
                     if loc_id is None:
@@ -1027,14 +1046,20 @@ class Studio:
                             f.height = float(p["height"])
                         if p.get("parapet"):
                             f.parapet_height = float(p["parapet"])
+                        if f.mezzanine and p.get("above_host"):
+                            f.above_host = float(p["above_host"])
                         f_id = place.replaces
                         replaced.add(f_id)
                         job.say(f"floor {f_id}: its drawing is now {p.get('title') or 'plan ' + str(p.get('index'))}")
                     else:
-                        f_id = ws.add_floor(b_id, place.ordinal, name=p.get("name") or None, source=source,
-                                            height=float(p.get("height") or DEFAULT_HEIGHT_M),
-                                            parapet_height=float(p["parapet"]) if p.get("parapet") else None)
-                        job.say(f"floor {f_id}: {p.get('title') or 'plan ' + str(p.get('index'))}")
+                        f_id = ws.add_floor(b_id, place.ordinal, code=place.code, name=p.get("name") or None,
+                                            source=source, height=float(p.get("height") or DEFAULT_HEIGHT_M),
+                                            parapet_height=float(p["parapet"]) if p.get("parapet") else None,
+                                            mezzanine=place.mezzanine,
+                                            above_host=float(p["above_host"]) if place.mezzanine and p.get("above_host")
+                                            else None)
+                        job.say(f"floor {f_id}: {p.get('title') or 'plan ' + str(p.get('index'))}"
+                                + (f", a mezzanine of floor {place.ordinal}" if place.mezzanine else ""))
                     added.setdefault(b_id, []).append(f_id)
                 for b_id in added:
                     ws.restack(b_id)  # elevations from the heights
@@ -1078,7 +1103,7 @@ class Studio:
                         f.source.offset = (tx / scale, ty / scale)
                         own.add(f.code)
                     floors = sorted((f for f in ws.building(b_id).floors if f.source is not None and f.code not in own),
-                                    key=lambda f: f.ordinal)
+                                    key=floor_order)
                     if len(floors) < 2:
                         continue
                     # the lowest floor that was there before, else the lowest one added
@@ -1453,7 +1478,7 @@ class Studio:
         entered in its export history, and kept as sent (its bytes, in the database).
         ``item_types``: "used" (its catalogue the types its items use) or "all" (the
         whole catalogue). ``drawings``: true, each floor's drawing goes in it too, as
-        drawn, every layer and text (format 0.10.1: floor_views), and its history says so."""
+        drawn, every layer and text (format 0.11: floor_views), and its history says so."""
         from .export import ITEM_TYPES
 
         building = self.export_building(code, body)
@@ -1813,6 +1838,11 @@ class Studio:
             ws = self.store.load(code, floors=[floor_id])
             b = ws.building(floor_id.rsplit("-", 1)[0])
             f = ws.floor(floor_id)
+            standing = sorted((m for m in b.floors if m.mezzanine and m.host == f.code), key=floor_order)
+            if standing:  # (each stands in it: its level is this floor's and its own)
+                raise ValueError(f"{f.name} holds " + ", ".join(f"{m.name} ({m.code})" for m in standing)
+                                 + ": delete " + ("that mezzanine" if len(standing) == 1 else "those mezzanines")
+                                 + " first")
             now = utcnow()
             rooms = items = 0
             for r in ws.floor_objects(floor_id):
@@ -2067,7 +2097,8 @@ class Download:
 class FloorPlace(NamedTuple):
     """Where a chosen plan goes: its location and building (an ID when they exist,
     else a new code and name), its floor, and the floor it replaces (its ID) when it
-    is a new drawing of a floor the building has."""
+    is a new drawing of a floor the building has. A mezzanine's floor is the one it
+    stands in (its host), and its code is its own (``code``)."""
 
     location_id: str | None
     location: tuple[str, str] | None  # (code, name) of a new location
@@ -2076,6 +2107,8 @@ class FloorPlace(NamedTuple):
     ordinal: int
     plan: dict
     replaces: str | None
+    mezzanine: bool = False
+    code: str | None = None  # the floor's code (a mezzanine's: as chosen, else its default)
 
 
 def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[FloorPlace]:
@@ -2085,12 +2118,19 @@ def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[FloorPlace]:
     any, the project's first location, and a building of that name or "Main
     building". New ones get codes from their names that no other has. A plan on a
     floor the building has replaces that floor's drawing (its spaces keep their IDs)
-    when it says ``replace``. Fails, before anything changes, when two plans would be
-    the same floor, or a plan a floor that exists and is not to be replaced."""
+    when it says ``replace``. A plan that is a ``mezzanine`` stands in the building's
+    floor of its ordinal (there, or among these plans), ``above_host`` metres above it,
+    with a ``code`` of its own (by default M00 over F00, M00B for a second): it replaces
+    the drawing of the building's mezzanine of that code on that floor when it says
+    ``replace``. Fails, before anything changes, when two plans would be the same floor
+    (or two mezzanines one code), a plan a floor that exists and is not to be replaced,
+    or a mezzanine a floor the building does not have."""
     loc_codes = {loc.code for loc in ws.locations}
     new_locations: dict[str, tuple[str, str]] = {}  # name (lower) -> (code, name)
     new_buildings: dict[tuple[str, str], tuple[str, str]] = {}  # (location key, name lower) -> (code, name)
-    chosen: dict[tuple[str, int], str] = {}
+    chosen: dict[tuple[str, int], str] = {}  # (building, ordinal) -> the plan that is that floor
+    codes: dict[str, dict[str, str]] = {}  # building -> code -> what has it (a floor, or a plan)
+    mezzanines = []  # (index in out, building key, building, its name, title): their hosts checked last
     out = []
     for p in plans:
         if not isinstance(p, dict):
@@ -2148,15 +2188,48 @@ def _floors_to_add(ws: Workspace, plans: list[dict]) -> list[FloorPlace]:
         b_name = building.name if building is not None else new_b[1]
         # the floor
         ordinal = int(p["ordinal"])
+        floors = building.floors if building is not None else []
+        taken = codes.setdefault(b_key, {f.code: f"{f.name} ({f.code})" for f in floors})
+        if p.get("mezzanine"):
+            code = p.get("code") or None
+            if code is not None:
+                try:
+                    validate_segment(code)
+                except ValueError:
+                    raise ValueError(f"{title}: its code is 1 to 16 capital letters or digits, no hyphens ({code!r})") from None
+            has = next((f for f in floors if f.mezzanine and f.code == code and f.ordinal == ordinal), None)
+            if has and not p.get("replace"):
+                raise ValueError(f"{b_name} already has {has.name} ({has.code}) on floor {ordinal}: give {title} "
+                                 "another code, or replace that mezzanine's drawing")
+            code = code or default_mezzanine_code(ordinal, taken)
+            if has is None and code in taken:
+                raise ValueError(f"{b_name}: the code {code} is {taken[code]}'s: give {title} another code")
+            taken[code] = title
+            mezzanines.append((len(out), b_key, building, b_name, title))
+            out.append(FloorPlace(loc_id, new_loc, b_id, new_b, ordinal, p, f"{b_id}-{has.code}" if has else None,
+                                  True, code))
+            continue
         if (b_key, ordinal) in chosen:
             raise ValueError(f"{chosen[b_key, ordinal]} and {title} are both floor {ordinal} of {b_name}: give one "
                              "of them another floor or building, or leave it out")
-        has = next((f for f in building.floors if f.ordinal == ordinal), None) if building is not None else None
+        # (a mezzanine on that floor is not that floor)
+        has = next((f for f in floors if f.ordinal == ordinal and not f.mezzanine), None)
         if has and not p.get("replace"):
             raise ValueError(f"{b_name} already has floor {ordinal} ({has.name}): give {title} another floor, "
                              "or replace that floor's drawing")
+        code = has.code if has else default_floor_code(ordinal)
+        if has is None and code in taken:
+            raise ValueError(f"{b_name}: the code {code} is {taken[code]}'s: give {title} another floor")
+        taken[code] = title
         chosen[b_key, ordinal] = title
-        out.append(FloorPlace(loc_id, new_loc, b_id, new_b, ordinal, p, f"{b_id}-{has.code}" if has else None))
+        out.append(FloorPlace(loc_id, new_loc, b_id, new_b, ordinal, p, f"{b_id}-{has.code}" if has else None,
+                              False, code))
+    for at, b_key, building, b_name, title in mezzanines:  # each in a floor: the building's, or one of these plans
+        ordinal = out[at].ordinal
+        if (b_key, ordinal) not in chosen and not any(f.ordinal == ordinal and not f.mezzanine
+                                                      for f in (building.floors if building is not None else [])):
+            raise ValueError(f"{title} is a mezzanine of floor {ordinal}, which {b_name} does not have: add that "
+                             "floor too, or choose the floor it stands in")
     return out
 
 
@@ -2179,12 +2252,18 @@ def _plan_numbers(p: dict, title: str) -> None:
     if whole is None or not -50 <= whole <= 500:
         raise ValueError(f"{title}: its floor is a whole number")
     p["ordinal"] = whole
-    for key in ("height", "parapet"):
+    for key in ("height", "parapet", "above_host"):
         if p.get(key) not in (None, "", 0):
             value = _finite(p[key], f"{title}: its {key}")
             if not 0 < value <= 100:
                 raise ValueError(f"{title}: its {key} is metres, more than 0 and at most 100")
             p[key] = value
+    if p.get("mezzanine") not in (None, True, False):
+        raise ValueError(f"{title}: mezzanine is true or false")
+    if p.get("code") is not None and not isinstance(p["code"], str):
+        raise ValueError(f"{title}: its code is text")
+    if p.get("code") is not None:
+        p["code"] = p["code"].strip().upper() or None
 
 
 def _finite(value, what: str) -> float:
@@ -2765,7 +2844,7 @@ class Gate:
                 b_id = f"{ws.id}-{loc.code}-{b.code}"
                 names[b_id] = b.name
                 floors = []
-                for f in sorted(b.floors, key=lambda f: f.ordinal):
+                for f in sorted(b.floors, key=floor_order):
                     f_id = f"{b_id}-{f.code}"
                     names[f_id] = f"{f.name} · {b.name}"
                     if sight.floor(f_id) == "share":

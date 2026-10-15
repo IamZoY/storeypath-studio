@@ -28,7 +28,7 @@ The decisions behind it: [Studio 2's design](DESIGN-STUDIO-2.md).
 The format and everything that reads it are [StoreyPath Viewer](https://github.com/StoreyPath/storeypath-viewer), a repository
 of its own that Studio pins as a submodule (`storeypath-viewer/`):
 
-- **The package format**: [spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md) (format 0.10.1) and JSON
+- **The package format**: [spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md) (format 0.11) and JSON
   Schemas in [spec/schema](https://github.com/StoreyPath/storeypath-viewer/tree/main/spec/schema): one building per package, plain JSON,
   GeoJSON and CSV in a ZIP, readable without our code. Each export says what was
   added, changed and retired; `objects.csv` lists every ID with its parents;

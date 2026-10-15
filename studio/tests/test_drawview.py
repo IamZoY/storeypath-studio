@@ -3,7 +3,7 @@ the file the page gets (every layer with what is on it, texts as words where the
 fills as triangles with their holes left empty), framed on its main body (a stray far off
 does not shrink it to a speck), made as a job of Studio's once for its content and then
 answered from the cache, to whoever may see the drawing's words. A floor's part of its
-drawing, as a package carries it (format 0.10.1): cut to its region, in its own metres, its
+drawing, as a package carries it (format 0.11): cut to its region, in its own metres, its
 texts as the privacy rules leave them; a package carries them only when asked to."""
 
 import gzip
@@ -357,7 +357,7 @@ def test_who_may_see_a_drawing_whole_is_who_may_see_its_words(studio):
 
 
 def test_a_package_carries_its_floors_drawings_only_when_asked(studio, tmp_path):
-    """Export's drawings (format 0.10.1): each floor's part of its drawing in the package
+    """Export's drawings (format 0.11): each floor's part of its drawing in the package
     when asked for, the export's history saying so; drawn once and kept, the next export
     takes them as they are; not asked for, none."""
     from storeypath.validate import validate_package
@@ -379,7 +379,7 @@ def test_a_package_carries_its_floors_drawings_only_when_asked(studio, tmp_path)
     floors = [f"{hq}-{f.code}" for f in s.store.current(code).building(hq).floors if f.source]
     ended, z = export({"building": hq, "drawings": True})
     manifest = json.loads(z.read("manifest.json"))
-    assert manifest["format_version"] == "0.10.1" and manifest["files"]["drawings"] == "drawings/"
+    assert manifest["format_version"] == "0.11.0" and manifest["files"]["drawings"] == "drawings/"
     assert sorted(src["view"] for src in manifest["sources"]) == sorted(f"drawings/{f}.view" for f in floors)
     assert ended.result["drawings"] == len(floors) >= 2
     assert any(line.startswith("drawing ") and " from " in line for line in ended.log)  # (what it is doing)

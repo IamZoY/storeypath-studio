@@ -140,7 +140,7 @@ def test_the_command_line_exports_with_the_studios_item_types(tmp_path):
 
 
 def test_the_command_line_exports_the_drawings_only_when_asked(tmp_path):
-    """--drawings: each floor's part of its drawing in the package too (format 0.10.1), from
+    """--drawings: each floor's part of its drawing in the package too (format 0.11), from
     the drawings beside the project's file; without it, none."""
     import zipfile
 

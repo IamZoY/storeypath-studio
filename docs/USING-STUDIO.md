@@ -55,6 +55,21 @@ project and everything in it, once you type its name.
   them, and puts a new building that would stand on top of another beside it on
   the site plan. A plan on a floor that a building has already can **replace its
   drawing**: its rooms keep their IDs.
+- **A mezzanine** (a block of rooms up a stair, over part of a floor): choose *Mezzanine*
+  in the plan's *Level* (Studio does when its title says MEZZANINE). Its *In floor* is the
+  floor it stands in (0, the ground floor: one of the building's, or one of the plans
+  added with it); its *Code* (M00 over the ground floor, M01 over the first, MB01 over a
+  basement, M00B for a second on one floor) and *Floor name* (Mezzanine) are filled in,
+  and yours to change; *Height above that floor (m)* is how high its floor is over that
+  floor's (from the levels its plan and that floor's mark, else half that floor's height),
+  *Height* its own. Its rooms' IDs carry its code (…-M00-0001); no other floor's ID
+  changes. It keeps the number of the floor it stands in, comes after it and before the
+  next one up everywhere (the project page, Review, Navigate, 3D, the package), and lines
+  up with the building's floors as any floor added does. Stairs drawn on it where they are
+  on the floors below and above link them through it; lifts that pass it link the floors
+  either side. Add a revised drawing of it the same way, with its code, and tick *Replace
+  its drawing*. The project page lists it as *Mezzanine*, M00 · 3.5 m above Ground floor.
+  A floor that a mezzanine stands in is not deleted while it does.
 - **Work goes on if you leave.** Finding plans, cleaning a drawing and reading floors
   run in Studio, not in the page: refresh it, open another tab or come back later,
   and the project page picks up what is going on. It shows the job running, marks a
@@ -365,7 +380,7 @@ replace.
 
 ### Export: one building per package
 
-*Export package* writes the package (`.storeypath`, [format 0.10.1](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md)) of
+*Export package* writes the package (`.storeypath`, [format 0.11](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md)) of
 one building, chosen from the list: its floors, spaces, zones, doors, windows and
 openings, its items and their types (each once: those its items use, or, chosen
 beside *Export package*, every item type of the Studio, for another system to take
