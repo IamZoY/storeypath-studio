@@ -1021,3 +1021,36 @@ def test_an_outline_a_split_left_invalid_is_kept_as_what_it_encloses():
     bow = shape(_local(Polygon([(0, 0), (10, 10), (10, 0), (0, 10)])))  # a ring crossing itself
     assert bow.is_valid and abs(bow.area - 50.0) < 1e-6
     assert shape(_local(Polygon(square))).area == 100.0  # (a valid one as it was)
+
+
+def test_a_paragraph_text_with_a_damaged_box_is_laid_out_without_a_set_width(tmp_path):
+    # A damaged drawing's MTEXT in a block, its box 1e+200 wide for letters 0.15 high: the
+    # renderer laid out tab stops across all of it without end, so the drawing's view and
+    # its prints never came. Opened, it has no set width (one line, as CAD programs show it)
+    import time
+
+    from storeypath.cad import read_drawing, read_notes
+    from storeypath.drawview import render
+
+    doc = ezdxf.new("R2018")
+    block = doc.blocks.new("NOTE")
+    block.add_mtext("ROOM NOTES", dxfattribs={"char_height": 0.15, "width": 1e200, "layer": "TEXTS"})
+    # at a height of -7e+144, its box negative: put in place by its block, its box came out 1e+78
+    block.add_mtext("STORE NOTES", dxfattribs={"char_height": 0.15, "width": -1.8e78, "insert": (0, 0, -7e144),
+                                               "layer": "TEXTS"})
+    block.add_mtext("A FAIR BOX", dxfattribs={"char_height": 2.5, "width": 40.0, "layer": "TEXTS"})
+    doc.modelspace().add_blockref("NOTE", (0, 0))
+    doc.modelspace().add_blockref("NOTE", (50, 0), dxfattribs={"rotation": 30})
+    doc.modelspace().add_mtext("LOST", dxfattribs={"char_height": 2.5, "insert": (3e150, 0, 0)})  # impossibly far off
+    doc.modelspace().add_line((0, 0), (100, 0), dxfattribs={"layer": "WALLS"})
+    doc.saveas(tmp_path / "damaged.dxf")
+    opened = read_drawing(tmp_path / "damaged.dxf")
+    texts = opened.blocks.get("NOTE").query("MTEXT")
+    assert sorted(e.dxf.width for e in texts) == [0.0, 0.0, 40.0]
+    assert all(e.dxf.insert.z == 0.0 for e in texts)
+    assert not opened.modelspace().query("MTEXT")  # (the one far off left out)
+    notes = " ".join(read_notes(opened))
+    assert "paragraph text" in notes and "impossible height" in notes and "impossibly far off" in notes
+    started = time.monotonic()
+    view = render(opened)
+    assert time.monotonic() - started < 20 and view is not None

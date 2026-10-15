@@ -164,7 +164,63 @@ def _audited(doc: Drawing) -> Drawing:
     broken = _close_hatch_outlines(doc)
     if broken:
         _note(doc, f"{broken} hatch outline(s) that do not close were left out, as CAD programs leave them unfilled")
+    boxed, flattened, dropped = _sane_texts(doc)
+    if boxed:
+        _note(doc, f"{boxed} paragraph text(s) with a box of an impossible width (damaged) were laid out "
+                   "without a set width")
+    if flattened:
+        _note(doc, f"{flattened} text(s) at an impossible height (damaged) were put back on the plan")
+    if dropped:
+        _note(doc, f"{dropped} text(s) placed impossibly far off (damaged) were left out")
     return doc
+
+
+TEXT_BOX_MAX = 100_000  # a paragraph text's box at most this many times its letters' height
+TEXT_FAR = 1e12  # drawing units: a text placed farther off than this is no part of any plan
+TEXT_HIGH = 1e9  # nor at a height (Z) beyond this
+
+
+def _sane_texts(doc: Drawing) -> tuple[int, int, int]:
+    """Texts (in the model and in blocks) as a damaged drawing can hold them, made such that
+    they can be drawn. A damaged MTEXT's box (1e+235, or negative, for letters 0.15 high)
+    made the renderer lay out tab stops across all of it without end; one at a height of
+    -7e+144 lost all precision when its block put it in place (its box came out 1e+78), as
+    one at an absurd place would; and every print and view of its drawing waited. So: a box
+    of an impossible width is no set width (one line a paragraph, as CAD programs lay it
+    out); an impossible height is the plan's (0); a text impossibly far off is left out.
+    How many of each."""
+    from ezdxf.tools.text import valid_text_height
+
+    layouts = {doc.modelspace().block_record_handle: doc.modelspace()}
+    layouts.update({b.block_record_handle: b for b in doc.blocks})
+    boxed = flattened = 0
+    far = []
+    for e in list(doc.entitydb.values()):
+        kind = e.dxftype()
+        if kind not in ("MTEXT", "TEXT", "ATTRIB", "ATTDEF") or not e.is_alive:
+            continue
+        at = e.dxf.get("insert")
+        if at is not None:
+            x, y, z = at
+            if not (math.isfinite(x) and math.isfinite(y)) or abs(x) > TEXT_FAR or abs(y) > TEXT_FAR:
+                far.append(e)
+                continue
+            if not math.isfinite(z) or abs(z) > TEXT_HIGH:
+                e.dxf.insert = (x, y, 0.0)
+                flattened += 1
+        if kind == "MTEXT":
+            width = e.dxf.get("width", 0.0) or 0.0
+            height = valid_text_height(e.dxf.get("char_height", 0.0) or 0.0)
+            if not math.isfinite(width) or width < 0 or width > TEXT_BOX_MAX * height:
+                e.dxf.width = 0.0
+                boxed += 1
+    for e in far:
+        layout = layouts.get(e.dxf.owner)
+        if layout is not None:
+            layout.delete_entity(e)
+        else:
+            e.destroy()
+    return boxed, flattened, len(far)
 
 
 HATCH_GAP = 1e-3  # an outline's edges meet when this close, as a share of its size
