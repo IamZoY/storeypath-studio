@@ -89,6 +89,41 @@ def test_plans_are_found_on_a_sheet_without_knowing_the_layers(tmp_path):
     assert [(v.title, v.ordinal) for v in views] == [("GROUND FLOOR PLAN", 0), ("FIRST FLOOR PLAN", 1)]
 
 
+def _ring(north: bool = True) -> list:
+    """A building of offices round a 24 m courtyard (40 × 40 m), each opening onto it;
+    without ``north``, a U open to the north."""
+    from storeypath.samples import Cell, Door
+
+    cells = [Cell(x, 0, x + 8, 8, ["OFFICE"], "office", Door(x + 4, 8, "h", +1)) for x in range(0, 40, 8)]
+    cells += [Cell(0, y, 8, y + 8, ["OFFICE"], "office", Door(8, y + 4, "v", +1)) for y in range(8, 32, 8)]
+    cells += [Cell(32, y, 40, y + 8, ["OFFICE"], "office", Door(32, y + 4, "v", -1)) for y in range(8, 32, 8)]
+    if north:
+        cells += [Cell(x, 32, x + 8, 40, ["OFFICE"], "office", Door(x + 4, 32, "h", -1)) for x in range(0, 40, 8)]
+    return cells
+
+
+def _block() -> list:
+    """Two rooms standing alone 7 m from the courtyard's walls all round."""
+    from storeypath.samples import Cell, Door
+
+    return [Cell(15, 17, 20, 23, ["STORE"], "storage", Door(17.5, 17, "h", -1)),
+            Cell(20, 17, 25, 23, ["STORE"], "storage", Door(22.5, 17, "h", -1))]
+
+
+def test_a_block_standing_in_a_courtyard_is_part_of_its_plan(tmp_path):
+    # The block's walls touch none of the wings round it, yet it is that floor's: one
+    # plan, the block in it. The same block in the open side of a U is not enclosed by
+    # it, and stays a plan of its own (a detail drawn beside a plan is not part of it)
+    write_sheet_dxf(tmp_path / "sheet.dxf", [(_ring() + _block(), (100.0, 50.0), "GROUND FLOOR PLAN"),
+                                             (_ring(north=False) + _block(), (160.0, 50.0), "FIRST FLOOR PLAN")],
+                    area_outlines=False)
+    views = find_views(read_drawing(tmp_path / "sheet.dxf"), RULES, 0.001, auto=True, is_room_name=rules_only)
+    sizes = sorted(tuple(round(v) for v in view.size) for view in views)
+    assert sizes == [(10, 6), (40, 32), (40, 40)], sizes
+    ground = next(v for v in views if v.title == "GROUND FLOOR PLAN")
+    assert ground.entities > next(v for v in views if v.title == "FIRST FLOOR PLAN").entities  # (the block's walls with its own)
+
+
 @pytest.mark.parametrize("unit, factor", [("mm", 1.0), ("m", 0.001), ("cm", 0.1)])
 def test_units_are_read_from_the_doors(tmp_path, unit, factor):
     write_floor_dxf(tmp_path / "plan.dxf", office_floor(1))

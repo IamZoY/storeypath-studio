@@ -112,10 +112,14 @@ def _plans_by_walls(doc, scale, texts, is_room_name) -> list[View]:
     for members in _wall_groups(walls):
         if sum(m.length for m in members) / 2 >= VIEW_MIN_WALLS_M:  # each wall has two faces
             found.append((members, shapely.union_all(members).bounds))
+    found = [(m, b) for m, b in found if not _is_frame(m, b, [x for _, x in found])]
+
+    def has_doors(blob) -> bool:  # doors in a group's own walls: a plan's, not a sheet's frame
+        return len(swing_pts) > 0 and int(shapely.contains_xy(blob, swing_pts[:, 0], swing_pts[:, 1]).sum()) >= 2
+
+    joined = _courtyards_joined([m for m, _ in found], VIEW_GAP_M, holds=has_doors)
     views = []
-    for members, (x0, y0, x1, y1) in found:
-        if _is_frame(members, (x0, y0, x1, y1), [b for _, b in found]):
-            continue
+    for members, (x0, y0, x1, y1) in ((m, shapely.union_all(m).bounds) for m in joined):
 
         def inside(pts):
             return int(np.sum((pts[:, 0] >= x0) & (pts[:, 0] <= x1) & (pts[:, 1] >= y0) & (pts[:, 1] <= y1))) \
@@ -153,6 +157,33 @@ def _wall_groups(walls, depth: int = 0) -> list[list]:
         else:
             out.append(members)
     return out
+
+
+def _courtyards_joined(groups: list[list], gap: float, holds=lambda blob: True) -> list[list]:
+    """Groups of walls, each one standing in another's enclosed open ground joined to
+    it: a block in a courtyard, its walls touching none of the wings around it, is part
+    of that plan, not a plan of its own. Enclosed: inside the ground the other's walls
+    close round (gaps up to ``gap``: doors, windows), so a drawing beside a plan, or in
+    the open side of a U, stays apart. ``holds(blob)``: whether a group's own walls
+    (``gap`` / 2 round them) may hold others: a sheet's frame encloses its plans, and
+    is not one."""
+    if len(groups) < 2:
+        return groups
+    blobs = [shapely.union_all(shapely.buffer(np.array(g, dtype=object), gap / 2)) for g in groups]
+    closed = [shapely.union_all([shapely.Polygon(p.exterior) for p in as_polygons(b)]) for b in blobs]
+    owner = list(range(len(groups)))
+    for i in range(len(groups)):
+        around = [j for j in range(len(groups)) if j != i and closed[j].area > closed[i].area
+                  and closed[j].contains(blobs[i]) and holds(blobs[j])]
+        if around:
+            owner[i] = min(around, key=lambda j: closed[j].area)  # the nearest round it
+    joined: dict[int, list] = {}
+    for i, g in enumerate(groups):
+        root = i
+        while owner[root] != root:  # (one enclosing a larger one's courtyard: to the outermost)
+            root = owner[root]
+        joined.setdefault(root, []).extend(g)
+    return list(joined.values())
 
 
 def _is_frame(members, bounds, all_bounds) -> bool:
@@ -204,7 +235,7 @@ def _group(boxes, texts, scale) -> list[View]:
     gap = VIEW_GAP_M / scale
     groups = as_polygons(shapely.union_all(shapely.buffer(boxes, gap / 2, join_style="mitre")))
     tree = shapely.STRtree(boxes)
-    views = []
+    kept = []
     for g in groups:
         members = [boxes[int(i)] for i in tree.query(g, predicate="contains")]
         if len(members) < VIEW_MIN_ENTITIES:
@@ -212,6 +243,10 @@ def _group(boxes, texts, scale) -> list[View]:
         x0, y0, x1, y1 = shapely.union_all(members).bounds
         if (x1 - x0) * (y1 - y0) * scale * scale < VIEW_MIN_AREA_M2:
             continue
+        kept.append(members)
+    views = []
+    for members in _courtyards_joined(kept, gap):
+        x0, y0, x1, y1 = shapely.union_all(members).bounds
         m = VIEW_MARGIN_M / scale
         views.append(View(0, _title((x0, y0, x1, y1), texts, scale), (x0 - m, y0 - m, x1 + m, y1 + m),
                           (round((x1 - x0) * scale, 1), round((y1 - y0) * scale, 1)), len(members), None))
