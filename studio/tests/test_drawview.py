@@ -2,11 +2,18 @@
 the file the page gets (every layer with what is on it, texts as words where they stand,
 fills as triangles with their holes left empty), framed on its main body (a stray far off
 does not shrink it to a speck), made as a job of Studio's once for its content and then
-answered from the cache, to whoever may see the drawing's words."""
+answered from the cache, to whoever may see the drawing's words. A floor's part of its
+drawing, as a package carries it (format 0.10.1): cut to its region, in its own metres, its
+texts as the privacy rules leave them; a package carries them only when asked to."""
 
+import gzip
+import io
+import json
 import math
+import struct
 import threading
 import time
+import zipfile
 
 import ezdxf
 import numpy as np
@@ -16,7 +23,8 @@ from ezdxf.enums import TextEntityAlignment
 from sessions import call
 from storeypath import accounts as acc
 from storeypath.accounts import Accounts, Scope
-from storeypath.drawview import VIEW_VERSION, main_body, read_view, write_view
+from storeypath.drawview import (VIEW_FORMAT, VIEW_VERSION, main_body, read_view, read_view_head, view_problem,
+                                 write_floor_views, write_view)
 from storeypath.samples import build_demo
 from storeypath.server import Studio
 from storeypath.web import make_server
@@ -90,7 +98,7 @@ def _inside(triangles: np.ndarray, x: float, y: float) -> bool:
 
 def test_a_drawing_is_drawn_whole_with_its_layers_texts_and_fills(tmp_path):
     numbers, head, arrays = _view(tmp_path)
-    assert head["format"] == VIEW_VERSION and head["units"] == "mm"
+    assert head["format"] == VIEW_FORMAT and head["units"] == "mm" and head["clip"] is None
     assert numbers["texts"] == 4 and numbers["bytes"] > 0
     ox, oy = head["origin"]
 
@@ -177,6 +185,86 @@ def test_a_hatch_of_millions_of_dots_is_a_tint_of_its_colour(tmp_path):
     assert sum(b["count"] for b in head["batches"] if b["kind"] == "lines" and b["color"] == cyan) // 2 > 10
 
 
+def _sheet(path):
+    """A made-up sheet of two floors in millimetres, 30 m apart (the second, a room on
+    WALLS and its tag on ROOM_TAGS, as the first), a wall line running from between them
+    into the second, a note far off, and beside the second's room a telephone number and an
+    office with a person's name."""
+    doc = ezdxf.new("R2018", setup=True)
+    doc.header["$INSUNITS"] = 4
+    doc.layers.add("WALLS", color=1)
+    doc.layers.add("ROOM_TAGS", color=3)
+    msp = doc.modelspace()
+    for ox in (0, 30000):
+        msp.add_lwpolyline([(ox, 0), (ox + 10000, 0), (ox + 10000, 6000), (ox, 6000)], close=True,
+                           dxfattribs={"layer": "WALLS"})
+        msp.add_text("OFFICE 101", height=250, dxfattribs={"layer": "ROOM_TAGS"}).set_placement((ox + 1500, 5000))
+    msp.add_line((25000, 3000), (35000, 3000), dxfattribs={"layer": "WALLS"})
+    msp.add_text("GENERAL NOTES", height=250, dxfattribs={"layer": "ROOM_TAGS"}).set_placement((90000, 3000))
+    msp.add_text("TEL 555 0100", height=250, dxfattribs={"layer": "ROOM_TAGS"}).set_placement((31500, 3000))
+    msp.add_text("OFFICE MR. JOHN DOE", height=250, dxfattribs={"layer": "ROOM_TAGS"}).set_placement((31500, 2000))
+    doc.saveas(path)
+    return path
+
+
+def test_a_floors_part_is_cut_to_its_region_in_the_floors_own_metres(tmp_path):
+    """As a package carries it: what lies in the floor's region of the drawing, what crosses
+    its edge cut there, moved by its offset and in metres (where its spaces are read), and
+    its texts as the privacy rules leave them; the drawing read once for both floors."""
+    said = []
+    made = write_floor_views(_sheet(tmp_path / "sheet.dxf"), [
+        {"out": str(tmp_path / "f0.view"), "region": [-500, -500, 10500, 6500], "offset": None, "units": None},
+        {"out": str(tmp_path / "f1.view"), "region": [29500, -500, 40500, 6500], "offset": [30000, 0], "units": None},
+    ], said.append)
+    assert [line for line in said if line.startswith("reading")] == ["reading sheet.dxf"]
+    assert [m["texts"] for m in made] == [1, 2]
+    for name in ("f0", "f1"):
+        data = (tmp_path / f"{name}.view").read_bytes()
+        assert view_problem(data) is None
+        head, arrays = read_view(data)
+        assert read_view_head(data) == head
+        assert head["units"] == "m" and head["clip"] == [-0.5, -0.5, 10.5, 6.5]
+        ends = arrays["lines"].astype(float) + head["origin"]
+        left = -0.5 if name == "f1" else 0  # (the second's: the line from between them, cut at the edge)
+        assert ends.min(axis=0) == pytest.approx([left, 0], abs=1e-3)
+        assert ends.max(axis=0) == pytest.approx([10, 6], abs=1e-3)  # (the room's walls, where the floor's are)
+        assert head["bounds"] == pytest.approx([left, 0, 10, 6], abs=1e-3)
+        assert head["body"] == head["bounds"]  # (all of a floor's part is its main body)
+        x, y, a, b, c, d, cap, width = (arrays["texts"][head["words"].index("OFFICE 101")].astype(float)
+                                        + [*head["origin"], 0, 0, 0, 0, 0, 0])
+        assert (x, y, cap) == pytest.approx((1.5, 5.0, 0.25), abs=1e-3) and (a, d) == pytest.approx((1, 1))
+        assert 1.0 < width < 3.0  # (in metres)
+    # the second floor's texts: the telephone number left out, the name taken out of its office
+    assert sorted(read_view((tmp_path / "f1.view").read_bytes())[0]["words"]) == ["OFFICE", "OFFICE 101"]
+    assert read_view((tmp_path / "f0.view").read_bytes())[0]["words"] == ["OFFICE 101"]  # (nothing of the notes)
+
+
+def _repacked(data: bytes, change=None, cut: int = 0) -> bytes:
+    """A view with its head changed (``change(head)``) or its last ``cut`` bytes gone."""
+    raw = gzip.decompress(data)
+    (n,) = struct.unpack("<I", raw[4:8])
+    head, rest = json.loads(raw[8:8 + n]), raw[8 + n:]
+    if change is not None:
+        change(head)
+    text = json.dumps(head).encode()
+    text += b" " * (-len(text) % 4)
+    raw = raw[:4] + struct.pack("<I", len(text)) + text + rest
+    return gzip.compress(raw[:len(raw) - cut])
+
+
+def test_a_view_that_is_not_as_the_format_has_it_is_refused(tmp_path):
+    numbers = write_view(_drawing(tmp_path / "floor.dxf"), tmp_path / "floor.view")
+    data = (tmp_path / "floor.view").read_bytes()
+    assert view_problem(data) is None and numbers["bytes"] == len(data)
+    assert view_problem(b"not gzip").startswith("not gzip")
+    assert view_problem(gzip.compress(b"PK\x03\x04 a zip")) == "not a drawing's view (no SPDV at its start)"
+    assert view_problem(_repacked(data, lambda h: h.update(format=2))) == "format 2: this reader reads 1"
+    assert "are not where its head says" in view_problem(_repacked(data, cut=64))
+    assert "not one each" in view_problem(_repacked(data, lambda h: h["words"].pop()))
+    assert "not within them" in view_problem(_repacked(data, lambda h: h["batches"][0].update(count=10**6)))
+    assert view_problem(_repacked(data, lambda h: h.update(unknown_to_this_reader=[1, 2]))) is None  # (ignored)
+
+
 def test_a_view_is_drawn_in_a_read_worker_too(tmp_path):
     workers = ReadWorkers(1)
     said = []
@@ -244,7 +332,7 @@ def test_a_drawing_is_drawn_as_a_job_once_then_sent_from_the_cache(studio):
     assert status == 200 and res.getheader("Content-Type") == "application/gzip"
     assert res.getheader("Content-Encoding") is None and len(blob) == made["bytes"]
     head, arrays = read_view(blob)
-    assert head["format"] == VIEW_VERSION and len(arrays["lines"]) > 100 and head["layers"]
+    assert head["format"] == VIEW_FORMAT and len(arrays["lines"]) > 100 and head["layers"]
 
     # asked again: from the cache, no job
     jobs = len(s.jobs._jobs)
@@ -266,6 +354,55 @@ def test_who_may_see_a_drawing_whole_is_who_may_see_its_words(studio):
         assert asked == got == words, who
     assert call(port, "GET", drawing + "/view", token=tokens["ed"])[0] == 200
     assert call(port, "GET", drawing + "/view", token=tokens["vera"])[0] == 403  # (one floor of it: not the drawing)
+
+
+def test_a_package_carries_its_floors_drawings_only_when_asked(studio, tmp_path):
+    """Export's drawings (format 0.10.1): each floor's part of its drawing in the package
+    when asked for, the export's history saying so; drawn once and kept, the next export
+    takes them as they are; not asked for, none."""
+    from storeypath.validate import validate_package
+
+    port, s, tokens, code = studio
+    hq = f"{code}-DEMO-HQ"
+
+    def export(body):
+        status, job, _ = call(port, "POST", f"/api/projects/{code}/export", body, token=tokens["boss"])
+        assert status == 200, job
+        ended = _done(s, job["id"])
+        assert ended.state == "done", ended.error
+        status, blob, _ = call(port, "GET", f"/api/projects/{code}/exports/{ended.result['file']}", token=tokens["boss"])
+        assert status == 200
+        (tmp_path / ended.result["file"]).write_bytes(blob)
+        assert validate_package(tmp_path / ended.result["file"]) == []
+        return ended, zipfile.ZipFile(io.BytesIO(blob))
+
+    floors = [f"{hq}-{f.code}" for f in s.store.current(code).building(hq).floors if f.source]
+    ended, z = export({"building": hq, "drawings": True})
+    manifest = json.loads(z.read("manifest.json"))
+    assert manifest["format_version"] == "0.10.1" and manifest["files"]["drawings"] == "drawings/"
+    assert sorted(src["view"] for src in manifest["sources"]) == sorted(f"drawings/{f}.view" for f in floors)
+    assert ended.result["drawings"] == len(floors) >= 2
+    assert any(line.startswith("drawing ") and " from " in line for line in ended.log)  # (what it is doing)
+    for f in floors:
+        info = z.getinfo(f"drawings/{f}.view")
+        assert info.compress_type == zipfile.ZIP_STORED  # (gzip already)
+        head = read_view_head(z.read(info))
+        assert head["units"] == "m" and head["layers"] and head["counts"]["lines"] > 100
+    lines = [e["line"] for e in s.history(code)["entries"] if e["kind"] == "export"]
+    assert lines[0] == f"exported {ended.result['file']}, with its drawings"
+
+    again, z = export({"building": hq, "drawings": True})  # (drawn once: taken from the cache)
+    assert not any(line.startswith("drawing ") and " from " in line for line in again.log)
+    assert sorted(n for n in z.namelist() if n.startswith("drawings/")) == sorted(f"drawings/{f}.view" for f in floors)
+
+    plain, z = export({"building": hq})
+    manifest = json.loads(z.read("manifest.json"))
+    assert "drawings" not in plain.result and "drawings" not in manifest["files"]
+    assert not [n for n in z.namelist() if n.startswith("drawings/")] and all(src["view"] is None for src in manifest["sources"])
+    assert [e["line"] for e in s.history(code)["entries"] if e["kind"] == "export"][0] == f"exported {plain.result['file']}"
+    status, said, _ = call(port, "POST", f"/api/projects/{code}/export", {"building": hq, "drawings": "yes"},
+                           token=tokens["boss"])
+    assert status == 400 and "drawings" in said["error"]
 
 
 def test_the_project_says_where_each_floor_is_in_its_drawing(studio):

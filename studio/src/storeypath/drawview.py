@@ -1,8 +1,13 @@
-"""A drawing as its own program shows it, for Studio's drawing viewer (review_app/drawview.js):
-the whole of its model space, every layer of it (lines, curves, hatches, solid fills, texts,
+"""A drawing as its own program shows it, for the drawing viewer (StoreyPath Viewer's
+viewer/src/drawing/, which Studio's review_app/drawview.js opens over its page): the whole
+of its model space, every layer of it (lines, curves, hatches, solid fills, texts,
 blocks, dimensions) worked out by ezdxf's drawing frontend as Studio's prints are
 (printing.py), in the drawing's own colours (ACI 7 white, on the dark ground CAD programs
 draw model space on), and packed small for a browser to draw with WebGL.
+
+A package may carry each floor's part of its drawing (export, format 0.10.1:
+write_floor_views): cut to the floor's region of the drawing, in the floor's own metres
+(where its spaces and walls are), its texts as the privacy rules leave them (privacy.py).
 
 What is drawn is recorded, not painted: lines and curves as straight pieces (a curve made
 straight to within FLATTEN of the drawing's main body), fills as triangles (made here: a
@@ -19,8 +24,9 @@ twice by overlapping hatches (drawn once). Points are kept to a grid finer than 
 curves' straightening (SNAP), so the same line drawn a hair apart is one, and the numbers
 compress well.
 
-A view is one gzip file (write_view; its make-up under FORMAT below), kept in Studio's
-cache by the drawing's content and VIEW_VERSION (server.Studio.view)."""
+A view is one gzip file (write_view; its make-up under FORMAT below, and in StoreyPath
+Viewer's spec/DRAWING-VIEW.md), kept in Studio's cache by the drawing's content and
+VIEW_VERSION (server.Studio.view)."""
 
 from __future__ import annotations
 
@@ -32,6 +38,7 @@ import struct
 import time
 from array import array
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -60,9 +67,11 @@ from ezdxf.math import Vec2
 # float32 holds a building's millimetres there to well under one. The head's "batches"
 # say which lines, fills and points are of which layer and colour: kind, layer, colour,
 # the first point and how many points (lines, fills and points each in an array of their
-# own, a batch after another).
+# own, a batch after another). A floor's part (Part) is in metres of the floor's frame, its
+# "units" "m", and the head's "clip" is the box it was cut to (in the view's units).
 MAGIC = b"SPDV"
-VIEW_VERSION = 1  # a view made by an older Studio is made again
+VIEW_FORMAT = 1  # the make-up above (the head's "format"): spec/DRAWING-VIEW.md
+VIEW_VERSION = 1  # how Studio draws one: a view made by an older Studio is made again
 FLATTEN = 1e-5  # a curve's straight pieces stray from it by at most this share of the main body's size
 DASHES_FINE = 1e-4  # a line's dashes repeating within this share of the main body's size: drawn as a line
 MAX_HATCH_PIECES = 100_000  # a hatch whose pattern would be more dashes and dots than this: a tint
@@ -73,6 +82,24 @@ BODY_SAMPLE = 200_000  # points enough to find the main body by
 PROGRESS_S = 3.0  # how often drawing says how far it has got
 FILL_AT_ONCE = 5000  # fills triangulated together
 BACKGROUND = "#212830"  # model space's ground in CAD programs (ezdxf's too): ACI 7 is white on it
+
+
+@dataclass(frozen=True)
+class Part:
+    """A floor's part of its drawing, as a package carries it: what lies in ``region``
+    (x0, y0, x1, y1, drawing units; None: the whole drawing), in the floor's own metres,
+    where its spaces and walls are: a point (x, y) of the drawing is at
+    ((x - offset x) · scale, (y - offset y) · scale), as the floor was read (its source's
+    region, offset and units: convert.py)."""
+
+    region: tuple[float, float, float, float] | None
+    offset: tuple[float, float]
+    scale: float
+
+    def at(self, xy: np.ndarray) -> np.ndarray:
+        """Points (n, 2), or lines (n, 4), of the drawing in the floor's metres."""
+        o = np.tile(np.asarray(self.offset, dtype=float), xy.shape[1] // 2)
+        return (xy - o) * self.scale
 
 
 def write_view(drawing: str | Path, out: str | Path, say: Callable[[str], None] | None = None, lock=None) -> dict:
@@ -88,6 +115,38 @@ def write_view(drawing: str | Path, out: str | Path, say: Callable[[str], None] 
     say(f"reading {Path(drawing).name}")
     doc = read_drawing_to_change(drawing)
     view = render(doc, say, lock)
+    return {**_written(view, out, say), "seconds": round(time.monotonic() - started, 1)}
+
+
+def write_floor_views(drawing: str | Path, floors: list[dict], say: Callable[[str], None] | None = None,
+                      lock=None) -> list[dict]:
+    """Each floor's part of a drawing file, as a package carries it (Part): ``floors``,
+    each {"out": the view's file, "region", "offset" (drawing units; None: none) and
+    "units" (as the floor is read in; None: as the drawing shows)}, written as write_view
+    writes one, the drawing read once for them all (a sheet of several floors). Its
+    texts as the privacy rules leave them (privacy.text_left: a package goes further than
+    Studio). What each holds, in numbers, in their order."""
+    from .cad import meters_per_unit, read_drawing_to_change
+    from .privacy import text_left
+
+    say = say or (lambda line: None)
+    say(f"reading {Path(drawing).name}")
+    doc = read_drawing_to_change(drawing)
+    made = []
+    for i, f in enumerate(floors):
+        started = time.monotonic()
+        if len(floors) > 1:
+            say(f"its floor {i + 1} of {len(floors)}")
+        region = tuple(float(v) for v in f["region"]) if f.get("region") else None
+        offset = tuple(float(v) for v in f["offset"]) if f.get("offset") else (0.0, 0.0)
+        part = Part(region, offset, meters_per_unit(doc, f.get("units")))
+        view = render(doc, say, lock, part=part, keep_text=text_left)
+        made.append({**_written(view, f["out"], say), "seconds": round(time.monotonic() - started, 1)})
+    return made
+
+
+def _written(view: "View", out: str | Path, say) -> dict:
+    """``view`` written to ``out`` (beside it first, then put in place): its numbers."""
     say(f"writing it: {view.summary()}")
     data = view.packed()
     out = Path(out)
@@ -95,20 +154,32 @@ def write_view(drawing: str | Path, out: str | Path, say: Callable[[str], None] 
     part = out.with_name(f".{out.name}.{os.getpid()}.part")
     part.write_bytes(data)
     os.replace(part, out)
-    return {**view.numbers(), "bytes": len(data), "seconds": round(time.monotonic() - started, 1)}
+    return {**view.numbers(), "bytes": len(data)}
 
 
-def render(doc, say: Callable[[str], None] | None = None, lock=None) -> "View":
-    """The drawing's model space as it is drawn (View). ``lock``: held while ezdxf draws
-    (its caches are shared by the threads of one process: vision._DRAWING)."""
+def render(doc, say: Callable[[str], None] | None = None, lock=None, *, part: Part | None = None,
+           keep_text: Callable[[str], str | None] | None = None) -> "View":
+    """The drawing's model space as it is drawn (View); with ``part``, a floor's part of
+    it in the floor's metres (what crosses its region's edge cut there; a text by where it
+    starts). ``keep_text``: what of each text stays (None: it goes). ``lock``: held while
+    ezdxf draws (its caches are shared by the threads of one process: vision._DRAWING)."""
     from contextlib import nullcontext
 
     from ezdxf.addons.drawing import RenderContext
+    from ezdxf.tools.clipping_portal import ClippingRect
 
     say = say or (lambda line: None)
     msp = doc.modelspace()
-    total = len(msp)
-    body = main_body(_anchors(msp))
+    region = part.region if part is not None else None
+    if region is not None:
+        from .extract import drawn_in
+
+        entities = list(drawn_in(doc, region))  # (what meets it: the rest is not drawn at all)
+        body = region
+    else:
+        entities = None
+        body = main_body(_anchors(msp))
+    total = len(entities) if entities is not None else len(msp)
     size = math.hypot(body[2] - body[0], body[3] - body[1]) if body else 0.0
     recorder = _Recorder(FLATTEN * size if size > 0 else 1e-3)
     fine = DASHES_FINE * size
@@ -135,11 +206,22 @@ def render(doc, say: Callable[[str], None] | None = None, lock=None) -> "View":
 
     say(f"drawing it: {total:,} entities")
     with lock if lock is not None else nullcontext():
-        frontend = _Frontend(ctx, _Pipeline(recorder, fine), config)
-        frontend.draw_layout(msp, finalize=True, filter_func=counted)
+        pipeline = _Pipeline(recorder, fine)
+        frontend = _Frontend(ctx, pipeline, config)
+        if entities is None:
+            frontend.draw_layout(msp, finalize=True, filter_func=counted)
+        else:
+            x0, y0, x1, y1 = region
+            pipeline.push_clipping_shape(ClippingRect([(x0, y0), (x1, y1)]), None)
+            ctx.set_current_layout(msp)
+            frontend.set_background(ctx.current_layout_properties.background_color)
+            frontend.draw_entities(entities, filter_func=counted)
+            pipeline.finalize()
     layers = {lp.layer: lp.color for lp in ctx.layers.values()}
+    if keep_text is not None:
+        recorder.texts = [(left, *t[1:]) for t in recorder.texts if (left := keep_text(t[0]))]
     say(f"filling {sum(len(f) for f in recorder.fills.values()):,} hatches and solids")
-    return View.of(recorder, layers, hidden, len(doc.layers), _units(doc), total)
+    return View.of(recorder, layers, hidden, len(doc.layers), "m" if part is not None else _units(doc), total, part)
 
 
 def _units(doc) -> str | None:
@@ -467,24 +549,37 @@ class View:
         self.head, self.arrays = head, arrays
 
     @classmethod
-    def of(cls, rec: _Recorder, layer_colours: dict, hidden: set, layers_in_drawing: int, units, entities: int):
+    def of(cls, rec: _Recorder, layer_colours: dict, hidden: set, layers_in_drawing: int, units, entities: int,
+           part: Part | None = None):
         lines = {k: _finite(np.frombuffer(a, dtype=float).reshape(-1, 4)) for k, a in rec.lines.items()}
         points = {k: _finite(np.frombuffer(a, dtype=float).reshape(-1, 2)) for k, a in rec.points.items()}
         texts = [t for t in rec.texts if all(math.isfinite(v) for v in t[1:9])]
-        # the main body of what is shown (a layer off in the drawing is not, until a person shows it)
         anchors = np.frombuffer(rec.anchors, dtype=float).reshape(-1, 2)
+        fills, tolerance, clip = rec.fills, rec.tolerance, None
+        if part is not None:  # (in the floor's metres: its turn and stretch as they were, its sizes scaled)
+            s = part.scale
+            lines = {k: part.at(a) for k, a in lines.items()}
+            points = {k: part.at(a) for k, a in points.items()}
+            fills = {k: [[part.at(r) for r in rings] for rings in f] for k, f in fills.items()}
+            texts = [(t[0], *part.at(np.array([t[1:3]]))[0], *t[3:7], t[7] * s, t[8] * s, t[9]) for t in texts]
+            anchors = part.at(anchors) if len(anchors) else anchors
+            tolerance *= s
+            if part.region is not None:
+                clip = [round(v, 4) for v in part.at(np.array([part.region], dtype=float))[0]]
+        # the main body of what is shown (a layer off in the drawing is not, until a person shows it)
         shown = np.array([layer not in hidden for (layer, _), _k in sorted(rec.keys.items(), key=lambda kv: kv[1])],
                          dtype=bool)
         on = shown[np.frombuffer(rec.anchor_keys, dtype=np.int32)] if len(anchors) else np.zeros(0, dtype=bool)
-        body = main_body(anchors[on] if on.any() else anchors)
-        bounds = _bounds(lines, points, rec.fills, texts)
-        if body is not None:  # (and as far as what is drawn there reaches: a long line's other end)
+        bounds = _bounds(lines, points, fills, texts)
+        # (a floor's part is cut to its plan already: all of it is the main body)
+        body = bounds if clip is not None else main_body(anchors[on] if on.any() else anchors)
+        if body is not None and clip is None:  # (and as far as what is drawn there reaches: a long line's other end)
             x0, y0, x1, y1 = body
             gx, gy = BODY_GAP * (x1 - x0), BODY_GAP * (y1 - y0)
-            body = _bounds(lines, points, rec.fills, texts, (x0 - gx, y0 - gy, x1 + gx, y1 + gy)) or body
+            body = _bounds(lines, points, fills, texts, (x0 - gx, y0 - gy, x1 + gx, y1 + gy)) or body
         if body is None or bounds is None:
             body = bounds = (0.0, 0.0, 1.0, 1.0)
-        grid = 2.0 ** math.floor(math.log2(rec.tolerance / SNAP))
+        grid = 2.0 ** math.floor(math.log2(tolerance / SNAP))
         ox, oy = (round((body[i] + body[i + 2]) / 2 / grid) * grid for i in (0, 1))
         at = np.array([ox, oy], dtype=float)
 
@@ -509,7 +604,7 @@ class View:
             batch("lines", key, segments.reshape(-1, 2))
             more = _snap(points.get(key, np.zeros((0, 2))) - at, grid)
             batch("points", key, _unique_rows(np.concatenate([more, dots])))
-            batch("fills", key, _snap(_triangles(rec.fills.get(key, []), at), grid).reshape(-1, 2))
+            batch("fills", key, _snap(_triangles(fills.get(key, []), at), grid).reshape(-1, 2))
 
         text_xy = np.array([t[1:9] for t in texts], dtype=float).reshape(-1, 8)
         text_xy[:, :2] -= at
@@ -519,8 +614,9 @@ class View:
         arrays["styles"] = np.array([style[t[9]] for t in texts], dtype="<u2").reshape(-1, 2)
         layers = [{"name": n, "color": _hex(layer_colours.get(n)), "count": rec.counts.get(n, 0), "off": n in hidden}
                   for n in names]
-        head = {"format": VIEW_VERSION, "origin": [ox, oy], "grid": grid, "bounds": [round(v, 3) for v in bounds],
-                "body": [round(v, 3) for v in body], "background": rec.background[:7], "units": units,
+        places = 4 if part is not None else 3  # (a tenth of a millimetre, in metres; of a unit, in units)
+        head = {"format": VIEW_FORMAT, "origin": [ox, oy], "grid": grid, "bounds": [round(v, places) for v in bounds],
+                "body": [round(v, places) for v in body], "clip": clip, "background": rec.background[:7], "units": units,
                 "layers": layers, "empty_layers": max(0, layers_in_drawing - len(names)), "colors": colours,
                 "batches": batches, "words": [t[0] for t in texts],
                 "counts": {"lines": len(arrays["lines"]) // 2, "triangles": len(arrays["fills"]) // 3,
@@ -557,14 +653,90 @@ def read_view(data: bytes) -> tuple[dict, dict[str, np.ndarray]]:
     (n,) = struct.unpack("<I", raw[4:8])
     head = json.loads(raw[8:8 + n])
     rest = memoryview(raw)[8 + n:]
-    shapes = {"lines": ("<f4", 2), "fills": ("<f4", 2), "points": ("<f4", 2), "texts": ("<f4", 8), "styles": ("<u2", 2)}
     arrays = {}
-    for name, (kind, width) in shapes.items():
+    for name, (kind, width) in SHAPES.items():
         at, size = head["arrays"][name]
         item = np.dtype(kind).itemsize
         planes = np.frombuffer(rest[at:at + size], dtype=np.uint8).reshape(item, -1)
         arrays[name] = np.frombuffer(planes.T.tobytes(), dtype=kind).reshape(-1, width)
     return head, arrays
+
+
+def read_view_head(data: bytes) -> dict:
+    """A view's head alone (read_view's), unzipping no more of it than the head: a
+    reader that wants its layers or where it lies need not open its arrays."""
+    import zlib
+
+    unzip, raw = zlib.decompressobj(16 + zlib.MAX_WBITS), b""
+    for at in range(0, len(data), 1 << 16):
+        raw += unzip.decompress(data[at:at + (1 << 16)])
+        if len(raw) >= 8 and raw[:4] == MAGIC and len(raw) >= 8 + struct.unpack("<I", raw[4:8])[0]:
+            break
+    if raw[:4] != MAGIC or len(raw) < 8:
+        raise ValueError("not a drawing's view")
+    (n,) = struct.unpack("<I", raw[4:8])
+    return json.loads(raw[8:8 + n])
+
+
+SHAPES = {"lines": ("<f4", 2), "fills": ("<f4", 2), "points": ("<f4", 2), "texts": ("<f4", 8), "styles": ("<u2", 2)}
+BATCH_KINDS = {"lines": 2, "fills": 3, "points": 1}  # points a line, a triangle, a point
+
+
+def view_problem(data: bytes, max_bytes: int = 1 << 30) -> str | None:
+    """What is wrong with a view's file as spec/DRAWING-VIEW.md has it, or None: gzip, its
+    MAGIC, a head of JSON of a format this Studio reads, each array where the head says
+    and whole, each batch within its array, a text for each word and style, layers and
+    colours that are there. At most ``max_bytes`` once unzipped."""
+    import zlib
+
+    try:
+        unzip = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        raw = unzip.decompress(data, max_bytes)
+        if unzip.unconsumed_tail:
+            return f"larger than {max_bytes:,} bytes unzipped"
+    except zlib.error as e:
+        return f"not gzip: {e}"
+    if raw[:4] != MAGIC:
+        return "not a drawing's view (no SPDV at its start)"
+    if len(raw) < 8:
+        return "cut short"
+    (n,) = struct.unpack("<I", raw[4:8])
+    if 8 + n > len(raw):
+        return "its head is cut short"
+    try:
+        head = json.loads(raw[8:8 + n])
+    except ValueError as e:
+        return f"its head is not JSON: {e}"
+    if not isinstance(head, dict):
+        return "its head is not an object"
+    if head.get("format") != VIEW_FORMAT:
+        return f"format {head.get('format')!r}: this reader reads {VIEW_FORMAT}"
+    rest = len(raw) - 8 - n
+    try:
+        counts = {}
+        for name, (kind, width) in SHAPES.items():
+            at, size = head["arrays"][name]
+            item = np.dtype(kind).itemsize * width
+            if not (isinstance(at, int) and isinstance(size, int) and 0 <= at and 0 <= size and at + size <= rest):
+                return f"its {name} are not where its head says"
+            if size % item:
+                return f"its {name} are not whole"
+            counts[name] = size // item
+        words, layers, colours = head["words"], head["layers"], head["colors"]
+        if not (counts["texts"] == counts["styles"] == len(words)):
+            return f"{counts['texts']} texts, {counts['styles']} styles and {len(words)} words: not one each"
+        for b in head["batches"]:
+            first, count, per = b["first"], b["count"], BATCH_KINDS[b["kind"]]
+            if not (0 <= first and 0 <= count and first + count <= counts[b["kind"]] and count % per == 0):
+                return f"a batch of {b['kind']} is not within them"
+            if not (0 <= b["layer"] < len(layers) and 0 <= b["color"] < len(colours)):
+                return "a batch is of a layer or colour it does not have"
+        for k in ("origin", "bounds", "body"):
+            if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in head[k]):
+                return f"its {k} is not numbers"
+    except (KeyError, TypeError, ValueError) as e:
+        return f"its head lacks {e}"
+    return None
 
 
 # ---- packing ---------------------------------------------------------------------------

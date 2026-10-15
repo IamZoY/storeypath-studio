@@ -365,7 +365,7 @@ replace.
 
 ### Export: one building per package
 
-*Export package* writes the package (`.storeypath`, [format 0.9](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md)) of
+*Export package* writes the package (`.storeypath`, [format 0.10.1](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md)) of
 one building, chosen from the list: its floors, spaces, zones, doors, windows and
 openings, its items and their types (each once: those its items use, or, chosen
 beside *Export package*, every item type of the Studio, for another system to take
@@ -380,6 +380,18 @@ with links to view it as a *2D plan*, in *3D*, or as *Rooms by type*.
   map changes nothing in it, and the change list says only that the building moved.
 - Each floor is also built in 3D ahead of time, so a slow machine shows it without
   building it (this takes Node.js, which the Studio image holds).
+- **Include the drawings** (beside *Export package*, off unless you tick it, for that
+  export alone): each floor's drawing goes in the package too, as it is drawn: everything
+  on the floor's part of its drawing, every layer and every text (notes, dimensions,
+  names on rooms), in the floor's own place, so that whoever reads the package can show
+  the real drawing under the plan (the 2D plan's *Drawing*). Whoever receives the
+  package sees all of it. Studio took the title blocks and private texts it found out of
+  the drawing when it was added (unless someone kept them, or it was added as sent), and
+  leaves out once more any text with a phone number, an email, a web address or a
+  permit, plot or licence number, and takes names with a title (Mr, Dr, Eng …) out of
+  their texts; the rest goes. A big floor takes about half a minute to draw the first
+  time (the export says which it is drawing), and is kept, so the next export with them
+  is quick. The project's history says the export carried its drawings.
 
 ### Sending a project to another Studio
 

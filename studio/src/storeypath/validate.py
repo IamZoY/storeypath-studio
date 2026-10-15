@@ -15,8 +15,8 @@ from pydantic import BaseModel, ValidationError
 from .catalogue import Catalogue
 from .models import model_problem
 from .ids import LEVELS, MAX_ID_LENGTH, is_item_id, is_legacy_item_id, parse_id
-from .package import (ASSET_IDS_FROM, COLLECTIONS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM, Changes,
-                      FeatureCollection, ItemFeature, Manifest, Navigation, version_problem, version_tuple)
+from .package import (ASSET_IDS_FROM, COLLECTIONS, DRAWINGS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM,
+                      Changes, FeatureCollection, ItemFeature, Manifest, Navigation, version_problem, version_tuple)
 
 KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
               "space": "object", "zone": "object", "opening": "object"}
@@ -260,6 +260,34 @@ def validate_package(path: str | Path) -> list[str]:
                     pairs.add(pair)
                     if len(e.path) < 2:
                         errors.append(f"{name}: the edge from {e.from_} to {e.to} has no line")
+
+        # Drawings (format 0.10.1): each floor's drawing as drawn, when the export carried
+        # them: named by its floor's source, in the folder the manifest lists, a view of a
+        # format this reader reads, in metres (the building's own frame)
+        views = {s.view: s.floor_id for s in manifest.sources if s.view is not None}
+        folder = manifest.files.get("drawings")
+        if views and folder != DRAWINGS:
+            errors.append(f"the manifest's sources name drawings, but its files list {folder!r} for them, "
+                          f"not {DRAWINGS!r}")
+        elif folder is not None and not views:
+            errors.append(f"the manifest lists {folder} but no floor's source names a drawing in it")
+        if views:
+            from .drawview import read_view_head, view_problem
+        for view, floor in sorted(views.items()):
+            if view != f"{DRAWINGS}{floor}.view":
+                errors.append(f"{view}: floor {floor}'s drawing is {DRAWINGS}{floor}.view")
+            if ids.get(floor) != "floor":
+                errors.append(f"{view}: the drawing of floor {floor}, which is not in the package")
+            if view not in names:
+                errors.append(f"missing file {view}")
+                continue
+            data = z.read(view)
+            if (why := view_problem(data)) is not None:
+                errors.append(f"{view}: {why}")
+            elif (units := read_view_head(data).get("units")) != "m":
+                errors.append(f"{view}: in {units!r}, not metres of the building's own frame")
+        for name in sorted(n for n in names if n.startswith(DRAWINGS) and n != DRAWINGS and n not in views):
+            errors.append(f"{name}: no floor's source names it")
 
         unknown: set[str] = set()
         name = file_of("objects")

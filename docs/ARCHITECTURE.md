@@ -28,15 +28,16 @@ The decisions behind it: [Studio 2's design](DESIGN-STUDIO-2.md).
 The format and everything that reads it are [StoreyPath Viewer](https://github.com/StoreyPath/storeypath-viewer), a repository
 of its own that Studio pins as a submodule (`storeypath-viewer/`):
 
-- **The package format**: [spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md) (format 0.9) and JSON
+- **The package format**: [spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md) (format 0.10.1) and JSON
   Schemas in [spec/schema](https://github.com/StoreyPath/storeypath-viewer/tree/main/spec/schema): one building per package, plain JSON,
   GeoJSON and CSV in a ZIP, readable without our code. Each export says what was
   added, changed and retired; `objects.csv` lists every ID with its parents;
   `navigation.json` is the building's walking network, with the rule every reader
-  finds the same way by.
+  finds the same way by. A package exported with its drawings carries each floor's
+  drawing as drawn ([spec/DRAWING-VIEW.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/DRAWING-VIEW.md)).
 - **Go**: [go/](https://github.com/StoreyPath/storeypath-viewer/tree/main/go) (`github.com/storeypath/storeypath-viewer/go`) reads and
   validates packages, and finds the way in a building, standard library only.
-- **Viewers** to embed: [viewer/](https://github.com/StoreyPath/storeypath-viewer/tree/main/viewer) (the 3D world, a map view) and
+- **Viewers** to embed: [viewer/](https://github.com/StoreyPath/storeypath-viewer/tree/main/viewer) (the 3D world, a map view, a drawing as drawn: Studio's drawing viewer is it) and
   [viewer/svg](https://github.com/StoreyPath/storeypath-viewer/tree/main/viewer/svg) (a 2D plan with no WebGL, for any machine).
 - **Conformance**: [spec/conformance](https://github.com/StoreyPath/storeypath-viewer/tree/main/spec/conformance) holds packages that every
   reader must read the same way, with items, a building moved on the map and a desk

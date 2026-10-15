@@ -139,6 +139,27 @@ def test_the_command_line_exports_with_the_studios_item_types(tmp_path):
     assert sorted(p.name for p in out.parent.iterdir()) == ["hq.storeypath"]
 
 
+def test_the_command_line_exports_the_drawings_only_when_asked(tmp_path):
+    """--drawings: each floor's part of its drawing in the package too (format 0.10.1), from
+    the drawings beside the project's file; without it, none."""
+    import zipfile
+
+    from storeypath.validate import validate_package
+
+    ws_path, _ = _demo_with_a_studio_type(tmp_path)
+    floors = [fid for _, b, f, fid in Workspace.load(ws_path).iter_floors() if b.code == "HQ" and f.source]
+    drawn, plain = tmp_path / "out" / "drawn.storeypath", tmp_path / "out" / "plain.storeypath"
+    result = CliRunner().invoke(app, ["export", str(ws_path), "-o", str(drawn), "--building", "HQ", "--drawings"])
+    assert result.exit_code == 0, result.output
+    assert f"drawings: {len(floors)} of {len(floors)} floor(s)" in result.output and len(floors) >= 2
+    result = CliRunner().invoke(app, ["export", str(ws_path), "-o", str(plain), "--building", "HQ"])
+    assert result.exit_code == 0, result.output
+    assert validate_package(drawn) == [] and validate_package(plain) == []
+    with zipfile.ZipFile(drawn) as z, zipfile.ZipFile(plain) as y:
+        assert sorted(n for n in z.namelist() if n.startswith("drawings/")) == sorted(f"drawings/{f}.view" for f in floors)
+        assert not [n for n in y.namelist() if n.startswith("drawings/")]
+
+
 def test_the_command_line_keeps_no_invalid_package(tmp_path, monkeypatch):
     ws_path, before = _demo_with_a_studio_type(tmp_path)
     out = tmp_path / "out" / "hq.storeypath"

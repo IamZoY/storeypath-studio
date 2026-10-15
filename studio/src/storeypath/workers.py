@@ -2,7 +2,8 @@
 so that reads use the machine's cores: Python runs one thread of Studio's code at a time,
 and a floor's read is mostly that. Two people drawing on two floors are read side by
 side, and so are a building's floors read together. A drawing drawn whole for the
-drawing viewer (drawview.py) is drawn in one too: it takes as long as a read.
+drawing viewer (drawview.py) is drawn in one too: it takes as long as a read; and so are
+the floors' parts of their drawings a package carries.
 
 Each floor is read by the same worker every time (by its ID): what a read keeps of the
 floor's drawing and of its last read (convert.py) is that worker's, ready for the next.
@@ -66,6 +67,13 @@ class ReadWorkers:
         free = [w for w in self._workers if not w._lock.locked()]
         worker = free[zlib.crc32(key.encode()) % len(free)] if free else self._of(key)
         return worker.run({"do": "view", **task}, say, lambda: False)
+
+    def floor_views(self, key: str, task: dict, say: Callable[[str], None] | None = None) -> list[dict]:
+        """drawview.write_floor_views in a worker (``task``: the drawing's file, ``drawing``,
+        and its floors' parts, ``floors``), as view: what each holds, in numbers."""
+        free = [w for w in self._workers if not w._lock.locked()]
+        worker = free[zlib.crc32(key.encode()) % len(free)] if free else self._of(key)
+        return worker.run({"do": "floor views", **task}, say, lambda: False)
 
     def close(self) -> None:
         for w in self._workers:
@@ -154,6 +162,10 @@ def _do(task: dict, models: "_Models", conn, stop):
         from .drawview import write_view
 
         return write_view(task["drawing"], task["out"], say=lambda line: conn.send(("say", line)))
+    if task["do"] == "floor views":  # floors' parts of a drawing, as a package carries them
+        from .drawview import write_floor_views
+
+        return write_floor_views(task["drawing"], task["floors"], say=lambda line: conn.send(("say", line)))
     ws = Workspace.model_validate_json(task["ws"])
     if task["do"] == "keep":
         return keep_a_read(ws, task["floor_id"], task["folder"], task["reads"])

@@ -1158,11 +1158,16 @@ def export(
     item_types: Annotated[str, typer.Option(
         "--item-types", help="its catalogue: 'used' (the item types its items use, each once) or 'all' "
                              "(the whole catalogue, for another system to choose which to take)")] = "used",
+    drawings: Annotated[bool, typer.Option(
+        "--drawings", help="each floor's drawing in the package too, as drawn: every layer and text of its part "
+                           "of its drawing, to whoever receives the package (format 0.10.1)")] = False,
 ):
     """Write the exchange package of one building, entered as an export only when it is
     valid. Its items are of the item types of the Studio data folder the project is in
-    (its catalogue.json), else of the built-in ones."""
+    (its catalogue.json), else of the built-in ones. With --drawings, each floor's part of
+    its drawing goes in it too (the drawings beside the project's file)."""
     from . import catalogue as catalogues
+    from .export import FloorViews
     from .server import write_valid_package
 
     ws = _load(workspace)
@@ -1176,8 +1181,9 @@ def export(
     held = (data / catalogues.FILE_NAME).is_file()
     cat = catalogues.load(data) if held else catalogues.default_catalogue()
     try:
+        views = FloorViews(lambda src: workspace.parent / src.path, say=typer.echo) if drawings else None
         manifest = write_valid_package(ws, workspace, output, building, cat, typer.echo, item_types=item_types,
-                                       models=catalogues.models_in(data) if held else None)
+                                       models=catalogues.models_in(data) if held else None, drawings=views)
     except (ExportError, ValueError) as e:
         _fail(str(e))
     counts = ", ".join(f"{n} {k}" for k, n in manifest.counts.items())

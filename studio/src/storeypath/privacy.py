@@ -187,7 +187,7 @@ def make_private(doc, reader=None, say=None, choices: Choices | None = None) -> 
             elif TITLED_NAME.search(text):
                 names = [m.group(0).strip() for m in TITLED_NAME.finditer(text)]
                 if choices.take(f"name {said}", "name", said, names):
-                    rest = " ".join(TITLED_NAME.sub(" ", text).split()).strip(" -:,.")
+                    rest = _without_names(text)
                     if rest:  # "CONSULTANT DR. KHALID": the room's name stays
                         if e.dxftype() == "MTEXT":
                             e.text = rest
@@ -213,6 +213,25 @@ def make_private(doc, reader=None, say=None, choices: Choices | None = None) -> 
     if reader is not None and (choices.model_found is not None or reader.available()):
         _read_by_model(doc, reader, report, say, choices)
     return report
+
+
+def text_left(text: str) -> str | None:
+    """What of a text the rules above leave, as make_private leaves it with nothing kept
+    by a person: None for one with a contact or a registration number (it goes whole),
+    else the text with the names with a title taken out (None when nothing is left). For
+    the texts a package carries of its drawings (drawview.write_floor_views): a drawing
+    may have been kept as it was sent, or with what a person chose to keep for Studio's
+    own use, and a package goes further."""
+    if PRIVATE_TEXT.search(text):
+        return None
+    if TITLED_NAME.search(text):
+        return _without_names(text) or None
+    return text
+
+
+def _without_names(text: str) -> str:
+    """A text without the names with a title in it ("OFFICE MR. JOHN DOE": "OFFICE")."""
+    return " ".join(TITLED_NAME.sub(" ", text).split()).strip(" -:,.")
 
 
 def _read_by_model(doc, reader, report: PrivacyReport, say=None, choices: Choices | None = None) -> None:

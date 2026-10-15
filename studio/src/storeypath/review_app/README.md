@@ -30,11 +30,15 @@ in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`
 `drawview.js` shows a drawing whole, as its own program draws it, over the project's page:
 *View* beside each drawing (the parts read as floors outlined and named), and *See the
 whole drawing* over the plans Find plans found (each outlined with its card's number; one
-clicked there is ticked to add). Studio draws it once on the server (`drawview.py`, which
-says how the file it sends is made); here its lines, fills and points go to WebGL as they
-come (three.js, a batch a layer and colour), and its texts are written by the browser on a
-canvas over them, each as wide as the drawing sets it. CAD or Print, the layers shown and
-hidden, the pointer in metres; drag, the wheel, a pinch, − + and Fit (F or 0), Esc to close.
+clicked there is ticked to add). Studio draws it once on the server (`drawview.py`; the
+file is StoreyPath Viewer's drawing view, `spec/DRAWING-VIEW.md`). The viewer's
+`DrawingView` (`/viewer/src/drawing/drawing.js`, which a package's readers use too) draws
+it: its lines, fills and points go to WebGL as they come (three.js, a batch a layer and
+colour), and its texts are written by the browser on a canvas over them, each as wide as
+the drawing sets it; it moves and zooms, outlines the marks and says what is clicked.
+`drawview.js` is the dialog round it: CAD or Print (remembered), the layers panel, the
+marks' legend, the pointer in metres and a scale; drag, the wheel, a pinch, − + and Fit
+(F or 0), Esc to close.
 
 ## What Review is made of
 

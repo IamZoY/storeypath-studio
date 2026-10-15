@@ -1413,15 +1413,24 @@ function exportCard(code, p) {
     title: "The item types the package carries, each once: what another system reads its items by, and may take into its own" },
   el("option", { value: "used" }, "Item types its items use"),
   el("option", { value: "all" }, "Every item type"));
+  // each floor's drawing too: chosen for each export, never by default (all of a drawing goes with it)
+  const drawings = el("input", { type: "checkbox", "data-testid": "export-drawings" });
+  const withDrawings = el("label", { class: "check export-drawings", title: "Each floor's drawing goes in the package as it is drawn: everything on "
+    + "its part of the drawing, every layer and every text (notes, names, numbers), to whoever receives the package. Studio "
+    + "took out the title blocks and private texts it found when the drawing was added, and leaves out phone numbers, emails "
+    + "and names with a title once more; the rest goes. Readers show it under the plan. Big floors take half a minute each." },
+  drawings, " Include the drawings");
   const button = el("button", { class: "primary", type: "button", disabled: !buildings.length, onclick: async () => {
     try {
-      const r = await runJob(api(`projects/${code}/export`, { building: what.value, item_types: types.value }));
+      const r = await runJob(api(`projects/${code}/export`, { building: what.value, item_types: types.value,
+        drawings: drawings.checked }));
       // downloaded at once; its copy stays in the list, the package as it was sent
       const a = el("a", { href: `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(r.file)}`, download: r.file });
       document.body.append(a);
       a.click();
       a.remove();
-      toast(`Exported ${r.file}: downloading it. A copy stays in the list below`, false, 8000);
+      toast(`Exported ${r.file}${r.drawings !== undefined ? `, with ${r.drawings} floor${r.drawings === 1 ? "" : "s"}' drawings` : ""}: `
+        + "downloading it. A copy stays in the list below", false, 8000);
       projectPage(code);
     } catch (e) {
       toast(e.message, true);
@@ -1438,8 +1447,9 @@ function exportCard(code, p) {
   return el("section", { class: "card" },
     el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), onProject(p, "view") ? send : null,
       onProject(p, "view") ? sendSealed : null,
-      buildings.length > 1 ? what : null, buildings.length ? types : null, buildings.length ? button : null),
-    el("p", { class: "muted small" }, "A package (.storeypath) holds one building: its floors, spaces, doors and items with their IDs, ready for the viewer and for any other system, which leaves the project's other buildings as they are. Every export lists what changed in that building since it was last exported; moving a building on the map changes nothing in it. It carries the item types its items use, each once (or every item type of this Studio), so another system knows them and may take them into its own. Download project gives one file (.storeypath-project) to send to someone who continues the project in their Studio: they open it on their Projects page."),
+      buildings.length > 1 ? what : null, buildings.length ? types : null, buildings.length ? withDrawings : null,
+      buildings.length ? button : null),
+    el("p", { class: "muted small" }, "A package (.storeypath) holds one building: its floors, spaces, doors and items with their IDs, ready for the viewer and for any other system, which leaves the project's other buildings as they are. Every export lists what changed in that building since it was last exported; moving a building on the map changes nothing in it. It carries the item types its items use, each once (or every item type of this Studio), so another system knows them and may take them into its own. With Include the drawings, it carries each floor's drawing as drawn too, every layer and text, for readers to show under the plan: only when you tick it. Download project gives one file (.storeypath-project) to send to someone who continues the project in their Studio: they open it on their Projects page."),
     p.exports.length ? el("p", { class: "muted small" }, ...(p.exports_folder // (where the server keeps them: told to admins)
       ? ["Saved in ", el("code", {}, p.exports_folder), ", newest first:"] : ["Newest first:"])) : null,
     p.exports.length ? el("ul", { class: "exports" }, p.exports.map((f) => {

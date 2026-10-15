@@ -72,7 +72,8 @@ floors, spaces, corrections and items, the drawings as sent and every package as
 was exported — the catalogue of item types, the accounts, who each project is shared
 with, the audit log and the history of every change. The data folder holds only
 Studio's certificate (`tls/`) and its cache (`cache/`: prints of floors, drawings drawn
-whole for the drawing viewer, and drawings put in files while a step reads them), both
+whole for the drawing viewer, floors' parts of their drawings for packages that carry them,
+and drawings put in files while a step reads them), both
 made again when gone. A data folder of an older Studio (`<code>/<code>.spproj` with its
 drawings and exports, `catalogue.json`, `studio.db`) is brought into the database at the
 first start, or with `storeypath db import --data <folder>`; nothing in it is changed or
@@ -227,13 +228,13 @@ log).
 | `POST …/owner {user}`, `GET admin/users`, `POST admin/users…`, `GET admin/audit` | admin (a new owner: the one before keeps share on the whole project) |
 | `GET users` | someone who may share something, or an admin: active users' id, username and name |
 | `PUT …/drawings/<name>`, `POST …/incoming/…`, `GET …/drawings/<name>/words`, `POST …/drawings/<name>/plans` | edit on the project (a drawing is the project's, and may hold several floors) |
-| `POST …/drawings/<name>/view`, `GET …/drawings/<name>/view` | edit on the project, as its words: the drawing drawn whole for the drawing viewer, every layer as its own program shows it ([drawview.py](src/storeypath/drawview.py)). The POST answers where to get it (`{drawing, key, bytes, url}`) once it is made (once for the drawing's content, kept in Studio's cache), else the job that makes it (in a read worker when there are any: a big floor's takes a minute, never while a request waits); the GET sends it (`application/gzip`, as it is kept: never compressed again on the way), 404 until it is made |
+| `POST …/drawings/<name>/view`, `GET …/drawings/<name>/view` | edit on the project, as its words: the drawing drawn whole for the drawing viewer, every layer as its own program shows it ([drawview.py](src/storeypath/drawview.py); a drawing view, StoreyPath Viewer's `spec/DRAWING-VIEW.md`, which the page draws with the viewer's `DrawingView`). The POST answers where to get it (`{drawing, key, bytes, url}`) once it is made (once for the drawing's content, kept in Studio's cache), else the job that makes it (in a read worker when there are any: a big floor's takes a minute, never while a request waits); the GET sends it (`application/gzip`, as it is kept: never compressed again on the way), 404 until it is made |
 | `POST …/floors` (add floors) | view on the project (the drawing is the project's) and edit on each building they go into (on the project for a new building) |
 | `POST …/convert` | edit on the project; with `floor`, edit on that floor |
 | `POST …/buildings/<id>/site`, `…/placement` | edit on the building |
 | `POST …/locations/<id>/arrange`, `…/placement` | edit on the project |
 | `GET …/buildings/<id>/navigation[?from&to&accessible]` | view on the whole building: its walking network, or the way between two places ([Navigation](#navigation)) |
-| `POST …/export {building}` | edit on that building |
+| `POST …/export {building, item_types?, drawings?}` | edit on that building. `drawings: true` (off unless sent): each floor's drawing goes in the package too, as drawn, every layer and text of its part of its drawing (format 0.10.1, `drawings/<floor-id>.view`; its texts as the privacy rules leave them); each is drawn once and kept in Studio's cache, in a read worker when there are any, before the export takes the project; the job says each, and the export's history entry says it carried them |
 | `GET …/exports/<file>`; `POST …/exports/<file>` `{password}` (the package encrypted with it: [SEALED-FILES.md](../docs/SEALED-FILES.md)) | view on the building it holds (on the project, for one no export entered) |
 | `GET …/preview.storeypath[?building]` | any access: built with their floors alone. It comes with an `ETag`, and asked again with it (`If-None-Match`) while nothing it holds changed, it is answered 304 and nothing is sent; Studio keeps the packages it made the same way |
 | `GET …/project.storeypath-project`; `POST …/project.storeypath-project` `{password}` (encrypted) | view on the project |
@@ -346,7 +347,7 @@ what they may see.
 | `restore FILE` | put a backup into an empty database (an older Studio's `.tar.gz`: its data folder brought in); an encrypted one asks for its password |
 | `seal FILE`, `unseal FILE.enc` | encrypt any file with a password, or open one ([SEALED-FILES.md](../docs/SEALED-FILES.md)) |
 | `db url` · `db migrate` · `db import --data DIR` | where Studio's database is; bring its schema up to date; bring an older Studio's data folder in (projects, drawings, packages, item types, studio.db), once |
-| `export FILE -o OUT` | write one building's package (`--building`, by its ID or code; may be left out when the project has one), entered as an export only when valid |
+| `export FILE -o OUT` | write one building's package (`--building`, by its ID or code; may be left out when the project has one), entered as an export only when valid; `--item-types used\|all`; `--drawings`: each floor's drawing in it too (format 0.10.1), from the drawings beside the project's file |
 | `validate PACKAGE…` | check a package against the format; several, together too (the same item ID in packages of two projects is refused) |
 | `item-id TEXT…` | an item's ID as a person typed it (`7k2q xm9f 4dp`), as it is written (`7K2Q-XM9F-4DP`); fails when it is not one |
 | `private DRAWING OUT.dxf` | copy a drawing without its private information (see below) |
@@ -479,6 +480,15 @@ viewer would build it, and puts it in the package (`world/<floor-id>.glb`; see
 building without building it. That takes Node.js (20.6 or newer; the container has
 it): `node` on the `PATH`, or `STOREYPATH_NODE` set to it (empty: never). Without it
 the package is exported as before, and the export says why.
+
+A package carries what Studio read, never the drawings themselves, unless the export is
+asked to (*Include the drawings*, `export --drawings`, `drawings: true`): then each
+floor's part of its drawing goes in it as drawn, every layer and text, cut to the floor's
+region and in the building's own metres, so that a reader shows the real drawing under the
+plan (*Drawings* in FORMAT.md; the file is a drawing view, `spec/DRAWING-VIEW.md`). Its
+texts are as the privacy rules leave them once more (a text with a phone number, an email,
+a web address, a permit, plot or licence number is left out; a name with a title is taken
+out of its text); the rest goes to whoever receives the package.
 
 Corrections are kept in the workspace and re-applied on every conversion. When a
 revised drawing is converted, each space is matched to its previous version by room

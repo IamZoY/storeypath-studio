@@ -46,8 +46,10 @@ each call needs is checked first in route() (the table is in studio/README.md):
     POST /api/projects/<code>/floors {drawing, units, plans: [...]}  → job: add, align, convert
     POST /api/projects/<code>/convert          → job
     POST /api/projects/<code>/buildings/<id>/placement {lat, lon, bearing, x?, y?}
-    POST /api/projects/<code>/export {building} → job: that building's package (one
-                                               building per package)
+    POST /api/projects/<code>/export {building, item_types?, drawings?} → job: that
+                                               building's package (one building per
+                                               package); drawings: true, each floor's
+                                               drawing in it too (format 0.10.1)
     GET  /api/projects/<code>/exports/<file>
     GET  /api/projects/<code>/preview.storeypath[?building=<id>]   the project (or one
                                                building) as it is now, for Studio's viewers
@@ -1449,15 +1451,30 @@ class Studio:
         left out when the project has one building): made from the project as it is,
         entered in its export history, and kept as sent (its bytes, in the database).
         ``item_types``: "used" (its catalogue the types its items use) or "all" (the
-        whole catalogue)."""
+        whole catalogue). ``drawings``: true, each floor's drawing goes in it too, as
+        drawn, every layer and text (format 0.10.1: floor_views), and its history says so."""
         from .export import ITEM_TYPES
 
         building = self.export_building(code, body)
         item_types = (body or {}).get("item_types") or "used"
         if item_types not in ITEM_TYPES:
             raise ValueError(f"item_types: {' or '.join(ITEM_TYPES)}")
+        drawings = (body or {}).get("drawings", False)
+        if not isinstance(drawings, bool):
+            raise ValueError("drawings: true or false")
 
         def run(job: Job):
+            views = None
+            if drawings:
+                # each floor's drawing drawn first (a big floor's takes half a minute), and
+                # kept: not while the project's other steps wait for the export
+                floors = [(f"{building}-{f.code}", f.source) for f in self.store.current(code).building(building).floors
+                          if f.source]
+                job.say(f"the drawings of {len(floors)} floor(s): each drawn, unless it was before")
+                self.floor_views(code, floors, job.say)
+
+                def views(floors):  # (export_package's drawings: those made, or one changed since made now)
+                    return [path.read_bytes() if path else None for path in self.floor_views(code, floors, job.say)]
             with self._changing(code):
                 ws = self.store.load(code)
                 seq = (ws.exports[-1].sequence + 1) if ws.exports else 1  # a project opened from export 5 goes on at 6
@@ -1466,17 +1483,63 @@ class Studio:
                 job.say(f"writing {name}")
                 self.work.mkdir(parents=True, exist_ok=True)
                 manifest, data = make_valid_package(ws, name, building, self.catalogue(), job.say, folder=self.work,
-                                                    item_types=item_types, models=self.store.model_file)
+                                                    item_types=item_types, models=self.store.model_file,
+                                                    drawings=views)
+                drawn = sum(1 for s in manifest.sources if s.view)  # (the floors whose drawings it carries)
                 self.store.save(ws, by=by, part="building", kind="export", targets=[building],
-                                more={"file": name, "sequence": manifest.export.sequence}, export_bytes={name: data})
+                                more={"file": name, "sequence": manifest.export.sequence,
+                                      **({"drawings": drawn} if drawings else {})}, export_bytes={name: data})
             job.say("valid: " + ", ".join(f"{n} {k}" for k, n in manifest.counts.items()))
             loose = [b for b, p in manifest.placements.items() if not p.placed]
             if loose:
                 job.say("not on the map yet (shapes are true, the position is not): " + ", ".join(loose))
-            return {"file": name, "counts": manifest.counts}
+            return {"file": name, "counts": manifest.counts, **({"drawings": drawn} if drawings else {})}
 
         return self.jobs.submit("Exporting", run, project=code, scope=("building", building), user=_uid(by),
                                 kind="export", about=building)
+
+    def floor_views(self, code: str, floors: list, say) -> list[Path | None]:
+        """Each floor's part of its drawing as a package carries it (``floors``: [(floor
+        ID, its SourceDrawing)]; drawview.write_floor_views), as a file kept in the cache
+        by the drawing's content and the part, made once as a drawing drawn whole is
+        (view): in a read worker when there are any, the floors of one drawing together.
+        None for a floor whose drawing is not here."""
+        out: list[Path | None] = [None] * len(floors)
+        todo: dict[str, list[tuple[int, dict]]] = {}  # a drawing → its floors to draw: (where, the part)
+        for i, (_, src) in enumerate(floors):
+            name = drawing_name(src.path)
+            info = self.store.drawing(code, name)
+            if info is None:
+                continue
+            path = self._view_path(code, self._floor_view_key(info.get("sha256") or "", src))
+            out[i] = path
+            if path.is_file():
+                path.touch()  # (the latest used are kept: _prune_views)
+            else:
+                todo.setdefault(name, []).append((i, {"out": str(path), "region": src.region, "offset": src.offset,
+                                                      "units": src.units}))
+        for name, parts in todo.items():
+            say(f"drawing {', '.join(floors[i][0].rsplit('-', 1)[-1] for i, _ in parts)} from {name}")
+            with self._files(code, [name]) as folder:
+                task = {"drawing": str(folder / "drawings" / name), "floors": [part for _, part in parts]}
+                if self.readers is not None:
+                    self.readers.floor_views(name, task, say)
+                else:
+                    from .drawview import write_floor_views
+                    from .vision import _DRAWING
+
+                    write_floor_views(task["drawing"], task["floors"], say=say, lock=_DRAWING)
+            for i, _ in parts:
+                self._prune_views(code, keep=out[i])
+        return out
+
+    def _floor_view_key(self, sha: str, src) -> str:
+        """A floor's part of a drawing in the cache (floor_views): the drawing's content,
+        the part, and how Studio draws it."""
+        from .drawview import VIEW_VERSION
+
+        part = hashlib.sha1(json.dumps(["floor", src.region, src.offset, src.units]).encode()).hexdigest()[:12]
+        return f"{sha[:32]}-{part}-{VIEW_VERSION}"
 
     def project_file(self, code: str) -> "Download":
         """The project as one file to send (*.storeypath-project): its workspace,
@@ -1905,11 +1968,12 @@ def package_buildings(ws: Workspace, name: str) -> list[str] | None:
 
 
 def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue, say, folder=None,
-                       item_types: str = "used", models=None):
+                       item_types: str = "used", models=None, drawings=None):
     """A building's package made (in a folder of its own, removed after) and checked; when
     it is valid, entered as an export in ``ws`` (not saved) and given back with its
     bytes: (manifest, bytes). One that is not valid is not entered (its number is not
-    used up): ValueError, saying what is wrong. ``item_types``, ``models``: export_package's."""
+    used up): ValueError, saying what is wrong. ``item_types``, ``models``, ``drawings``:
+    export_package's."""
     import shutil
     import tempfile
 
@@ -1921,7 +1985,7 @@ def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue
         part = where / name  # the name it is entered under
         before = list(ws.exports)
         manifest = export_package(ws, part, building=building, say=say, catalogue=catalogue, item_types=item_types,
-                                  models=models)
+                                  models=models, drawings=drawings)
         errors = validate_package(part)
         for e in errors:
             say("invalid: " + e)
@@ -1934,13 +1998,13 @@ def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue
 
 
 def write_valid_package(ws: Workspace, ws_path: Path, out: Path, building: str | None, catalogue, say,
-                        item_types: str = "used", models=None):
+                        item_types: str = "used", models=None, drawings=None):
     """A building's package written to ``out`` and entered as an export in the workspace
     (saved to ``ws_path``) only when it is valid (make_valid_package). Raises
     ValueError, saying what is wrong, when it is not. (The command line's: files.)"""
     out.parent.mkdir(parents=True, exist_ok=True)
     manifest, data = make_valid_package(ws, out.name, building, catalogue, say, folder=out.parent, item_types=item_types,
-                                        models=models)
+                                        models=models, drawings=drawings)
     part = out.with_name(f"{WRITING}{out.name}")
     part.write_bytes(data)
     part.replace(out)

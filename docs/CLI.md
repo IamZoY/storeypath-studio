@@ -16,6 +16,7 @@ storeypath convert house.spproj                              # read the drawings
 storeypath list house.spproj --review                        # what needs a look, and why
 storeypath export house.spproj --building VILLA -o villa.storeypath     # its item types: those its items use
 storeypath export house.spproj --building VILLA -o villa.storeypath --item-types all  # or every one
+storeypath export house.spproj --building VILLA -o villa.storeypath --drawings  # each floor's drawing in it too
 storeypath validate villa.storeypath
 ```
 
@@ -24,7 +25,7 @@ storeypath validate villa.storeypath
 | A project and its drawings | `new`, `save-as-new`, `add-location`, `add-building`, `add-floor` (`--view`, `--units`, `--region`), `views`, `align`, `levels`, `place` |
 | Reading them | `convert` (`--force`, `--no-model`, `--no-vision`, `--no-symbols`), `list` (`--review`), `fix`, `profiles` (the layer-mapping profiles) |
 | Checking and completing | `review` (the review editor, on this computer alone) |
-| Packages | `export --building` (`--item-types used\|all`), `validate`, `view`, `item-id`, `schema` |
+| Packages | `export --building` (`--item-types used\|all`, `--drawings`), `validate`, `view`, `item-id`, `schema` |
 | The web app | `serve` (`--data`, `--host`, `--port`, `--allowed-host`, `--cert`/`--key`, `--http`, `--secure-cookies`, `--trusted-proxy`) |
 | Accounts and the database | `users` (`add`, `list`, `passwd`, `disable`, `enable`, `role`), `backup`, `restore`, `db` (`url`, `migrate`, `import`) |
 | Privacy | `private` (a copy of a drawing without its private information), `words` (every word left in it) |

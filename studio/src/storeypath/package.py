@@ -17,7 +17,7 @@ from .catalogue import OLD_CATEGORIES, Category
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.10.0"
+FORMAT_VERSION = "0.10.1"
 FILE_EXTENSION = ".storeypath"
 # one building per package from 0.7 (before: a whole project, or a part of it)
 ONE_BUILDING_FROM = (0, 7)
@@ -25,6 +25,8 @@ ONE_BUILDING_FROM = (0, 7)
 ASSET_IDS_FROM = (0, 8)
 # rooms' floor and wall finishes from 0.9 (spec/finishes.json)
 FINISHES_FROM = (0, 9)
+# each floor's drawing, when the export was asked to carry them (0.10.1): drawings/<floor-id>.view
+DRAWINGS = "drawings/"
 
 FILES = {
     "location": "location.geojson",
@@ -330,6 +332,10 @@ class SourceInfo(_Model):
     floor_id: str
     file: str = Field(description="file name only; local paths are not exported")
     sha256: str | None = None
+    view: str | None = Field(None, description=(
+        "the floor's drawing as drawn, in the package (format 0.10.1, when the export carries the drawings): "
+        "drawings/<floor-id>.view, a drawing view (spec/DRAWING-VIEW.md) of the floor's part of the drawing in "
+        "the building's own frame; null: not carried"))
 
 
 class PlacementInfo(_Model):

@@ -287,3 +287,139 @@ def test_a_preview_of_one_building_holds_it_as_a_preview_of_them_all_does(tmp_pa
         held = [f for f in _read(tmp_path / "all.storeypath", f"{name}.geojson")["features"]
                 if name in ("location", "buildings") and f["id"] in ids or f["id"].startswith(hq + "-")]
         assert one == held and (one or name in ("zones", "items")), name  # (the demo has no items)
+
+
+# ---- a package that carries its floors' drawings (format 0.10.1) ---------------------------
+
+@pytest.fixture
+def two_floors(tmp_path):
+    """A made-up sheet of two office floors side by side, 70 m apart, the first floor's
+    region of it moved onto the ground floor's (its offset), as Studio lines floors up; notes
+    beside them; and beside the first floor's plan, in its region, a telephone number and an
+    office with a person's name. The building turned 30° on the map."""
+    import ezdxf
+
+    from storeypath.samples import write_sheet_dxf
+
+    sheet = tmp_path / "sheet.dxf"
+    write_sheet_dxf(sheet, [(office_floor(0), (10, 10), "GROUND FLOOR PLAN"), (office_floor(1), (80, 10), "FIRST FLOOR PLAN")])
+    doc = ezdxf.readfile(sheet)
+    msp = doc.modelspace()
+    for text, at in (("GENERAL NOTES", (150000, 30000)), ("TEL 555 0100", (76000, 33000)),
+                     ("SITE OFFICE MR. JOHN DOE", (76000, 32000))):
+        msp.add_text(text, height=300, dxfattribs={"layer": "A-ANNO-NOTE"}).set_placement(at)
+    doc.saveas(sheet)
+    ws = Workspace.new("Two Floors")
+    b_id = ws.add_building(ws.add_location("SITE", "Test Site"), "HQ", "Headquarters")
+    ws.building(b_id).placement = Placement(lon=10.0, lat=50.0, x=34.0, y=20.0, bearing=30)
+    f0 = ws.add_floor(b_id, 0, source=SourceDrawing(path=sheet.name, region=(5000, 4000, 63000, 35000)))
+    f1 = ws.add_floor(b_id, 1, source=SourceDrawing(path=sheet.name, region=(75000, 4000, 133000, 35000),
+                                                    offset=(70000, 0)))
+    for f in (f0, f1):
+        convert_floor(ws, f, tmp_path)
+    return ws, tmp_path, f0, f1
+
+
+def _metres(lon, lat):
+    """Longitude and latitude near the test's site as metres east and north (to a millimetre there)."""
+    import math
+
+    return lon * 111_320 * math.cos(math.radians(50.0)), lat * 110_574
+
+
+def test_a_package_carries_each_floors_drawing_in_its_own_frame_only_when_asked(two_floors):
+    import numpy as np
+    from shapely.geometry import Point, shape
+    from shapely.ops import transform
+
+    from storeypath.drawview import read_view
+    from storeypath.export import FloorViews
+
+    ws, d, f0, f1 = two_floors
+    plain = d / "plain.storeypath"
+    export_package(ws, plain, bake=False, record=False)
+    assert validate_package(plain) == []
+    with zipfile.ZipFile(plain) as z:
+        assert not [n for n in z.namelist() if n.startswith("drawings/")]
+    manifest = _read(plain, "manifest.json")
+    assert "drawings" not in manifest["files"] and all(s["view"] is None for s in manifest["sources"])
+
+    pkg = d / "drawn.storeypath"
+    said = []
+    export_package(ws, pkg, bake=False, say=said.append, drawings=FloorViews(lambda src: d / src.path, say=said.append))
+    assert validate_package(pkg) == []
+    assert "drawings: 2 of 2 floor(s)" in said and [line for line in said if line.startswith("reading")] == ["reading sheet.dxf"]
+    manifest = _read(pkg, "manifest.json")
+    assert manifest["format_version"] == "0.10.1" and manifest["files"]["drawings"] == "drawings/"
+    assert {s["floor_id"]: s["view"] for s in manifest["sources"]} == {f: f"drawings/{f}.view" for f in (f0, f1)}
+    floors = {f["id"]: f for f in _read(pkg, "floors.geojson")["features"]}
+    g = Georeferencer(Placement(**{k: manifest["placements"][f"{ws.id}-SITE-HQ"][k] for k in ("lon", "lat", "x", "y", "bearing")}))
+    with zipfile.ZipFile(pkg) as z:
+        views = {f: read_view(z.read(f"drawings/{f}.view")) for f in (f0, f1)}
+    for f, (head, arrays) in views.items():
+        # in the building's own metres: its wall lines, put on the map as the package puts the
+        # floor, lie on the floor's walls (each floor moved where its spaces are, the second by its offset)
+        assert head["units"] == "m" and head["clip"] == pytest.approx([5, 4, 63, 35])
+        walls = head["layers"].index(next(layer for layer in head["layers"] if layer["name"] == "A-WALL"))
+        ends = np.concatenate([arrays["lines"][b["first"]:b["first"] + b["count"]] for b in head["batches"]
+                               if b["kind"] == "lines" and b["layer"] == walls]).astype(float) + head["origin"]
+        drawn = transform(lambda x, y, z=None: _metres(x, y), shape(floors[f]["properties"]["walls"]))
+        off = [drawn.boundary.distance(Point(_metres(*g.lonlat(x, y)))) for x, y in ends]
+        assert len(off) > 100 and max(off) < 0.02, (f, max(off))
+    # nothing of the other floor, nor of the notes beside them; the texts as the privacy rules leave them
+    ground, first = (set(views[f][0]["words"]) for f in (f0, f1))
+    assert "GROUND FLOOR PLAN" in ground and "FIRST FLOOR PLAN" not in ground and "SITE OFFICE" not in ground
+    assert "FIRST FLOOR PLAN" in first and "SITE OFFICE" in first and "GROUND FLOOR PLAN" not in first
+    assert not [w for w in ground | first if "NOTES" in w or "TEL" in w or "JOHN" in w]
+
+
+def test_the_validator_checks_the_drawings_a_package_carries(two_floors):
+    from storeypath.export import FloorViews
+
+    ws, d, f0, f1 = two_floors
+    pkg = d / "drawn.storeypath"
+    export_package(ws, pkg, bake=False, record=False, drawings=FloorViews(lambda src: d / src.path))
+    view = f"drawings/{f1}.view"
+
+    def changed(files=None, manifest=None):
+        out = d / "changed.storeypath"
+        with zipfile.ZipFile(pkg) as src, zipfile.ZipFile(out, "w") as dst:
+            for name in src.namelist():
+                data = src.read(name)
+                if name == "manifest.json" and manifest is not None:
+                    doc = json.loads(data)
+                    manifest(doc)
+                    data = json.dumps(doc).encode()
+                if files is not None and name in files:
+                    data = files[name]
+                if data is not None:
+                    dst.writestr(name, data)
+            for name, data in (files or {}).items():
+                if name not in src.namelist() and data is not None:
+                    dst.writestr(name, data)
+        return validate_package(out)
+
+    with zipfile.ZipFile(pkg) as z:
+        good = z.read(view)
+    in_mm = _repacked_view(good, lambda head: head.update(units="mm"))
+    assert changed({view: None}) == [f"missing file {view}"]
+    assert changed({view: b"not a view"})[0].startswith(f"{view}: not gzip")
+    assert changed({view: in_mm}) == [f"{view}: in 'mm', not metres of the building's own frame"]
+    assert changed({"drawings/another.view": good}) == ["drawings/another.view: no floor's source names it"]
+    assert "but its files list None" in changed(manifest=lambda m: m["files"].pop("drawings"))[0]
+    assert changed(manifest=lambda m: [s.update(view=f"drawings/{f0}.view") for s in m["sources"] if s["floor_id"] == f1]) \
+        [0] == f"drawings/{f0}.view: floor {f1}'s drawing is drawings/{f1}.view"
+
+
+def _repacked_view(data: bytes, change) -> bytes:
+    """A drawing view with its head changed."""
+    import gzip
+    import struct
+
+    raw = gzip.decompress(data)
+    (n,) = struct.unpack("<I", raw[4:8])
+    head = json.loads(raw[8:8 + n])
+    change(head)
+    text = json.dumps(head).encode()
+    text += b" " * (-len(text) % 4)
+    return gzip.compress(raw[:4] + struct.pack("<I", len(text)) + text + raw[8 + n:])

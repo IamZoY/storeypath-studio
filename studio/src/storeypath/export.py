@@ -26,6 +26,7 @@ from .georef import Georeferencer
 from .ids import child_id, is_item_id, make_id
 from .catalogue import GRADES, MODELS, Catalogue, default_catalogue, shape_of
 from .package import (
+    DRAWINGS,
     FILES,
     OBJECTS_CSV_COLUMNS,
     Changes,
@@ -617,7 +618,7 @@ ITEM_TYPES = ("used", "all")  # what a package's catalogue.json holds: the types
 
 def export_package(ws: Workspace, out_path, *, building: str | None = None, record: bool = True,
                    bake: bool = True, say=None, catalogue: Catalogue | None = None,
-                   item_types: str = "used", models=None) -> Manifest:
+                   item_types: str = "used", models=None, drawings=None) -> Manifest:
     """Write the package of one building (its ID; may be left out when the project
     has one) to ``out_path`` (a path, or a binary file object): the building, its
     floors and what is on them, and its location; its manifest's ``scope`` names it.
@@ -639,7 +640,13 @@ def export_package(ws: Workspace, out_path, *, building: str | None = None, reco
     Its catalogue.json holds the item types its items use, each once (``item_types``
     "used"), or the whole ``catalogue`` ("all": to hand another system every type, for
     it to choose which to take); with them the 3D model of each that has one
-    (``models``: a type's code → its file, or None; format 0.9.2)."""
+    (``models``: a type's code → its file, or None; format 0.9.2).
+
+    With ``drawings`` it carries each floor's drawing too (format 0.10.1): its part of
+    its drawing as drawn, every layer and text, in the building's own frame
+    (``drawings/<floor-id>.view``, the manifest's source of the floor naming it).
+    ``drawings(floors)`` makes them: given [(floor ID, its SourceDrawing)], the view of
+    each, bytes (None: not to be had); FloorViews makes them from files."""
     if item_types not in ITEM_TYPES:
         raise ExportError(f"item types: {' or '.join(ITEM_TYPES)}, not {str(item_types)[:20]!r}")
     known = building_ids(ws)
@@ -651,7 +658,7 @@ def export_package(ws: Workspace, out_path, *, building: str | None = None, reco
     if building not in known:
         raise ExportError(f"no building {building} in this project")
     return _package(ws, out_path, [building], record=record, bake=bake, say=say, catalogue=catalogue,
-                    item_types=item_types, models=models)
+                    item_types=item_types, models=models, drawings=drawings)
 
 
 def preview_package(ws: Workspace, out_path, *, buildings: list[str] | None = None,
@@ -672,7 +679,7 @@ def preview_package(ws: Workspace, out_path, *, buildings: list[str] | None = No
 
 def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bake: bool, say=None,
              catalogue: Catalogue | None = None, item_types: str = "used", models=None,
-             alone: bool = False) -> Manifest:
+             alone: bool = False, drawings=None) -> Manifest:
     cat = catalogue or default_catalogue()
     buildings = sorted(set(buildings))
     locations = {b.rsplit("-", 1)[0] for b in buildings}
@@ -783,10 +790,24 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
             manifest.files["world"] = WORLD_DIR
         (say or log.info)(f"3D pre-built: {len(world)} floor(s)" if world else f"3D not pre-built: {why}")
 
+    # each floor's drawing as drawn (format 0.10.1), when asked for: its source names it
+    views: dict[str, bytes] = {}
+    if drawings is not None:
+        floors = [(fid, f.source) for _, _, f, fid in ws.iter_floors() if f.source and scoped(fid)]
+        for (fid, _), data in zip(floors, drawings(floors) if floors else []):
+            if data:
+                views[f"{DRAWINGS}{fid}.view"] = data
+        for s in manifest.sources:
+            if f"{DRAWINGS}{s.floor_id}.view" in views:
+                s.view = f"{DRAWINGS}{s.floor_id}.view"
+        if views:
+            manifest.files["drawings"] = DRAWINGS
+        (say or log.info)(f"drawings: {len(views)} of {len(floors)} floor(s)")
+
     if isinstance(out_path, (str, Path)):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-    _write(out_path, ws, manifest, features, changes, {**world, **model_files}, written, navigation)
+    _write(out_path, ws, manifest, features, changes, {**world, **model_files, **views}, written, navigation)
 
     if record:
         held_now = dict(held_before)
@@ -831,7 +852,38 @@ def _write(out, ws: Workspace, manifest: Manifest, features: dict[str, list[dict
         for name, text in files.items():
             z.writestr(name, text)
         for name, data in extra.items():
+            # (a drawing's view is gzip already: stored as it is)
+            how = zipfile.ZIP_STORED if name.startswith(DRAWINGS) else None
             if isinstance(data, Path):
-                z.write(data, name)
+                z.write(data, name, compress_type=how)
             else:
-                z.writestr(name, data)
+                z.writestr(name, data, compress_type=how)
+
+
+class FloorViews:
+    """export_package's ``drawings``, made from drawing files (the command line's, and
+    anyone's with the drawings at hand): ``file(source)`` is the file of a floor's drawing
+    (None: not here). The floors of one drawing are drawn together, the drawing read once
+    (drawview.write_floor_views); ``say`` hears how far each has got."""
+
+    def __init__(self, file, say=None):
+        self.file, self.say = file, say or (lambda line: None)
+
+    def __call__(self, floors: list) -> list[bytes | None]:
+        from .drawview import write_floor_views
+
+        out: list[bytes | None] = [None] * len(floors)
+        by_drawing: dict[Path, list[int]] = {}
+        for i, (_, src) in enumerate(floors):
+            path = self.file(src)
+            if path is not None and Path(path).is_file():
+                by_drawing.setdefault(Path(path), []).append(i)
+        with tempfile.TemporaryDirectory(prefix="storeypath-views-") as tmp:
+            for path, held in by_drawing.items():
+                self.say(f"drawing {', '.join(floors[i][0].rsplit('-', 1)[-1] for i in held)} from {path.name}")
+                parts = [{"out": str(Path(tmp) / f"{floors[i][0]}.view"), "region": floors[i][1].region,
+                          "offset": floors[i][1].offset, "units": floors[i][1].units} for i in held]
+                write_floor_views(path, parts, say=self.say)
+                for i, part in zip(held, parts):
+                    out[i] = Path(part["out"]).read_bytes()
+        return out
