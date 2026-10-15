@@ -376,10 +376,14 @@ with links to view it as a *2D plan*, in *3D*, or as *Rooms by type*.
 
 *Download project* gives one file, `<code>.storeypath-project`: the project with
 every correction, edit and ID, its export history, its drawings and the Studio's
-item types. Another Studio opens it on its Projects page (*Open a project or a
-building's package*) and continues the project where it was (the item types it brings
-are added there when an admin, or someone who may change the item types, opens it;
-anyone may later take them on the *Item types* page).
+item types with their 3D models (each with the file it was made from, so it can be
+turned or fitted there too). Another Studio opens it on its Projects page (*Open a
+project or a building's package*) and continues the project where it was (the item
+types it brings are added there when an admin, or someone who may change the item
+types, opens it, and so are their 3D models, for types that have none there: a model
+a type there has is kept; anyone may later take the types on the *Item types* page).
+It does not carry the change history, people and their access, or the packages
+exported (only the list of them): those stay with each Studio.
 
 **Encrypted with a password.** Beside *Download project*, and beside each package in the
 list, *Encrypted…* asks for a password (twice) and downloads the file encrypted with it

@@ -1391,9 +1391,9 @@ class Studio:
 
     def project_file(self, code: str) -> "Download":
         """The project as one file to send (*.storeypath-project): its workspace,
-        drawings and item types, for another Studio to continue it (bundle.py). Not a
-        package: other systems read a building's."""
-        from .bundle import write_project_file
+        drawings and item types with their 3D models, for another Studio to continue
+        it (bundle.py). Not a package: other systems read a building's."""
+        from .bundle import ProjectModel, write_project_file
 
         self._known(code)
         buf = io.BytesIO()
@@ -1404,7 +1404,14 @@ class Studio:
                 drawings[d["name"]] = self.store.drawing_bytes(code, d["name"])
                 if (kept := self.store.words(code, d["name"])) is not None:
                     drawings[d["name"] + WORDS] = kept.encode("utf-8")
-            write_project_file(ws, drawings, self.catalogue(), buf)
+            models = {}  # the item types' 3D models, each with the file it was made from and how
+            for t_code, m in self.store.models().items():
+                glb, src = self.store.model_file(t_code), self.store.model_source(t_code)
+                if glb is not None and src is not None:
+                    how = {"name": src["name"], "turn": src["turn"], "units": src["units"], "up": src["up"],
+                           "size_before": m["size_before"]}
+                    models[t_code] = ProjectModel(glb, src["source"], how)
+            write_project_file(ws, drawings, self.catalogue(), buf, models=models)
         return Download(buf.getvalue(), f"{ws.id}.storeypath-project")
 
     def open(self, body: bytes, replace: str | None = None, allow=None, learn_types: bool = True, by=None) -> dict:

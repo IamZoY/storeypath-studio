@@ -487,10 +487,10 @@ units), or that would retire rooms people corrected, is held back: the floor kee
 rooms, and `convert --force` applies it if the drawing really changed that much.
 
 To continue a project in another Studio, the web app's *Download project* gives one
-file (`*.storeypath-project`: the workspace, its drawings and the item types), which
-the other Studio opens on its Projects page. A building's package opens there too:
-its building is rebuilt with the same IDs, its floors without drawings until one is
-added.
+file (`*.storeypath-project`: the workspace, its drawings and the item types with
+their 3D models), which the other Studio opens on its Projects page. A building's
+package opens there too: its building is rebuilt with the same IDs, its floors without
+drawings until one is added.
 
 ### Several floors in one drawing
 

@@ -1311,11 +1311,14 @@ function openCard() {
       const left = (r.item_types_not_added || []).length
         ? ` Item types it brings were not added (an admin, or who may change the item types, takes them from the file on the Item types page): ${r.item_types_not_added.join(", ")}; their items are drawn as plain items.`
         : "";
+      const noModels = (r.models_not_added || []).length
+        ? ` 3D models it brings were not added (an admin, or who may change the item types, adds them by opening it): ${r.models_not_added.join(", ")}.`
+        : "";
       toast((r.how === "project"
         ? `${r.name} opened as it was sent: ${floors}, ${r.drawings} drawing${r.drawings === 1 ? "" : "s"}.`
         : r.how === "building"
           ? `${r.name}: ${r.replaced.length ? "its building put in place of the one here" : "a building added to it"} from the package (${floors}, the same IDs). Its other buildings are as they were.`
-          : `${r.name} rebuilt from the package: ${floors}, the same IDs. To read a floor again, add its drawing to it.`) + left,
+          : `${r.name} rebuilt from the package: ${floors}, the same IDs. To read a floor again, add its drawing to it.`) + left + noModels,
       false, 12000);
       location.hash = `#/p/${r.code}`;
     } catch (e) {

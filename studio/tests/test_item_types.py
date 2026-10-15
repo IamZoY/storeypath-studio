@@ -323,6 +323,44 @@ def test_a_type_given_a_3d_model_takes_its_size_and_a_package_carries_it_once(st
          "item type model added"]
 
 
+def test_a_project_file_carries_the_types_3d_models_to_a_studio_without_them(studio):
+    # A project sent to another Studio takes its item types' 3D models with it, each with
+    # the file it was made from and how (here turned a quarter): opened where the type has
+    # no model, it is made again as it was, and can be turned there too; where the type
+    # has one, that one is kept
+    from urllib.parse import quote
+
+    from test_models import sofa_in_cm
+
+    port, st, _, tokens, code = studio
+    boss = tokens["boss"]
+    assert call(port, "PUT", "/api/catalogue/types/SOFA/model?name=sofa.glb", raw=sofa_in_cm(), token=boss)[0] == 200
+    assert call(port, "POST", "/api/catalogue/types/SOFA/model/turn", {"turn": 90}, token=boss)[0] == 200
+    sent = call(port, "GET", "/api/catalogue/models/SOFA.glb", token=boss)[1]
+    status, blob, _ = call(port, "GET", f"/api/projects/{code}/project.storeypath-project", token=boss)
+    assert status == 200
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        assert sorted(n for n in z.namelist() if n.startswith("models/")) == \
+            ["models/SOFA.glb", "models/SOFA.json", "models/SOFA.source"]
+        assert z.read("models/SOFA.glb") == sent and z.read("models/SOFA.source") == sofa_in_cm()
+        assert json.loads(z.read("models/SOFA.json"))["turn"] == 90
+
+    # (the other Studio: this one without the model)
+    assert call(port, "POST", "/api/catalogue/types/SOFA/model/delete", {}, token=boss)[0] == 200
+    again = f"/api/open?replace={quote(st.store.name(code))}"
+    status, opened, _ = call(port, "PUT", again, raw=blob, token=boss)
+    assert status == 200 and (opened["models_added"], opened["models_not_added"]) == (["SOFA"], []), opened
+    assert call(port, "GET", "/api/catalogue/models/SOFA.glb", token=boss)[1] == sent
+    made = call(port, "GET", "/api/catalogue/models", token=boss)[1]["SOFA"]
+    assert (made["name"], made["turn"], made["units"], made["size"]) == ("sofa.glb", 90, "cm", [0.9, 2.0, 0.75])
+    status, turned, _ = call(port, "POST", "/api/catalogue/types/SOFA/model/turn", {"turn": 0}, token=boss)
+    assert status == 200 and turned["size"] == [2.0, 0.9, 0.75]  # (made from the file it came from)
+
+    status, opened, _ = call(port, "PUT", again, raw=blob, token=boss)
+    assert status == 200 and (opened["models_added"], opened["models_not_added"]) == ([], [])
+    assert call(port, "GET", "/api/catalogue/models", token=boss)[1]["SOFA"]["turn"] == 0  # its own, kept
+
+
 def test_a_type_given_a_model_in_another_format_says_what_was_left_out(studio):
     from storeypath.model_files import assimp_command
     from test_model_files import obj

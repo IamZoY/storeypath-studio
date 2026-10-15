@@ -5,8 +5,9 @@ Studio opens files into its database (open_into); open_file opens one into a dat
 folder of workspace files (the command line's, and the tests').
 A project file (*.storeypath-project) is for another Studio to continue the
 project: the workspace (every correction, edit and ID, its export history), its
-drawings, and the item types it uses. It is not a package: no other system
-reads it. (A project file of format 0.6 and before was a package of the whole
+drawings, and the item types with their 3D models (each with the file it was made
+from and how, so it can be turned or fitted there too). It is not a package: no
+other system reads it. (A project file of format 0.6 and before was a package of the whole
 project with the project in ``studio/``; it opens as it did.)
 
 Opening a project file gives the project back as it was. Opening a package
@@ -135,18 +136,32 @@ def export_project(ws_path: Path, out) -> None:
                 ship(p)
     data = ws_path.parent.parent  # the Studio's data folder: its catalogue of item types, when it has one
     cat = catalogue.load(data) if (data / catalogue.FILE_NAME).is_file() else catalogue.default_catalogue()
-    write_project_file(shipped, files, cat, out)
+    model = catalogue.models_in(data)  # (a data folder keeps the model alone)
+    write_project_file(shipped, files, cat, out,
+                       models={t.code: ProjectModel(glb) for t in cat.types if t.model and (glb := model(t.code))})
 
 
-def write_project_file(ws: Workspace, drawings: dict, cat, out) -> None:
+class ProjectModel(NamedTuple):
+    """A type's 3D model as a project file carries it: the model, and the file it was made
+    from with how (``how``: name, turn, units chosen, up, size_before), when Studio has them."""
+
+    glb: bytes
+    source: bytes | None = None
+    how: dict | None = None
+
+
+def write_project_file(ws: Workspace, drawings: dict, cat, out, models: dict[str, ProjectModel] | None = None) -> None:
     """A project file (*.storeypath-project) written to ``out``: ``ws`` (its floors'
     drawings named drawings/<name>), ``drawings`` (name in drawings/ -> its bytes, or a
-    file), and the item types ``cat``."""
+    file), the item types ``cat`` and their 3D models (``models``, by type code):
+    models/<code>.glb as a package has it, with models/<code>.source (the file it was made
+    from) and models/<code>.json (how) when given."""
     from importlib.metadata import version
 
+    from .catalogue import model_path
     from .workspace import utcnow
 
-    about = {"format": PROJECT_FORMAT, "format_version": 1, "project": {"id": ws.id, "name": ws.project.name},
+    about = {"format": PROJECT_FORMAT, "format_version": 2, "project": {"id": ws.id, "name": ws.project.name},
              "made_at": utcnow().isoformat(), "generator": {"name": "storeypath", "version": version("storeypath")},
              "about": "A StoreyPath project, for StoreyPath Studio to continue it (open it on the Projects page). "
                       "It is not a package: other systems read a building's package (*.storeypath)."}
@@ -159,6 +174,18 @@ def write_project_file(ws: Workspace, drawings: dict, cat, out) -> None:
                 z.writestr(DRAWINGS + name, data)
             else:
                 z.write(data, DRAWINGS + name)
+        for code, m in sorted((models or {}).items()):
+            z.writestr(model_path(code), m.glb)
+            if m.source is not None and m.how is not None:
+                z.writestr(_model_part(code, ".source"), m.source)
+                z.writestr(_model_part(code, ".json"), json.dumps(m.how, ensure_ascii=False, indent=1))
+
+
+def _model_part(code: str, suffix: str) -> str:
+    """Beside a type's model in a project file: its source (".source") or how it was made (".json")."""
+    from .catalogue import MODELS
+
+    return f"{MODELS}{code}{suffix}"
 
 
 # ---- a project from a file -----------------------------------------------------
@@ -248,9 +275,11 @@ def open_file(data: Path, source: Path, *, replace: bool = False, incoming: Inco
             _merge(here, ws)
             here.save(existing)
             learned, left = _learn_types(source, learn_types, *_folder_catalogue(data))
+            modelled, unmodelled = _learn_models(source, learn_types, *_folder_catalogue(data), *_folder_models(data))
             return {"code": code, "name": here.project.name, "how": "building", "buildings": b_ids,
                     "replaced": there, "floors": sum(1 for _ in ws.iter_floors()), "drawings": 0,
-                    "item_types_added": learned, "item_types_not_added": left}
+                    "item_types_added": learned, "item_types_not_added": left,
+                    "models_added": modelled, "models_not_added": unmodelled}
         # in place of the project kept here (its folder), else in data/<code>/
         folder = existing.parent if existing is not None and existing.parent != data else data / code
         _only_its_own(folder, existing, code)
@@ -286,9 +315,11 @@ def open_file(data: Path, source: Path, *, replace: bool = False, incoming: Inco
     if existing is not None and existing.parent == data:
         existing.unlink(missing_ok=True)  # a project kept as a file of the data folder: replaced
     learned, left = _learn_types(source, learn_types, *_folder_catalogue(data))
+    modelled, unmodelled = _learn_models(source, learn_types, *_folder_catalogue(data), *_folder_models(data))
     floors = sum(1 for _ in ws.iter_floors())
     return {"code": code, "name": ws.project.name, "how": how, "floors": floors, "drawings": drawings,
-            "item_types_added": learned, "item_types_not_added": left}
+            "item_types_added": learned, "item_types_not_added": left,
+            "models_added": modelled, "models_not_added": unmodelled}
 
 
 def _only_its_own(folder: Path, existing: Path | None, code: str) -> None:
@@ -571,6 +602,19 @@ def _folder_catalogue(data: Path):
     return (lambda: catalogue.load(data)), (lambda cat: catalogue.save(data, cat))
 
 
+def _folder_models(data: Path):
+    """The models of a Studio data folder (beside its catalogue.json): whether a type has
+    one, how one is kept (the model alone)."""
+    from .catalogue import model_path
+
+    def keep(code, made, data_, how, before):
+        path = data / model_path(code)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(made.glb)
+
+    return (lambda code: (data / model_path(code)).is_file()), keep
+
+
 def _learn_types(source: Path, add: bool, load, save) -> tuple[list[str], list[str]]:
     """The item types a package's (or a project file's) catalogue has and this
     Studio's (``load()``, written with ``save(cat)``) lacks: added to it when ``add``
@@ -600,6 +644,71 @@ def _learn_types(source: Path, add: bool, load, save) -> tuple[list[str], list[s
     return [t.code for t in new], []
 
 
+def _learn_models(source: Path, add: bool, load, save, has, keep) -> tuple[list[str], list[str]]:
+    """The 3D models a file carries (models/<code>.glb; a project file's with the file
+    each was made from and how) for item types this Studio has (``load()``) and that have
+    none here (``has(code)``): made again as an upload is (the same checks: from the file
+    it was made from, as it was made, else from the model itself), kept (``keep(code,
+    made, data, how, before)``), and the type given the model's size, so the plan and 3D
+    agree (``save(cat)``). A model a type here has is kept as it is (as the type is). Left
+    out when not ``add`` (who may change the item types). The codes added, and those not
+    (not to be added, or that could not be made)."""
+    from importlib.metadata import version
+
+    from . import catalogue, model_files, models
+
+    added, left, sizes = [], [], {}
+    with zipfile.ZipFile(source) as z:
+        names = set(z.namelist())
+        ours = load()
+        wanted = [t.code for t in ours.types if catalogue.model_path(t.code) in names and not has(t.code)]
+        if not add:
+            return [], wanted
+        for code in wanted:
+            tries = []  # (the file to make it from, how)
+            src, said = _model_part(code, ".source"), {}
+            if src in names and _model_part(code, ".json") in names:
+                try:
+                    said = json.loads(z.read(_model_part(code, ".json")))
+                except ValueError:
+                    said = {}
+                said = said if isinstance(said, dict) else {}
+                how = {"name": Path(str(said.get("name") or "")).name[:200] or f"{code}.glb",
+                       "turn": said.get("turn") if said.get("turn") in models.TURNS else 0,
+                       "units": said.get("units") if said.get("units") in models.UNIT_SIZE else None,
+                       "up": said.get("up") if said.get("up") in models.UPS else "y"}
+                if z.getinfo(src).file_size <= models.MAX_FILE:
+                    tries.append((z.read(src), how))
+            if z.getinfo(catalogue.model_path(code)).file_size <= models.MAX_FILE:
+                tries.append((z.read(catalogue.model_path(code)), {"name": f"{code}.glb", "turn": 0, "units": None, "up": "y"}))
+            for data, how in tries:
+                try:
+                    found = model_files.as_glb(data, how["name"])
+                    made = models.make_model(found.glb, code, how["name"], how["turn"],
+                                             generator=f"StoreyPath Studio {version('storeypath')}",
+                                             units=how["units"], stated=found.stated, up=how["up"])
+                except ValueError:  # (a ModelError too)
+                    continue
+                t = ours.get(code)
+                before = said.get("size_before")
+                if not (isinstance(before, list) and len(before) == 3 and all(isinstance(x, (int, float)) and x > 0 for x in before)):
+                    before = [t.width, t.depth, t.height]
+                    before = before if all(isinstance(x, (int, float)) and x > 0 for x in before) else None
+                keep(code, made, data, how, before)
+                added.append(code)
+                sizes[code] = made.size
+                break
+            else:
+                left.append(code)
+    if sizes:
+        cat = load()
+        for code, (w, d, h) in sizes.items():
+            t = cat.get(code)
+            t.width, t.depth, t.height = w, d, h
+        save(cat)
+    return added, left
+
+
 def open_into(store, source: Path, *, replace: bool = False, incoming: Incoming | None = None,
               existing=_FIND, learn_types: bool = True, by=None) -> dict:
     """A project from a file, put in Studio's database (``store``, db/store.py), as
@@ -616,6 +725,9 @@ def open_into(store, source: Path, *, replace: bool = False, incoming: Incoming 
     if existing is not _FIND and bool(existing) != here:
         raise ValueError("the project changed while the file was being opened: open it again")
     catalogue_io = (store.catalogue, store.save_catalogue)
+    models_io = (lambda c: c in store.models(),
+                 lambda c, made, data, how, before: store.save_model(c, how["name"], data, made, how["turn"], by=by,
+                                                                    units=how["units"], up=how["up"], before=before))
     if how == "package" and here:
         mine = store.load(code)
         b_ids = [b for b in _building_ids(ws)]
@@ -626,9 +738,11 @@ def open_into(store, source: Path, *, replace: bool = False, incoming: Incoming 
         store.save_project(mine, by=by, part="building", kind="open", targets=b_ids,
                            more={"how": "package", "file": source.name, "replaced": there, "barrier": bool(there)})
         learned, left = _learn_types(source, learn_types, *catalogue_io)
+        modelled, unmodelled = _learn_models(source, learn_types, *catalogue_io, *models_io)
         return {"code": code, "name": mine.project.name, "how": "building", "buildings": b_ids,
                 "replaced": there, "floors": sum(1 for _ in ws.iter_floors()), "drawings": 0,
-                "item_types_added": learned, "item_types_not_added": left}
+                "item_types_added": learned, "item_types_not_added": left,
+                "models_added": modelled, "models_not_added": unmodelled}
     if here and not replace:
         raise ProjectExists(code, store.name(code))
     drawings: dict[str, bytes] = {}
@@ -652,9 +766,11 @@ def open_into(store, source: Path, *, replace: bool = False, incoming: Incoming 
     else:
         store.create(ws, by=by, kind="open", drawings=kept)
     learned, left = _learn_types(source, learn_types, *catalogue_io)
+    modelled, unmodelled = _learn_models(source, learn_types, *catalogue_io, *models_io)
     floors = sum(1 for _ in ws.iter_floors())
     return {"code": code, "name": ws.project.name, "how": how, "floors": floors, "drawings": len(drawings),
-            "item_types_added": learned, "item_types_not_added": left}
+            "item_types_added": learned, "item_types_not_added": left,
+            "models_added": modelled, "models_not_added": unmodelled}
 
 
 def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:

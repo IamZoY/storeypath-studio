@@ -193,7 +193,7 @@ def test_a_project_travels_whole_and_continues(review, tmp_path):
     code = ws.project.code
     assert opened == {"code": code, "name": ws.project.name, "how": "project", "floors": 1,
                       "drawings": sum(1 for n in names if n.startswith("studio/drawings/")), "item_types_added": [],
-                      "item_types_not_added": []}
+                      "item_types_not_added": [], "models_added": [], "models_not_added": []}
     there = Workspace.load(elsewhere / code / f"{code}.spproj")
     assert there.overrides[space.id].name == "Board room" and there.floor(f_id).edits.walls == [[[0.0, 0.0], [1.0, 0.0]]]
     assert [e.sequence for e in there.exports] == [1]
@@ -206,6 +206,35 @@ def test_a_project_travels_whole_and_continues(review, tmp_path):
     there.save(elsewhere / code / f"{code}.spproj")
     open_file(elsewhere, sent, replace=True)
     assert Workspace.load(elsewhere / code / f"{code}.spproj").project.name == ws.project.name
+
+
+def test_a_project_file_of_a_data_folder_carries_its_types_models(review, tmp_path):
+    # A data folder keeps a type's model beside its catalogue (the model alone): its project
+    # file carries it, and opening it gives it to a data folder where the type has none,
+    # when the item types may be changed; else it is only listed
+    from storeypath import catalogue
+    from storeypath.models import make_model
+    from test_models import sofa_in_cm
+
+    _, path, _ = review
+    data = path.parent.parent
+    catalogue.load(data)  # (written the first time)
+    (data / "models").mkdir(exist_ok=True)
+    (data / "models" / "SOFA.glb").write_bytes(make_model(sofa_in_cm(), "SOFA", "sofa.glb").glb)
+    sent = tmp_path / "sent.storeypath-project"
+    export_project(path, sent)
+    with zipfile.ZipFile(sent) as z:
+        assert [n for n in z.namelist() if n.startswith("models/")] == ["models/SOFA.glb"]
+
+    elsewhere, closed = tmp_path / "elsewhere", tmp_path / "closed"
+    elsewhere.mkdir()
+    closed.mkdir()
+    opened = open_file(closed, sent, learn_types=False)
+    assert (opened["models_added"], opened["models_not_added"]) == ([], ["SOFA"]) and not (closed / "models").exists()
+    opened = open_file(elsewhere, sent)
+    assert (opened["models_added"], opened["models_not_added"]) == (["SOFA"], [])
+    there = catalogue.load(elsewhere).get("SOFA")
+    assert there.model == "models/SOFA.glb" and (there.width, there.depth, there.height) == (2.0, 0.9, 0.75)
 
 
 def test_what_is_not_a_package_is_refused(tmp_path):
