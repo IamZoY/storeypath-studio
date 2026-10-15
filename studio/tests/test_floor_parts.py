@@ -84,3 +84,33 @@ def test_find_plans_offers_the_wings_and_one_floor_is_added_from_both(studio, tm
     assert len(offices) == 8  # both wings' offices
     outline = shape(f.outline)
     assert outline.geom_type == "MultiPolygon" and len(outline.geoms) == 2  # two blocks, nothing in the open ground
+
+
+def test_two_blocks_of_one_floor_numbered_by_block_are_offered_as_one(tmp_path):
+    # each block its own letters, the floor's part the same: one floor's two blocks
+    from storeypath.sheets import one_numbering
+
+    views = sheet(tmp_path / "blocks.dxf", (wing("K.2.", 1), "FIRST FLOOR PLAN"), (wing("L.2.", 1), "FIRST FLOOR PLAN"))
+    _, together, _ = floor_parts(read_drawing(tmp_path / "blocks.dxf"), [v.region for v in views], [None, None])
+    assert together == [[0, 1], [0, 1]]
+    assert one_numbering("K-GF-", "L-GF-") and not one_numbering("K.1.", "K.2.") and not one_numbering("A1-GF-", "A1-1F-")
+
+
+def test_a_facade_standing_apart_across_an_open_hall_is_its_plans(tmp_path):
+    # A wing whose east side is an open hall: its outside wall is a row of short piers 10 m off
+    # the nearest wall (too short to be read as walls), windows between them. Its plan takes it
+    # in, as far as the piers; a deep drawing beside a plan (an elevation's lines) is not taken
+    write_sheet_dxf(tmp_path / "hall.dxf", [(wing("Q.2.", 1), (100.0, 50.0), "FIRST FLOOR PLAN")], area_outlines=False)
+    doc = ezdxf.readfile(tmp_path / "hall.dxf")
+    walls = next(e.dxf.layer for e in doc.modelspace() if e.dxftype() == "LWPOLYLINE")
+    for k in range(13):  # piers 0.35 x 1.0 m, every 2 m, at x = 11 + 10 m
+        x, y = 100_000 + 21_000, 50_000 + k * 2_000
+        doc.modelspace().add_lwpolyline([(x, y), (x + 350, y), (x + 350, y + 1000), (x, y + 1000)], close=True,
+                                        dxfattribs={"layer": walls})
+    for k in range(30):  # an elevation's lines 6 m deep, south of the plan
+        doc.modelspace().add_line((100_000, 50_000 - 8_000 - k * 200), (100_000 + 11_000, 50_000 - 8_000 - k * 200),
+                                  dxfattribs={"layer": walls})
+    doc.saveas(tmp_path / "hall.dxf")
+    views = find_views(read_drawing(tmp_path / "hall.dxf"), RULES, 0.001, auto=True, is_room_name=rules_only)
+    (x0, y0, x1, y1), = [tuple(c * 0.001 for c in v.region) for v in views]
+    assert x1 >= 121.35 and y0 >= 50.0 - 1.5  # the piers taken in; the elevation south of it not

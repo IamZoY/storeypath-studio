@@ -117,6 +117,7 @@ def _plans_by_walls(doc, scale, texts, is_room_name) -> list[View]:
     walls = [g for _, g, gap in sc.paired if gap >= WALL_MIN_THICKNESS_M]
     if not walls:
         return []
+    layer_of = {id(g): layer for layer, g, gap in sc.paired if gap >= WALL_MIN_THICKNESS_M}
     tree = shapely.STRtree(walls)
     swing_pts = np.array([(x, y) for _, x, y in sc.swings]) if sc.swings else np.zeros((0, 2))
     room_pts = np.array([(x, y) for _, t, x, y in sc.texts if is_room_name and is_room_name(t)]) \
@@ -150,13 +151,18 @@ def _plans_by_walls(doc, scale, texts, is_room_name) -> list[View]:
         doors, rooms = inside(swing_pts), inside(room_pts)
         if doors < 2 and not (doors >= 1 and rooms >= 3):
             continue  # walls without doors: a table, title block, frame or elevation
+        views.append((members, (x0, y0, x1, y1)))
+    # a plan's facade standing apart from its walls (piers and windows along an open hall's side)
+    boxes = _facades_taken(doc, scale, [b for _, b in views], [{layer_of.get(id(g)) for g in m} for m, _ in views])
+    out = []
+    for (members, _), (x0, y0, x1, y1) in zip(views, boxes):
         m = VIEW_MARGIN_M
         region = ((x0 - m) / scale, (y0 - m) / scale, (x1 + m) / scale, (y1 + m) / scale)
         ox, oy = x0 - m, y0 - m
         preview = [[round(v, 2) for x, y in line.coords for v in (x - ox, y - oy)] for line in members][:6000]
-        views.append(View(0, _title(tuple(v / scale for v in (x0, y0, x1, y1)), texts, scale), region,
-                          (round(x1 - x0, 1), round(y1 - y0, 1)), len(members), None, preview))
-    return views
+        out.append(View(0, _title(tuple(v / scale for v in (x0, y0, x1, y1)), texts, scale), region,
+                        (round(x1 - x0, 1), round(y1 - y0, 1)), len(members), None, preview))
+    return out
 
 
 def _wall_groups(walls, depth: int = 0, titled=None) -> list[list]:
@@ -229,6 +235,26 @@ def numbering(texts, region) -> str | None:
     return stem if count >= 3 and count >= 0.3 * sum(stems.values()) else None
 
 
+FLOOR_WORDS = {"GF", "LG", "UG", "RF", "MZ"}  # a numbering's part that says its floor without a digit
+
+
+def one_numbering(a: str | None, b: str | None) -> bool:
+    """Whether two plans' numberings are one floor's: the same, or the same but for a block's
+    letters (K.2. and L.2.: two blocks of one floor), the part that says the floor (a digit
+    in it, or GF) the same. Floors' numberings differ in that part (K.1., K.2.)."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    ta, tb = (re.split(r"[-_./ ]+", x.strip("-_./ ")) for x in (a, b))
+    if len(ta) != len(tb):
+        return False
+    differ = [(x, y) for x, y in zip(ta, tb) if x != y]
+    same = [x for x, y in zip(ta, tb) if x == y]
+    return all(x.isalpha() and y.isalpha() for x, y in differ) and \
+        any(re.search(r"\d", x) or x.upper() in FLOOR_WORDS for x in same)
+
+
 def floor_parts(doc: Drawing, regions: list, floors: list) -> tuple[list[list[int]], list, list[str | None]]:
     """For plans found (``regions``; ``floors``: the floor each one's title says, None when
     it says none, NOT_A_FLOOR for a plan that is no floor's: a section, a detail),
@@ -249,7 +275,7 @@ def floor_parts(doc: Drawing, regions: list, floors: list) -> tuple[list[list[in
     group = list(range(n))  # (each plan's group, by its first)
     for i in range(n):
         for j in joins[i]:
-            if j < i or NOT_A_FLOOR in (floors[i], floors[j]) or not stems[i] or stems[i] != stems[j]:
+            if j < i or NOT_A_FLOOR in (floors[i], floors[j]) or not one_numbering(stems[i], stems[j]):
                 continue
             if floors[i] is None or floors[j] is None or floors[i] == floors[j]:
                 gi, gj = group[i], group[j]
@@ -259,6 +285,56 @@ def floor_parts(doc: Drawing, regions: list, floors: list) -> tuple[list[list[in
         together.setdefault(g, []).append(i)
     suggested = [m for m in together.values() if len(m) > 1 and all(b in joins[a] for a in m for b in m if a != b)]
     return [joins[i] for i in range(n)], [next((m for m in suggested if i in m), None) for i in range(n)], stems
+
+
+FACADE_DEPTH_M = 3.0  # a facade standing apart from a plan's walls: at most this deep (piers and windows in a row)
+FACADE_REACH_M = 15.0  # at most this far from them (an open hall's width)
+FACADE_APART_M = 1.0  # and at least this far (nearer is the plan's own walls' faces: its margin takes them)
+FACADE_ALONG = 0.8  # along this much of the plan's side, at least
+
+
+def _facades_taken(doc: Drawing, scale: float, bounds: list, layers: list) -> list:
+    """Each plan's bounds (metres) taking in its facade where it stands apart from the walls
+    found: a thin strip of things on the plan's own wall ``layers`` along one of its sides,
+    as long as that side, an open hall's width off (piers too short to be read as walls,
+    windows between them: grouping walls by nearness left them out, and with them the hall's
+    outside wall). An elevation or a table beside a plan is no thin strip as long as its
+    side; a strip reaching into another plan is not taken."""
+    ents, _, eboxes = _entity_index(doc)
+    if not len(ents) or not bounds:
+        return bounds
+    on = np.array([e.dxf.get("layer", "0") for e in ents])
+    eb = eboxes * scale
+    out = []
+    for i, (x0, y0, x1, y1) in enumerate(bounds):
+        mine = np.isin(on, [layer for layer in layers[i] if layer])
+        others = [b for j, b in enumerate(bounds) if j != i]
+        grown = [x0, y0, x1, y1]
+        for side in ("east", "west", "north", "south"):
+            upright = side in ("east", "west")
+            lo, hi = (y0, y1) if upright else (x0, x1)  # the side's extent
+            a0, a1 = (eb[:, 1], eb[:, 3]) if upright else (eb[:, 0], eb[:, 2])  # along it
+            b0, b1 = (eb[:, 0], eb[:, 2]) if upright else (eb[:, 1], eb[:, 3])  # away from it
+            if side in ("east", "north"):
+                edge = x1 if upright else y1
+                off = (b0 > edge + FACADE_APART_M) & (b0 - edge <= FACADE_REACH_M)
+            else:
+                edge = x0 if upright else y0
+                off = (b1 < edge - FACADE_APART_M) & (edge - b1 <= FACADE_REACH_M)
+            band = mine & off & (a0 >= lo - FACADE_DEPTH_M) & (a1 <= hi + FACADE_DEPTH_M)
+            if not band.any():
+                continue
+            s0, s1 = float(b0[band].min()), float(b1[band].max())
+            along = float(a1[band].max() - a0[band].min())
+            if s1 - s0 > FACADE_DEPTH_M or along < FACADE_ALONG * (hi - lo):
+                continue
+            box = [min(grown[0], s0), grown[1], max(grown[2], s1), grown[3]] if upright \
+                else [grown[0], min(grown[1], s0), grown[2], max(grown[3], s1)]
+            if any(o[0] < box[2] and o[2] > box[0] and o[1] < box[3] and o[3] > box[1] for o in others):
+                continue
+            grown = box
+        out.append(tuple(grown))
+    return out
 
 
 def _courtyards_joined(groups: list[list], gap: float, holds=lambda blob: True) -> list[list]:
