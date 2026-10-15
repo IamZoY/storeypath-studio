@@ -665,6 +665,35 @@ async function showPlans(code, drawing, area, result, found = null, jobId = null
   // common): the building's next floor.
   const floorPlans = cards.filter((c) => c.plan.kind === "floor_plan");
   if (floorPlans.length === 1 && floorPlans[0].plan.floor === null) floorPlans[0].nextFloor();
+  // Parts of one floor drawn where they stand (a building's two wings) are found as plans of
+  // their own: those whose room labels carry on one numbering are offered as one floor, where
+  // the largest goes (nothing else is drawn between them: Find plans says which can be).
+  const byIndex = new Map(cards.map((c) => [c.plan.index, c]));
+  const offered = new Set();
+  for (const c of cards) {
+    if (!c.plan.together || offered.has(c.plan.index)) continue;
+    const members = c.plan.together.map((i) => byIndex.get(i)).filter(Boolean);
+    members.forEach((m) => offered.add(m.plan.index));
+    const lead = members.reduce((a, b) => (b.area > a.area ? b : a));
+    if (members.length < 2 || !members.some((m) => m.chosen())) continue;
+    const apart = () => {
+      members.forEach((m) => {
+        m.node.querySelector(".joined")?.remove();
+        if (m !== lead) m.choose(false);
+      });
+      updateCount();
+    };
+    for (const m of members) {
+      if (m !== lead) m.putAt(lead.where());
+      m.choose(true);
+      m.node.querySelector(".body").insertBefore(el("p", { class: "small joined" },
+        `Plans ${members.map((x) => x.plan.index).join(" + ")}: one floor, its parts drawn where they stand (their room labels carry on one numbering). `,
+        el("button", { type: "button", class: "btn-link", "data-testid": "plans-apart", onclick: apart }, "These are separate")),
+      m.node.querySelector(".body .title").nextSibling);
+    }
+  }
+  /** Whether plans (cards) can be read as one floor: nothing else is drawn between any two. */
+  const joinable = (members) => members.every((a) => members.every((b) => a === b || (a.plan.joins || []).includes(b.plan.index)));
   // The plans are found at the drawing's scale, so other units mean finding them again.
   const unitChoice = el("select", { onchange: () => findPlans(code, drawing, area, unitChoice.value) },
     Object.entries(UNITS).map(([u, label]) => el("option", { value: u, selected: u === result.units }, label)));
@@ -732,23 +761,37 @@ async function showPlans(code, drawing, area, result, found = null, jobId = null
       } else if (hostless) {
         c.say(`${building} has no floor ${floor} for this mezzanine to stand in: add that floor too (choose its plan), or give it another floor.`, true);
         clash = `${building} has no floor ${floor}`;
+      } else if (c.chosen() && others.length && joinable(byPlace.get(key))) {
+        c.say(`Read with ${others.join(", ")} as one ${type === "floor" ? "floor" : type}: its parts drawn where they stand, read as the area spanning them.`);
       } else if (!others.length) {
         const onHost = mezzanine && c.chosen() ? `Stands in ${c.host() ? c.host().name : `floor ${floor}, added with it`}.`
           : type === "roof" && c.chosen() ? "The roof: its open ground the roof's deck, the rooms standing on it indoor."
             : c.plan.upper ? "The roof of what stands on the roof (stair and lift rooms): not a level people use." : "";
         c.say(has && c.replacing() ? `Replaces the drawing of ${has.name}: its rooms keep their IDs.` : onHost);
       } else if (c.chosen()) {
-        c.say(`${others.join(", ")} is also ${what} of ${building}: give one of them another ${coded ? "code" : "floor"} or building.`, true);
+        c.say(`${others.join(", ")} is also ${what} of ${building}, and something else is drawn between them, so they cannot be read as one: give one of them another ${coded ? "code" : "floor"} or building.`, true);
         clash = `Two plans are ${what} of ${building}`;
       } else c.say(`${what[0].toUpperCase()}${what.slice(1)} of ${building} is ${others.join(", ")}. To add this plan too, give it another building or ${coded ? "code" : "floor"}.`);
     }
-    add.textContent = clash || (chosen.length ? `Add ${chosen.length} floor${chosen.length === 1 ? "" : "s"}` : "Choose plans to add");
+    const levels = byPlace.size; // (parts of one floor: one)
+    add.textContent = clash || (chosen.length ? `Add ${levels} floor${levels === 1 ? "" : "s"}` : "Choose plans to add");
     add.disabled = !chosen.length || clash !== null;
   };
   cards.forEach((c) => c.onChange(updateCount));
   updateCount();
   add.addEventListener("click", async () => {
-    const plans = cards.filter((c) => c.chosen()).map((c) => c.value());
+    const byPlace = new Map();
+    cards.filter((c) => c.chosen()).forEach((c) => byPlace.set(c.place().key, [...(byPlace.get(c.place().key) || []), c]));
+    const plans = [...byPlace.values()].map((members) => {
+      if (members.length === 1) return members[0].value();
+      // parts of one floor: the largest's settings, read as the area spanning them all
+      const v = members.reduce((a, b) => (b.area > a.area ? b : a)).value();
+      const r = members.map((m) => m.plan.region);
+      v.region = [Math.min(...r.map((x) => x[0])), Math.min(...r.map((x) => x[1])), Math.max(...r.map((x) => x[2])), Math.max(...r.map((x) => x[3]))];
+      v.title = members.map((m) => m.plan.title).find(Boolean) || null;
+      v.parts = members.map((m) => m.plan.index);
+      return v;
+    });
     try {
       await runJob(api(`projects/${code}/floors`, { drawing, units: result.units, plans }));
       toast("Floors added and converted");
@@ -948,6 +991,22 @@ function planCard(plan, top, levels, project, mainRoof = false) {
     /** A roof's: the building's highest floor at or above its number (a roof is the top), or null. */
     floorAbove: () => (topFloor() !== null && topFloor() >= Number(floor.value) ? topFloor() : null),
     replacing: () => replace.checked,
+    /** Where it goes (location, building, level, floor, code): for another plan, a part of the same floor. */
+    where: () => ({ location: location.value, locationName: locationName.value, building: building.value,
+      buildingName: buildingName.value, kind: kind.value, floor: floor.value, code: code.value }),
+    /** Put where ``w`` (another plan's ``where()``) goes: a part of that floor. */
+    putAt: (w) => {
+      location.value = w.location;
+      locationName.value = w.locationName;
+      fillBuildings();
+      building.value = w.building;
+      buildingName.value = w.buildingName;
+      kind.value = w.kind;
+      floor.value = w.floor;
+      code.value = w.code;
+      follow();
+      show();
+    },
     /** The chosen building's next floor (0 for a new building), chosen. */
     nextFloor: () => {
       const b = chosenBuilding();

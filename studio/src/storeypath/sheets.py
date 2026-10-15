@@ -10,6 +10,7 @@ walls, so the plans line up where their walls overlap most.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 import ezdxf.bbox
@@ -18,8 +19,8 @@ import shapely
 from ezdxf.document import Drawing
 from shapely.geometry import box
 
-from .extract import (CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, _wall_hatch, modelspace_entities,
-                      plan_entities)
+from .extract import (CURVE_TOLERANCE_M, _center, _entity_index, _flatten, _text_lines, _walk, _wall_hatch,
+                      modelspace_entities, plan_entities)
 from .geometry import as_polygons
 from .profile import Profile
 from .walls import wall_mass
@@ -182,6 +183,82 @@ def _wall_groups(walls, depth: int = 0, titled=None) -> list[list]:
         else:
             out.append(members)
     return out
+
+
+NOT_A_FLOOR = "not a floor"  # (floor_parts: a plan found that is no floor's)
+JOIN_STRAYS = 25  # things of their own drawn between the parts of one floor (notes, an arrow): a legend is more
+LABEL_NUMBER = re.compile(r"^(?P<stem>\S*[^\d\s])(?P<number>\d{1,4}[A-Za-z]?)$")  # Q.2.07: Q.2., 07
+
+
+def joinable(doc: Drawing, parts, others=()) -> bool:
+    """Whether plans (``parts``: their regions, drawing units) can be read as one floor:
+    parts of a floor drawn where they stand (a building's two wings), read as the box
+    spanning them, so nothing else may be drawn in it outside them: no other plan
+    (``others``: their regions), and no more than JOIN_STRAYS things that touch none of
+    them (a line crossing them, the floor's grid, is theirs)."""
+    x0, y0 = min(p[0] for p in parts), min(p[1] for p in parts)
+    x1, y1 = max(p[2] for p in parts), max(p[3] for p in parts)
+    if any(o[0] < x1 and o[2] > x0 and o[1] < y1 and o[3] > y0 for o in others):
+        return False
+    _, centres, boxes = _entity_index(doc)
+    if not len(boxes):
+        return True
+    within = (centres[:, 0] >= x0) & (centres[:, 0] <= x1) & (centres[:, 1] >= y0) & (centres[:, 1] <= y1)
+    theirs = np.zeros(len(boxes), dtype=bool)
+    for px0, py0, px1, py1 in parts:
+        theirs |= (boxes[:, 0] <= px1) & (boxes[:, 2] >= px0) & (boxes[:, 1] <= py1) & (boxes[:, 3] >= py0)
+    return int((within & ~theirs).sum()) <= JOIN_STRAYS
+
+
+def numbering(texts, region) -> str | None:
+    """What a plan's room labels share before their numbers (Q.2. of Q.2.07 and Q.2.34),
+    when most of them do: parts of one floor carry on one numbering, and two floors'
+    differ (Q.1., Q.2.). Only a code's stem counts: one with a space in it is a
+    room's name (OFFICE 12), the same on every floor. None when they share none."""
+    x0, y0, x1, y1 = region
+    stems: Counter = Counter()
+    for text, (x, y), _ in texts:
+        if not (x0 <= x <= x1 and y0 <= y <= y1):
+            continue
+        m = LABEL_NUMBER.match(text.strip())
+        if m and len(m["stem"]) >= 2 and len(text) <= 24:
+            stems[m["stem"].upper()] += 1
+    if not stems:
+        return None
+    stem, count = stems.most_common(1)[0]
+    return stem if count >= 3 and count >= 0.3 * sum(stems.values()) else None
+
+
+def floor_parts(doc: Drawing, regions: list, floors: list) -> tuple[list[list[int]], list, list[str | None]]:
+    """For plans found (``regions``; ``floors``: the floor each one's title says, None when
+    it says none, NOT_A_FLOOR for a plan that is no floor's: a section, a detail),
+    each one's: the others it can be read together with as one floor (joinable); the
+    group it is suggested in as one floor's parts, or None (plans that carry on one
+    numbering, can be read together, and whose titles say no different floors); and its
+    numbering. Plans by their places in ``regions``."""
+    texts = _texts(doc)
+    stems = [numbering(texts, r) for r in regions]
+    n = len(regions)
+    joins: list[list[int]] = [[] for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            rest = [regions[k] for k in range(n) if k not in (i, j)]
+            if joinable(doc, [regions[i], regions[j]], rest):
+                joins[i].append(j)
+                joins[j].append(i)
+    group = list(range(n))  # (each plan's group, by its first)
+    for i in range(n):
+        for j in joins[i]:
+            if j < i or NOT_A_FLOOR in (floors[i], floors[j]) or not stems[i] or stems[i] != stems[j]:
+                continue
+            if floors[i] is None or floors[j] is None or floors[i] == floors[j]:
+                gi, gj = group[i], group[j]
+                group = [gi if g == gj else g for g in group]
+    together = {}
+    for i, g in enumerate(group):
+        together.setdefault(g, []).append(i)
+    suggested = [m for m in together.values() if len(m) > 1 and all(b in joins[a] for a in m for b in m if a != b)]
+    return [joins[i] for i in range(n)], [next((m for m in suggested if i in m), None) for i in range(n)], stems
 
 
 def _courtyards_joined(groups: list[list], gap: float, holds=lambda blob: True) -> list[list]:

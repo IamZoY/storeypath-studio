@@ -388,6 +388,7 @@ dialog.it-import h2 { text-transform: none; letter-spacing: 0; color: var(--text
   min-height: var(--hit-sm); padding: 0 var(--sp-1); text-align: left;
 }
 .dv-legend-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); }
+.plan .joined { margin: 0; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-sm); background: var(--surface-2); }
 .dv-mark, .plan .plan-no {
   flex: none; display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding: 0 6px; border-radius: var(--r-xs);
   background: var(--select); color: var(--text-on-accent); font-size: var(--fs-xs); font-weight: var(--fw-bold); white-space: nowrap;

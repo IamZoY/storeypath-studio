@@ -49,6 +49,12 @@ project and everything in it, once you type its name.
   ground, -1 a basement), name, height and parapet: Studio fills them in from the
   titles and the sections. Several plans on one sheet, one file per floor, an
   outbuilding on the same sheet: all work.
+- **A floor drawn in parts** (a building's two wings, drawn where they stand with open
+  ground between them) is found as a plan per part. Plans whose room labels carry on
+  one numbering (Q.2.01 to Q.2.33 in one, Q.2.34 on in the other) are offered as
+  one floor; *These are separate* says otherwise. Any plans can be made one floor by
+  giving them the same building and floor: the floor reads the area spanning them, so
+  Studio refuses when something else is drawn between them (another plan, a legend).
 - **Units.** If Studio is not sure of the units it says so; choose them from the
   list and the plans are found again.
 - **Add the chosen plans as floors**: Studio lines each building's floors up, reads

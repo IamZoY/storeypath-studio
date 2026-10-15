@@ -923,7 +923,7 @@ class Studio:
             raise ValueError(f"unknown units {units!r}: use one of {', '.join(UNIT_NAMES)}")
 
         def run(job: Job):
-            from .sheets import find_views
+            from .sheets import NOT_A_FLOOR, find_views, floor_parts
 
             job.say(f"reading {name}")
             with self._files(code, [name]) as folder:
@@ -996,6 +996,14 @@ class Studio:
                         o["above_host"] = round(level - host_level, 2)
             found.add_plans(marked)
             job.say(f"levels: {found.summary()}" if found.summary() else "no floor levels on its sections or plans")
+            # parts of one floor drawn where they stand (a building's two wings): which plans
+            # can be read together, nothing else drawn between them; and those that carry on
+            # one numbering, offered together
+            joins, together, _ = floor_parts(doc, [v.region for v in views],
+                                             [o["floor"] if o["kind"] == "floor_plan" else NOT_A_FLOOR for o in out])
+            for i, o in enumerate(out):
+                o["joins"] = [views[j].index for j in joins[i]]
+                o["together"] = [views[j].index for j in together[i]] if together[i] and o["kind"] == "floor_plan" else None
             levels = {"summary": found.summary() or None, "heights": {str(n): h for n, h in found.heights.items()},
                       "height": found.typical_height(), "roof": found.roof, "parapet": found.parapet,
                       "default_parapet": DEFAULT_PARAPET_M}
