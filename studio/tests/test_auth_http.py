@@ -205,6 +205,10 @@ ROWS = [
         hidden=OUTSIDE),
     Row("POST", C + "/drawings/{missing}/plans", {}, ok=(404, "no drawing"), passes={"admin", "owner"},
         hidden=OUTSIDE),
+    # a drawing drawn whole for the drawing viewer, and the view made: as its words
+    Row("POST", C + "/drawings/{missing}/view", {}, ok=(404, "no drawing"), passes={"admin", "owner"}, hidden=OUTSIDE),
+    Row("GET", C + "/drawings/{drawing}/view", ok=(404, "not drawn whole yet"), passes={"admin", "owner"},
+        hidden=OUTSIDE),
     Row("POST", C + "/floors", {"drawing": "hq-level-0.dxf", "plans": [
         {"building_id": "{annex}", "ordinal": 0, "region": [0, 0, 1, 1]}]}, ok=(400, "already has floor 0"),
         passes={"admin", "owner"}, hidden=OUTSIDE),

@@ -2,7 +2,8 @@
 
 Studio's pages are plain HTML, CSS and ES modules, served as they are (no build step,
 no framework): `index.html` (projects, a project, item types, users, GPU helpers:
-`studio.js`, `itemtypes.js`, `users.js`, `helpers.js`),
+`studio.js`, `itemtypes.js`, `users.js`, `helpers.js`; a drawing whole, over a project's
+page: `drawview.js`, below),
 `login.html`, `navigate.html`, `world.html` (a building in 3D, the whole window: `world.js`,
 `world.css`), and **Review** (`review.html` and `review/`), the floor editor. This note is
 mostly about Review, for whoever adds to it.
@@ -23,6 +24,17 @@ building, turning slowly in the dollhouse (`T` stops it), `Esc` back. What it sh
 in its address (`mode`, `xray`, `cutaway`, `explode`, `items`, `hidden`, `style`,
 `quality`, `floor`), and only a package of Studio's own (`/api/projects/…`) is read.
 `tests/browser/world.mjs` drives it.
+
+## The drawing viewer
+
+`drawview.js` shows a drawing whole, as its own program draws it, over the project's page:
+*View* beside each drawing (the parts read as floors outlined and named), and *See the
+whole drawing* over the plans Find plans found (each outlined with its card's number; one
+clicked there is ticked to add). Studio draws it once on the server (`drawview.py`, which
+says how the file it sends is made); here its lines, fills and points go to WebGL as they
+come (three.js, a batch a layer and colour), and its texts are written by the browser on a
+canvas over them, each as wide as the drawing sets it. CAD or Print, the layers shown and
+hidden, the pointer in metres; drag, the wheel, a pinch, − + and Fit (F or 0), Esc to close.
 
 ## What Review is made of
 

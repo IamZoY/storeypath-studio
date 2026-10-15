@@ -1,6 +1,7 @@
 """The calls of projects: the list, a new one, a file opened, jobs, a project's page,
-deleting it, its history (and each person's undo and redo), sharing it, its drawings,
-its floors added and read again, its buildings and sites, and its packages."""
+deleting it, its history (and each person's undo and redo), sharing it, its drawings
+(and each drawn whole, to look at), its floors added and read again, its buildings and
+sites, and its packages."""
 
 from __future__ import annotations
 
@@ -8,6 +9,7 @@ import logging
 import time
 
 from fastapi import Request, Response
+from starlette.responses import FileResponse
 
 from ..accounts import Refused
 from ..bundle import ProjectExists
@@ -187,6 +189,24 @@ def upload(code: str, name: str, request: Request, may: May, studio: TheStudio, 
 def plans(code: str, name: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.project(code, "edit")
     return answer(request, studio.plans(code, name, body.get("units") or None, by=may.uid))
+
+
+@calls.post(P + "/drawings/{name}/view")
+def view(code: str, name: str, request: Request, may: May, studio: TheStudio):
+    """A drawing drawn whole for the drawing viewer (drawview.py): where to get it when it
+    is made, else the job that makes it. Who may see its words may see it."""
+    may.project(code, "edit")
+    return answer(request, studio.view(code, name, by=may.uid))
+
+
+@calls.get(P + "/drawings/{name}/view")
+def view_file(code: str, name: str, request: Request, may: May, studio: TheStudio):
+    """The view made, sent from the disk as it is (gzip already: not compressed again;
+    the page opens it). Asked for by its key (?v=, Studio.view's url): kept by the browser."""
+    may.project(code, "edit")
+    path = studio.view_file(code, name)
+    return answer(request, FileResponse(path, media_type="application/gzip",
+                                        headers={"Cache-Control": "private, max-age=86400"}))
 
 
 @calls.post(P + "/floors")

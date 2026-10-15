@@ -71,11 +71,12 @@ Everything is kept in Studio's own database, PostgreSQL with PostGIS
 floors, spaces, corrections and items, the drawings as sent and every package as it
 was exported — the catalogue of item types, the accounts, who each project is shared
 with, the audit log and the history of every change. The data folder holds only
-Studio's certificate (`tls/`) and its cache (`cache/`: prints of floors, and drawings
-put in files while a step reads them), both made again when gone. A data folder of an
-older Studio (`<code>/<code>.spproj` with its drawings and exports, `catalogue.json`,
-`studio.db`) is brought into the database at the first start, or with `storeypath db
-import --data <folder>`; nothing in it is changed or deleted.
+Studio's certificate (`tls/`) and its cache (`cache/`: prints of floors, drawings drawn
+whole for the drawing viewer, and drawings put in files while a step reads them), both
+made again when gone. A data folder of an older Studio (`<code>/<code>.spproj` with its
+drawings and exports, `catalogue.json`, `studio.db`) is brought into the database at the
+first start, or with `storeypath db import --data <folder>`; nothing in it is changed or
+deleted.
 
 To reach Studio from other machines, serve on all interfaces (`--host 0.0.0.0`).
 It answers only to its own names: localhost, this machine's name and any address;
@@ -226,6 +227,7 @@ log).
 | `POST …/owner {user}`, `GET admin/users`, `POST admin/users…`, `GET admin/audit` | admin (a new owner: the one before keeps share on the whole project) |
 | `GET users` | someone who may share something, or an admin: active users' id, username and name |
 | `PUT …/drawings/<name>`, `POST …/incoming/…`, `GET …/drawings/<name>/words`, `POST …/drawings/<name>/plans` | edit on the project (a drawing is the project's, and may hold several floors) |
+| `POST …/drawings/<name>/view`, `GET …/drawings/<name>/view` | edit on the project, as its words: the drawing drawn whole for the drawing viewer, every layer as its own program shows it ([drawview.py](src/storeypath/drawview.py)). The POST answers where to get it (`{drawing, key, bytes, url}`) once it is made (once for the drawing's content, kept in Studio's cache), else the job that makes it (in a read worker when there are any: a big floor's takes a minute, never while a request waits); the GET sends it (`application/gzip`, as it is kept: never compressed again on the way), 404 until it is made |
 | `POST …/floors` (add floors) | view on the project (the drawing is the project's) and edit on each building they go into (on the project for a new building) |
 | `POST …/convert` | edit on the project; with `floor`, edit on that floor |
 | `POST …/buildings/<id>/site`, `…/placement` | edit on the building |

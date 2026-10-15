@@ -320,7 +320,8 @@ async function resume(code, p, plansArea) {
   if (plans && !addedSince && !plansClosed().includes(plans.id) && findingPlans === null && !plansArea.childElementCount) {
     showPlans(code, plans.about, plansArea, plans.result, plans.ended, plans.id);
   }
-  const left = going.filter((j) => !following.has(j.id)).reverse(); // the oldest first, as they run
+  // the oldest first, as they run (a drawing drawn for the viewer changes nothing: not followed)
+  const left = going.filter((j) => !following.has(j.id) && j.kind !== "view").reverse();
   if (!left.length) return;
   for (const job of left) {
     try {
@@ -468,12 +469,54 @@ function drawingsCard(code, p, plansArea) {
     el("div", { id: "waiting" }), // (resume: the drawings sent that wait for the person to choose what to keep)
     p.drawings.length ? el("ul", { class: "drawings" }, p.drawings.map((d) =>
       el("li", {}, el("code", { class: "grow" }, d),
+        el("button", { type: "button", title: "The whole drawing as it is drawn, every layer, with the parts read as floors outlined",
+          onclick: () => viewDrawing(code, d, floorMarks(p, d)) }, "View"),
         el("a", { class: "button", href: `/api/projects/${encodeURIComponent(code)}/drawings/${encodeURIComponent(d)}/words`,
           target: "_blank", title: "Every word and string left in this drawing, to look through for anything private left behind" },
           "Words"),
         el("button", { type: "button", "data-drawing": d, disabled: findingPlans !== null,
           onclick: () => findPlans(code, d, plansArea) }, findingPlans === d ? "Finding plans…" : "Find plans")))) : null,
   );
+}
+
+// ---- the drawing viewer (drawview.js) --------------------------------------------------------
+
+let viewing = null; // the drawing being drawn for the viewer (one at a time)
+
+/** A drawing whole, as drawn, over the page (``options``: drawview.js's showDrawing): drawn on
+ * the server the first time (a job: a big drawing takes a minute, its progress shown), then
+ * opened. */
+async function viewDrawing(code, drawing, options = {}) {
+  if (viewing) return;
+  viewing = drawing;
+  try {
+    const [{ showDrawing }, asked] = await Promise.all([import("./drawview.js"),
+      api(`projects/${code}/drawings/${encodeURIComponent(drawing)}/view`, {})]);
+    const made = asked.state ? await runJob(asked) : asked; // (a job: drawn first)
+    viewing = null;
+    await showDrawing(made.url, { title: drawing, ...options });
+  } catch (e) {
+    toast(`${drawing}: ${e.message}`, true);
+  } finally {
+    viewing = null;
+  }
+}
+
+/** The parts of a drawing read as floors, as the viewer outlines them (and the units they
+ * were read in, for its metres). */
+function floorMarks(p, drawing) {
+  const marks = [];
+  let units = null;
+  for (const loc of p.locations) {
+    for (const b of loc.buildings) {
+      for (const f of b.floors.filter((f) => f.drawing === drawing)) {
+        const named = `${f.name} · ${b.name}`;
+        marks.push({ label: named, title: f.region ? named : `${named} (the whole drawing)`, region: f.region });
+        units ??= f.units;
+      }
+    }
+  }
+  return { marks, units, legend: "Read as floors" };
 }
 
 // What a drawing holds that is private, found as it is added: each goes unless it is
@@ -625,6 +668,21 @@ async function showPlans(code, drawing, area, result, found = null, jobId = null
     Object.entries(UNITS).map(([u, label]) => el("option", { value: u, selected: u === result.units }, label)));
   const add = el("button", { class: "primary", type: "button" }, "Add the chosen plans as floors");
   const cancel = el("button", { type: "button", "data-testid": "plans-cancel", title: "Put these plans away, adding no floor" }, "Cancel");
+  // the drawing whole, each plan outlined with its card's number: one clicked there is chosen
+  const whole = el("button", { type: "button", "data-testid": "plans-whole",
+    title: "The whole drawing as it is drawn, each plan found outlined with its card's number" }, "See the whole drawing");
+  whole.addEventListener("click", () => viewDrawing(code, drawing, {
+    units: result.units, legend: "Plans found", pickLabel: "Add as a floor",
+    marks: cards.map((c) => ({ label: String(c.plan.index), region: c.plan.region, card: c,
+      title: `${c.plan.title || `Untitled plan ${c.plan.index}`} · ${KIND[c.plan.kind] || c.plan.kind} · ${c.plan.size[0]} × ${c.plan.size[1]} m` })),
+    onPick: (m) => {
+      m.card.choose(true);
+      updateCount();
+      m.card.node.classList.add("picked");
+      setTimeout(() => m.card.node.classList.remove("picked"), 2400);
+      m.card.node.scrollIntoView({ behavior: "smooth", block: "center" });
+    },
+  }));
   cancel.addEventListener("click", () => {
     if (jobId) closePlans(jobId);
     area.replaceChildren();
@@ -674,7 +732,7 @@ async function showPlans(code, drawing, area, result, found = null, jobId = null
       ? `Levels in the drawing: ${result.levels.summary}. Each floor's height and parapet are set from them.`
       : `No floor levels on its sections or plans: floors are ${result.levels.height} m high unless you change them.`),
     el("p", { class: "muted small" }, "Choose the plans that are floors; Studio lines them up and finds the rooms."),
-    el("div", { class: "row" }, el("label", { class: "check" }, "Units ", unitChoice), el("span", { class: "grow" }), cancel, add),
+    el("div", { class: "row" }, el("label", { class: "check" }, "Units ", unitChoice), el("span", { class: "grow" }), whole, cancel, add),
     el("div", { class: "plans" }, cards.map((c) => c.node)),
   ));
   area.scrollIntoView({ behavior: "smooth" });
@@ -742,7 +800,8 @@ function planCard(plan, top, levels, project) {
   const node = el("article", { class: "plan" },
     thumbnail(plan),
     el("div", { class: "body" },
-      el("div", { class: "row" }, el("span", { class: `badge ${isFloor ? "plan-kind" : ""}` }, KIND[plan.kind] || plan.kind),
+      el("div", { class: "row" }, el("span", { class: "plan-no", title: "Its number on the whole drawing (See the whole drawing)" },
+        String(plan.index)), el("span", { class: `badge ${isFloor ? "plan-kind" : ""}` }, KIND[plan.kind] || plan.kind),
         el("span", { class: "muted small" }, `${plan.size[0]} × ${plan.size[1]} m`)),
       el("div", { class: "title" }, plan.title || `Untitled plan ${plan.index}`),
       el("label", { class: "check" }, check, "Add as a floor"),

@@ -35,11 +35,20 @@ project and everything in it, once you type its name.
   keep, then only the cleaned copy is kept, as `drawing-1.dxf`; the file you sent,
   and its name, are not. **Words**, beside each drawing, lists every word left in
   it.
+- **View**, beside each drawing, shows it whole, as it is drawn: every line, hatch,
+  fill, text, block and dimension, on every layer, in its own colours on dark (*CAD*)
+  or black on white (*Print*), with the parts read as floors outlined and named. Drag
+  to move it, scroll or pinch to zoom (or − and +), *Fit* (F) frames it; *Layers*
+  shows or hides each one; the foot of the window says where the pointer is, in
+  metres. Studio draws a drawing for it the first time (a big one takes a minute, its
+  progress shown), then it opens at once.
 - **Find plans** lists every drawing on the sheets with its title, size and a
-  thumbnail. Tick the ones that are floors and say, for each, its location,
-  building, floor number (0 ground, -1 a basement), name, height and parapet:
-  Studio fills them in from the titles and the sections. Several plans on one sheet,
-  one file per floor, an outbuilding on the same sheet: all work.
+  thumbnail; *See the whole drawing* shows the drawing whole, each plan found
+  outlined with its card's number (click one there to add it as a floor). Tick the
+  ones that are floors and say, for each, its location, building, floor number (0
+  ground, -1 a basement), name, height and parapet: Studio fills them in from the
+  titles and the sections. Several plans on one sheet, one file per floor, an
+  outbuilding on the same sheet: all work.
 - **Units.** If Studio is not sure of the units it says so; choose them from the
   list and the plans are found again.
 - **Add the chosen plans as floors**: Studio lines each building's floors up, reads

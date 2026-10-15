@@ -40,6 +40,9 @@ each call needs is checked first in route() (the table is in studio/README.md):
     GET  /api/projects/<code>/drawings/<name>/words  every word and string left in it (text), to look
                                                through for anything private left behind
     POST /api/projects/<code>/drawings/<name>/plans {units?}  → job: its units and the plans in it
+    POST /api/projects/<code>/drawings/<name>/view   the drawing drawn whole for the drawing
+                                               viewer (drawview.py): where to get it, or a job
+                                               that makes it; GET …/view: the view (gzip)
     POST /api/projects/<code>/floors {drawing, units, plans: [...]}  → job: add, align, convert
     POST /api/projects/<code>/convert          → job
     POST /api/projects/<code>/buildings/<id>/placement {lat, lon, bearing, x?, y?}
@@ -191,10 +194,11 @@ class Job:
 class Jobs:
     """Long steps, run in the background one at a time in each of LANES: a floor read
     because a person drew on it (seconds) goes in a lane of its own, never behind a
-    drawing read whole (minutes); within a lane, one at a time (drawings are large).
-    Each is kept, to be followed or listed again, until it ended JOBS_KEPT_S ago."""
+    drawing read whole (minutes), and so does a drawing drawn whole for the drawing viewer
+    (a person waits to see it); within a lane, one at a time (drawings are large). Each
+    is kept, to be followed or listed again, until it ended JOBS_KEPT_S ago."""
 
-    LANES = ("steps", "drawn")
+    LANES = ("steps", "drawn", "views")
 
     def __init__(self, data: Path | None = None, drawn: int = 1):
         """``drawn``: floors read at once because people drew on them (a read of one floor
@@ -277,6 +281,8 @@ CACHE = "cache"  # in the data folder: what is made again when gone (prints of f
 WORK = "work"  # in the cache: drawings read from the database for a step, removed after it
 TILES = "tiles"  # in the cache: drawings printed for the vision model, kept for a floor read again
 READS = "reads"  # in the cache: each floor's last read, for it read again after a person drew on it
+VIEWS = "views"  # in the cache: drawings drawn whole for the drawing viewer (drawview.py), by their content
+VIEWS_KEPT = 40  # views kept of a project (a big drawing's is some MB), the latest used
 
 
 class Studio:
@@ -330,6 +336,7 @@ class Studio:
         self._helpers_from_env = [dict(h) for h in getattr(self.vision, "helpers_said", list)()]
         self._opening = threading.Lock()  # one file opened at a time (Studio.open)
         self._pending: dict[str, dict] = {}  # drawings sent, waiting for a person to choose what goes
+        self._viewing: dict[tuple[str, str], Job] = {}  # (code, view key) → the job drawing it (view)
         self.store.drop_incoming()  # sent and never kept (Studio stopped meanwhile): not kept
         import shutil
 
@@ -603,9 +610,14 @@ class Studio:
                     "site": {**positions[b.code].model_dump(), "set": whole_b.site is not None},
                     "footprint": _rings(footprint(b)),
                     "centre": [round(centre.x, 2), round(centre.y, 2)] if centre is not None else None,
+                    # (each floor's part of its drawing, in drawing units, and how it was read:
+                    # the drawing viewer outlines it)
                     "floors": [{"id": f"{b_id}-{f.code}", "name": f.name, "ordinal": f.ordinal,
                                 "drawing": Path(f.source.path).name if f.source else None,
                                 "view": f.source.view if f.source else None,
+                                "region": list(f.source.region) if f.source and f.source.region else None,
+                                "offset": list(f.source.offset) if f.source and f.source.offset else None,
+                                "units": f.source.units if f.source else None,
                                 "layers": f.layers, "converted": f.converted_at is not None,
                                 "method": f.method, "rooms": rooms.get(f"{b_id}-{f.code}", 0),
                                 "items": items.get(f"{b_id}-{f.code}", 0)}
@@ -800,6 +812,7 @@ class Studio:
                 self._reviews.pop(code, None)
                 self._project_locks.pop(code, None)
             shutil.rmtree(self.cache / "prints" / code, ignore_errors=True)
+            shutil.rmtree(self.cache / VIEWS / code, ignore_errors=True)
         finally:
             lock.release()
         return {"deleted": code, "name": ws.project.name}
@@ -813,6 +826,82 @@ class Studio:
         if self.store.drawing(code, name) is None:
             raise NotFound(f"no drawing {name}")
         return name
+
+    # ---- a drawing drawn whole, for the drawing viewer -----------------------------
+
+    def view(self, code: str, name: str, by=None) -> dict | Job:
+        """A drawing drawn whole for the drawing viewer (drawview.py), as its own program
+        shows it: where to get it when it is made already (made once for its content,
+        kept in the cache), else the job that makes it. A big drawing takes minutes: never
+        while a request waits (a proxy in front of Studio stops waiting). In a read worker
+        when there are any (workers.py): drawing it holds up nothing of the web server's."""
+        name = self._drawing(code, name)
+        key = self._view_key(code, name)
+        if self._view_path(code, key).is_file():
+            return self._view_made(code, name, key)
+        uid = _uid(by)
+
+        def run(job: Job):
+            from .drawview import write_view
+
+            out = self._view_path(code, key)
+            if not out.is_file():
+                with self._files(code, [name]) as folder:
+                    drawing = folder / "drawings" / name
+                    if self.readers is not None:
+                        made = self.readers.view(key, {"drawing": str(drawing), "out": str(out)}, job.say)
+                    else:
+                        from .vision import _DRAWING
+
+                        made = write_view(drawing, out, say=job.say, lock=_DRAWING)
+                job.say(f"drawn in {made['seconds']:.0f} s: {made['bytes'] / 1e6:.1f} MB to send")
+                self._prune_views(code, keep=out)
+            return self._view_made(code, name, key)
+
+        with self._lock:  # (asked twice while it is drawn: the same job)
+            going = self._viewing.get((code, key))
+            if going is not None and going.ended is None:
+                return going
+            job = self.jobs.submit(f"Getting {name} ready to view", run, project=code, user=uid, kind="view",
+                                   about=name, lane="views")
+            self._viewing = {k: j for k, j in self._viewing.items() if j.ended is None}
+            self._viewing[(code, key)] = job
+        return job
+
+    def view_file(self, code: str, name: str) -> Path:
+        """The drawing's view, made (view): NotFound until it is."""
+        name = self._drawing(code, name)
+        path = self._view_path(code, self._view_key(code, name))
+        if not path.is_file():
+            raise NotFound(f"{name} is not drawn whole yet: ask for it to be (POST …/view)")
+        path.touch()  # (the latest used are kept: _prune_views)
+        return path
+
+    def _view_key(self, code: str, name: str) -> str:
+        from .drawview import VIEW_VERSION
+
+        sha = (self.store.drawing(code, name) or {}).get("sha256") or ""
+        return f"{sha[:32]}-{VIEW_VERSION}"
+
+    def _view_path(self, code: str, key: str) -> Path:
+        return self.cache / VIEWS / code / f"{key}.view"
+
+    def _view_made(self, code: str, name: str, key: str) -> dict:
+        from urllib.parse import quote
+
+        size = self._view_path(code, key).stat().st_size
+        return {"drawing": name, "key": key, "bytes": size,
+                "url": f"/api/projects/{quote(code)}/drawings/{quote(name)}/view?v={key}"}
+
+    def _prune_views(self, code: str, keep: Path) -> None:
+        """A project's views: those of an older VIEW_VERSION gone, and all but the
+        VIEWS_KEPT latest used."""
+        folder = self.cache / VIEWS / code
+        views = sorted(folder.glob("*.view"), key=lambda p: p.stat().st_mtime, reverse=True)
+        same = keep.stem.rsplit("-", 1)[0]
+        for i, path in enumerate(views):
+            if path != keep and (i >= VIEWS_KEPT or path.stem.rsplit("-", 1)[0] == same):
+                path.unlink(missing_ok=True)
 
     def plans(self, code: str, name: str, units: str | None = None, by=None) -> Job:
         """The plans in a drawing, read in ``units``, or in the units it shows."""
