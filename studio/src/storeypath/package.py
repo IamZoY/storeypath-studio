@@ -14,7 +14,7 @@ from typing import Annotated, Generic, Literal, TypeVar, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .catalogue import OLD_CATEGORIES, Category
-from .types import OpeningType, SpaceType
+from .types import FloorType, OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
 FORMAT_VERSION = "0.11.0"
@@ -104,19 +104,23 @@ class FloorProps(_Props):
     name: str
     building_id: str
     ordinal: int = Field(description="0 = ground floor, negative = below ground; a mezzanine's is its host floor's. "
-                                     "A building has one floor of each ordinal that is not a mezzanine, and any "
-                                     "number of mezzanines on it: its floors are in order of ordinal, then elevation")
+                                     "A building has one level of each ordinal that is not a mezzanine, and any "
+                                     "number of mezzanines on a floor: its levels are in order of ordinal, then "
+                                     "elevation")
     elevation: float = Field(description="meters above the building's ground floor")
-    height: float = Field(description="floor-to-floor height in meters (a mezzanine's: its own)")
-    mezzanine: bool = Field(False, description=(
-        "a floor standing in another floor of its building, over part of it (format 0.11): its host_floor_id, "
-        "its level above_host_m above that floor's"))
+    height: float = Field(description="floor-to-floor height in meters (a mezzanine's: its own; a roof's: the "
+                                      "rooms' standing on it)")
+    type: FloorType = Field(FloorType.FLOOR, description=(
+        "what level of its building it is (format 0.11): floor (a storey), mezzanine (a floor standing in another "
+        "floor of its building, over part of it: its host_floor_id, its level above_host_m above that floor's) or "
+        "roof (the building's roof as a level, at its top: its open deck a space of type roof, the rooms standing "
+        "on it indoor; no floor stands above it). Absent (before 0.11): floor"))
     host_floor_id: str | None = Field(None, description=(
-        "a mezzanine's host: the floor of its building it stands in, which is not a mezzanine and has its ordinal; "
-        "null for a floor that is not a mezzanine"))
+        "a mezzanine's host: the floor of its building it stands in, of type floor and of its ordinal; null for "
+        "any other level"))
     above_host_m: float | None = Field(None, gt=0, description=(
         "how far a mezzanine's level is above its host floor's, metres: its elevation is the host's and this; "
-        "null for a floor that is not a mezzanine"))
+        "null for any other level"))
     walls: Polygonal | None = Field(None, description="the walls as drawn, with their door and window gaps; "
                                                      "full height, except the parapets")
     wall_thickness_m: float | None = Field(None, description="the walls' typical thickness")
@@ -167,7 +171,7 @@ class SpaceProps(_Props):
     zones: list[str] = Field(default_factory=list, description=(
         "IDs of the zones this space is divided into, with no wall between them (empty: one use)"))
     outdoor: bool = Field(False, description=(
-        "open to the sky: a terrace or balcony with no windows of its own (a glazed veranda is not)"))
+        "open to the sky: a terrace, balcony or roof with no windows of its own (a glazed veranda is not)"))
     capacity: int | None = Field(None, ge=0, description=CAPACITY)
     capacity_from: Literal["review", "items"] | None = Field(None, description=CAPACITY_FROM)
     grade: Grade | None = Field(None, description=GRADE)

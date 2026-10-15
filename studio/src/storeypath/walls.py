@@ -116,6 +116,7 @@ class WallSpaces:
     fabric: Fabric | None = None
     envelope: object = None  # the building's extent: what the walls enclose, gaps in them bridged
     cut: list = field(default_factory=list)  # (found ``within`` a window) the areas its edge cuts through
+    grounds: list = field(default_factory=list)  # (``open_ground``) the open ground round the rooms, kept as spaces
 
 
 def open_issue(polygon: Polygon, open_edges) -> list[str]:
@@ -143,6 +144,7 @@ def spaces_from_walls(
     cfg: WallsConfig,
     min_area: float,
     within: tuple | None = None,
+    open_ground: bool = False,
 ) -> WallSpaces:
     """Spaces enclosed by walls. ``lines`` are wall-layer linework, ``fills`` solid
     wall areas (from hatches), ``doors`` the doors found, ``opening_lines`` the
@@ -151,7 +153,11 @@ def spaces_from_walls(
     ``within`` (envelope, window): the spaces of one part of a building found again,
     from what is drawn in and near it: the building's extent is ``envelope`` (as found
     for the whole), and areas the ``window``'s edge cuts through are left out (``cut``),
-    as are the outside's around the building (the whole is needed to tell them)."""
+    as are the outside's around the building (the whole is needed to tell them).
+
+    ``open_ground``: a roof's plan, whose open ground round the rooms standing on it (the
+    roof's deck, inside its parapets) would read as the outside round a building (a
+    garden, the yard inside a land line): it is kept, as spaces (``grounds``)."""
     mass = wall_mass(lines, fills, cfg)
     if mass.is_empty:
         return WallSpaces([], None, [])
@@ -173,7 +179,7 @@ def spaces_from_walls(
     # each line widened, then joined: widening thousands of lines joined in one is
     # very slow (minutes on a large building's door and window layers)
     glazing = shapely.union_all(shapely.buffer(opening_lines, cfg.max_thickness / 2 + 0.05)) if opening_lines else None
-    spaces, pockets, open_edges = [], [], []
+    spaces, pockets, open_edges, grounds = [], [], [], []
     regions = [r for r in as_polygons(envelope.difference(mass))
                if r.area >= min_area and not r.buffer(-cfg.min_width / 2).is_empty]
     cut, cut_edge = [], within[1].boundary.buffer(SNAP_M * 2) if within is not None else None
@@ -185,7 +191,7 @@ def spaces_from_walls(
         around |= _within_the_land_line(regions, envelope, around, built,
                                         ways.buffer(cfg.max_thickness / 2 + 0.05) if ways is not None else None)
     for k, region in enumerate(regions):
-        if k in around:
+        if k in around and not open_ground:
             pockets.append((region, "around"))  # the garden inside a plot wall, a sheet's frame: outside
             continue
         if cut_edge is not None and region.intersects(cut_edge):
@@ -204,8 +210,11 @@ def spaces_from_walls(
         open_edges.append(stretch)
         # Region edges sit SNAP_M off the wall lines; put them back on the lines. At a
         # very sharp corner that can break hairline slivers off: they are not rooms.
-        spaces += [p for p in as_polygons(region.buffer(SNAP_M, join_style="mitre").simplify(SIMPLIFY_M))
-                   if p.area >= min_area]
+        found = [p for p in as_polygons(region.buffer(SNAP_M, join_style="mitre").simplify(SIMPLIFY_M))
+                 if p.area >= min_area]
+        spaces += found
+        if k in around:  # (open_ground: a roof's deck)
+            grounds += found
 
     outline = envelope.difference(unary_union([p for p, _ in pockets])) if pockets else envelope
     outline = outline.buffer(-SNAP_M, join_style="mitre")
@@ -214,7 +223,7 @@ def spaces_from_walls(
     fabric = read_fabric(lines, fills, doors, opening_lines, cfg, built)
     fabric.windows = _one_per_window(fabric.windows + [_axis(b) for b in glazed_gaps])
     return WallSpaces(spaces, outline, pockets, doorways,
-                      shapely.union_all(open_edges) if open_edges else None, fabric, envelope, cut)
+                      shapely.union_all(open_edges) if open_edges else None, fabric, envelope, cut, grounds)
 
 
 SURROUNDS = 3  # an area with this many others inside or within its reach…

@@ -50,6 +50,12 @@ NTH_BASEMENT = re.compile(r"\b(?:(first|1st|second|2nd|third|3rd|fourth|4th)\s+(
 NTH = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3, "fourth": 4, "4th": 4}
 ROOF_WORDS = re.compile(r"\b(roof|terrace|penthouse)\b", re.IGNORECASE)
 MEZZANINE_WORDS = re.compile(r"\bmezz(anine)?\b", re.IGNORECASE)
+PENTHOUSE_WORDS = re.compile(r"\bpent\s?-?house\b", re.IGNORECASE)
+ROOF_WORD = re.compile(r"\broof\b", re.IGNORECASE)
+# the roof of what stands on the roof: a stair or lift room's, a penthouse's (levels reads
+# its level as the top, a plan titled so is an upper roof)
+TOP = re.compile(r"\b(stair|staircase|lift|machine|penthouse|upper|mumty|head\s*room)\b.*\broof\b"
+                 r"|\broof\b.*\b(stair|lift)\b", re.IGNORECASE)
 NOT_PLAN_WORDS = re.compile(r"\b(elevation|section|facade|detail)\b", re.IGNORECASE)
 
 
@@ -92,9 +98,14 @@ def find_views(doc: Drawing, profile: Profile, scale: float, auto: bool = False,
         v.index = i
         v.ordinal = _ordinal(v.title)
     top = max((v.ordinal for v in views if v.ordinal is not None), default=None)
-    for v in views:
-        if v.title and ROOF_WORDS.search(v.title) and v.ordinal is None:
-            v.ordinal = (top + 1) if top is not None else None
+    # above the numbered floors, in this order: a penthouse, the roof (or a terrace on it),
+    # the roof of what stands on the roof
+    above = [v for v in views if v.title and ROOF_WORDS.search(v.title) and v.ordinal is None]
+    order = ("penthouse", None, "roof", "upper roof")
+    rank = {v.index: order.index(said) if (said := title_level(v.title)) in order else 1 for v in above}
+    steps = sorted(set(rank.values()))
+    for v in above:
+        v.ordinal = top + 1 + steps.index(rank[v.index]) if top is not None else None
     return views
 
 
@@ -109,16 +120,25 @@ def _plans_by_walls(doc, scale, texts, is_room_name) -> list[View]:
     swing_pts = np.array([(x, y) for _, x, y in sc.swings]) if sc.swings else np.zeros((0, 2))
     room_pts = np.array([(x, y) for _, t, x, y in sc.texts if is_room_name and is_room_name(t)]) \
         if sc.texts else np.zeros((0, 2))
+
+    def titled(bounds) -> bool:  # a plan's title under these walls (metres), outside them: not a sheet's frame
+        return _titled_under(tuple(v / scale for v in bounds), texts, scale)
+
     found = []
-    for members in _wall_groups(walls):
+    for members in _wall_groups(walls, titled=titled):
         if sum(m.length for m in members) / 2 >= VIEW_MIN_WALLS_M:  # each wall has two faces
             found.append((members, shapely.union_all(members).bounds))
-    found = [(m, b) for m, b in found if not _is_frame(m, b, [x for _, x in found])]
+    found = [(m, b) for m, b in found if not _is_frame(m, b, [x for _, x in found]) or titled(b)]
 
     def has_doors(blob) -> bool:  # doors in a group's own walls: a plan's, not a sheet's frame
         return len(swing_pts) > 0 and int(shapely.contains_xy(blob, swing_pts[:, 0], swing_pts[:, 1]).sum()) >= 2
 
-    joined = _courtyards_joined([m for m, _ in found], VIEW_GAP_M, holds=has_doors)
+    def holds(blob) -> bool:  # (a roof's parapet round rooms standing free on it: no doors, its plan's title under it)
+        x0, y0, x1, y1 = blob.bounds
+        g = VIEW_GAP_M / 2  # (the blob: its walls and this much round them)
+        return has_doors(blob) or titled((x0 + g, y0 + g, x1 - g, y1 - g))
+
+    joined = _courtyards_joined([m for m, _ in found], VIEW_GAP_M, holds=holds)
     views = []
     for members, (x0, y0, x1, y1) in ((m, shapely.union_all(m).bounds) for m in joined):
 
@@ -138,9 +158,12 @@ def _plans_by_walls(doc, scale, texts, is_room_name) -> list[View]:
     return views
 
 
-def _wall_groups(walls, depth: int = 0) -> list[list]:
+def _wall_groups(walls, depth: int = 0, titled=None) -> list[list]:
     """Wall lines grouped by nearness. A group that is mostly a border (a sheet frame
-    with a plan drawn close to it) is split: the border is dropped, the rest regrouped."""
+    with a plan drawn close to it) is split: the border is dropped, the rest regrouped.
+    Not one with a plan's title under it, outside it (``titled(bounds)``): its border is
+    that plan's own outer wall (a roof's parapet round the few rooms standing on it), as
+    a sheet's frame holds its plans' titles."""
     if not walls:
         return []
     blobs = as_polygons(shapely.union_all(shapely.buffer(np.array(walls, dtype=object), VIEW_GAP_M / 2)))
@@ -152,7 +175,8 @@ def _wall_groups(walls, depth: int = 0) -> list[list]:
         edge = shapely.box(x0, y0, x1, y1).boundary.buffer(FRAME_EDGE_M)
         on_edge = [m for m in members if m.intersection(edge).length >= 0.8 * m.length]
         big = max(x1 - x0, y1 - y0) >= FRAME_MIN_M
-        if depth == 0 and big and sum(m.length for m in on_edge) >= 0.2 * sum(m.length for m in members):
+        if depth == 0 and big and sum(m.length for m in on_edge) >= 0.2 * sum(m.length for m in members) \
+                and not (titled is not None and titled((x0, y0, x1, y1))):
             inner = [m for m in members if m not in on_edge]
             out += _wall_groups(inner, depth + 1)
         else:
@@ -254,6 +278,15 @@ def _group(boxes, texts, scale) -> list[View]:
     return views
 
 
+def _titled_under(bounds, texts, scale) -> bool:
+    """Whether a plan's title (a text with a title's words) lies just under ``bounds``
+    (drawing units), outside them, as wide as they are: as one lies under its plan, and
+    none under a sheet's frame (its plans' titles are inside it)."""
+    x0, y0, x1, _ = bounds
+    below = TITLE_BELOW_M / scale
+    return any(x0 <= x <= x1 and y0 - below <= y < y0 and TITLE_WORDS.search(text) for text, (x, y), _ in texts)
+
+
 def _title(bounds, texts, scale) -> str | None:
     """The title of a plan: the most title-like text just under it (or inside its
     bottom edge), as wide as the plan."""
@@ -312,6 +345,24 @@ def mezzanine_of(title: str | None) -> int | None:
         return None
     floor = _ordinal(title)
     return 0 if floor is None else floor
+
+
+def title_level(title: str | None) -> str | None:
+    """What level of its building a plan's title says it is: "mezzanine", "roof" (the
+    building's roof), "upper roof" (the roof of what stands on the roof: a stair or lift
+    room's, a penthouse's), "penthouse" (a top floor named so: a floor like any) or None
+    (a floor, if anything)."""
+    if not title:
+        return None
+    if MEZZANINE_WORDS.search(title):
+        return "mezzanine"
+    if TOP.search(title):
+        return "upper roof"
+    if ROOF_WORD.search(title):
+        return "roof"
+    if PENTHOUSE_WORDS.search(title):
+        return "penthouse"
+    return None
 
 
 def _ordinal(title: str | None) -> int | None:

@@ -238,7 +238,8 @@ TYPE_GUIDE = {
     "shaft": "shaft, riser, duct",
     "parking": "garage, carport, parking (موقف, garage, aparcamiento)",
     "balcony": "balcony (شرفة, بلكونة, balcon)",
-    "terrace": "terrace, roof deck, veranda, porch, courtyard, patio (سطح, فناء, terrasse)",
+    "terrace": "terrace, roof terrace, roof garden, veranda, porch, courtyard, patio (تراس, فناء, terrasse)",
+    "roof": "roof, roof top: the open roof of a building, where plant and the stair and lift rooms stand (سطح, toit, Dach)",
     "open_to_below": "void, open to below, double-height space over the floor below (فراغ, vide)",
     "room": "any other room that none of the types above fits: study, playroom, gym, classroom, library, a room with only a number",
 }

@@ -17,6 +17,7 @@ from .models import model_problem
 from .ids import LEVELS, MAX_ID_LENGTH, is_item_id, is_legacy_item_id, parse_id
 from .package import (ASSET_IDS_FROM, COLLECTIONS, DRAWINGS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM,
                       Changes, FeatureCollection, ItemFeature, Manifest, Navigation, version_problem, version_tuple)
+from .types import FloorType
 
 KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
               "space": "object", "zone": "object", "opening": "object"}
@@ -333,35 +334,41 @@ ELEVATION_AGREES_M = 0.01  # a mezzanine's elevation: its host's and its height 
 
 
 def _check_floors(floors, errors: list[str]) -> None:
-    """A building's floors (0.11): one of each ordinal that is not a mezzanine, any
-    number of mezzanines on it, each code once. A mezzanine stands in a floor of its
-    building that is not one, of its ordinal, above_host_m above it (its elevation the
-    host's and that); a floor that is not one has neither."""
+    """A building's levels (0.11): one of each ordinal that is not a mezzanine, any
+    number of mezzanines on a floor, each code once. A mezzanine stands in a floor of its
+    building (of type floor), of its ordinal, above_host_m above it (its elevation the
+    host's and that); any other level has neither. A building's roofs are its top: no
+    floor stands above a roof (a second roof over the rooms on the first may)."""
     held = {f.id: f.properties for f in floors}
-    plain: dict[tuple[str, int], str] = {}  # (building, ordinal) -> its floor that is not a mezzanine
-    codes: dict[tuple[str, str], str] = {}  # (building, code) -> the floor of that code
+    plain: dict[tuple[str, int], str] = {}  # (building, ordinal) -> its level that is not a mezzanine
+    codes: dict[tuple[str, str], str] = {}  # (building, code) -> the level of that code
     for f in floors:
         q = f.properties
         if (q.building_id, q.code) in codes:
             errors.append(f"{f.id}: code {q.code} is {codes[q.building_id, q.code]}'s too")
         codes.setdefault((q.building_id, q.code), f.id)
-        if q.mezzanine:
+        if q.type == FloorType.MEZZANINE:
             continue
         if q.host_floor_id is not None or q.above_host_m is not None:
-            errors.append(f"{f.id}: not a mezzanine, but with a host floor or a height above one")
+            errors.append(f"{f.id}: a {q.type.value}, not a mezzanine, but with a host floor or a height above one")
         if (q.building_id, q.ordinal) in plain:
             errors.append(f"{f.id}: {plain[q.building_id, q.ordinal]} is floor {q.ordinal} of its building already "
                           "(only a mezzanine shares a floor's ordinal)")
         plain.setdefault((q.building_id, q.ordinal), f.id)
     for f in floors:
         q = f.properties
-        if not q.mezzanine:
+        if q.type == FloorType.ROOF:  # nothing but roofs above it
+            above = sorted(g.id for g in floors if g.properties.building_id == q.building_id
+                           and g.properties.type == FloorType.FLOOR and g.properties.ordinal > q.ordinal)
+            if above:
+                errors.append(f"{f.id}: a roof, with {', '.join(above)} above it (a roof is its building's top)")
+        if q.type != FloorType.MEZZANINE:
             continue
         host = held.get(q.host_floor_id) if q.host_floor_id is not None else None
         if host is None or host.building_id != q.building_id:
             errors.append(f"{f.id}: a mezzanine of floor {q.host_floor_id}, which is not a floor of its building")
-        elif host.mezzanine:
-            errors.append(f"{f.id}: a mezzanine of {q.host_floor_id}, itself a mezzanine")
+        elif host.type != FloorType.FLOOR:
+            errors.append(f"{f.id}: a mezzanine of {q.host_floor_id}, a {host.type.value} (a mezzanine stands in a floor)")
         elif host.ordinal != q.ordinal:
             errors.append(f"{f.id}: a mezzanine of floor {host.ordinal} ({q.host_floor_id}), its ordinal {q.ordinal}")
         if q.above_host_m is None:

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from ezdxf.document import Drawing
 
 from .llm import LocalModel, ModelUnavailable, read_level_labels
-from .sheets import ORDINAL_WORDS
+from .sheets import ORDINAL_WORDS, TOP  # (TOP: the roof of a stair or lift room on the roof)
 
 DEFAULT_HEIGHT_M = 3.5  # floor to floor, when nothing shows it
 DEFAULT_PARAPET_M = 1.1  # a guard around a terrace or balcony, when nothing shows it
@@ -39,8 +39,6 @@ LEVEL = re.compile(r"^\s*(?P<sign>%%[pP]|±|\+|-)?\s*(?P<value>\d+(?:[.,]\d+)?)\
 FLOORISH = re.compile(r"\b(floor|flr|slab|ssl|ffl|fl|level|lvl|storey|story)\b", re.IGNORECASE)
 NATURAL_GROUND = re.compile(r"\b(gr\.?\s*lvl|ground\s+(lvl|level)|ngl|fgl|natural|road|street|site)\b", re.IGNORECASE)
 PARAPET = re.compile(r"\bparapet\b", re.IGNORECASE)
-TOP = re.compile(r"\b(stair|staircase|lift|machine|penthouse|upper|mumty|head\s*room)\b.*\broof\b|\broof\b.*\b(stair|lift)\b",
-                 re.IGNORECASE)
 ROOF = re.compile(r"\broof\b", re.IGNORECASE)
 
 

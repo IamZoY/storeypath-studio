@@ -24,6 +24,7 @@ from .ids import (
     child_id,
     default_floor_code,
     default_mezzanine_code,
+    default_roof_code,
     format_object_code,
     generate_project_code,
     is_item_id,
@@ -32,12 +33,13 @@ from .ids import (
     parse_id,
     validate_segment,
 )
-from .types import SpaceType
+from .types import FloorType, SpaceType
 
 WORKSPACE_FORMAT = "storeypath-workspace"
 WORKSPACE_VERSION = 1
 DEFAULT_FLOOR_HEIGHT = 3.5
 MEZZANINE_NAME = "Mezzanine"
+ROOF_NAME = "Roof"
 MIN_ABOVE_HOST = 2.4  # metres: a mezzanine's default level above its host floor, at least
 
 
@@ -113,13 +115,17 @@ class Floor(BaseModel):
     ordinal: int  # 0 the ground floor, 1 the first, -1 the first basement; a mezzanine: its host's
     elevation: float  # meters above the building's ground floor
     height: float = DEFAULT_FLOOR_HEIGHT
+    # What level of its building it is (format 0.11): a floor (a storey), a mezzanine or
+    # the roof. A roof is the building's top: open air, the rooms standing on it indoor,
+    # its parapets its edge; no floor stands above it.
+    type: FloorType = FloorType.FLOOR
     # A mezzanine: a floor standing in another floor of its building, over part of it. The
-    # code of that floor (its host: one of the building's floors that is not a mezzanine),
-    # and how far above that floor's level its own is (metres): its elevation is the host's
-    # and that. None: not a mezzanine.
+    # code of that floor (its host: one of the building's floors of type floor), and how
+    # far above that floor's level its own is (metres): its elevation is the host's and
+    # that. None for any other level.
     host: str | None = None
     above_host: float | None = None
-    parapet_height: float | None = None  # meters, the low walls around its terraces and balconies
+    parapet_height: float | None = None  # meters, the low walls around its terraces, balconies and roof
     source: SourceDrawing | None = None
     outline: dict[str, Any] | None = None  # GeoJSON geometry, local meters
     converted_at: datetime | None = None
@@ -136,7 +142,11 @@ class Floor(BaseModel):
 
     @property
     def mezzanine(self) -> bool:
-        return self.host is not None
+        return self.type == FloorType.MEZZANINE
+
+    @property
+    def roof(self) -> bool:
+        return self.type == FloorType.ROOF
 
 
 def floor_order(f: Floor) -> tuple:
@@ -444,7 +454,7 @@ class Workspace(BaseModel):
     def add_floor(
         self,
         building_id: str,
-        ordinal: int,
+        ordinal: int | None,
         *,
         code: str | None = None,
         name: str | None = None,
@@ -452,18 +462,27 @@ class Workspace(BaseModel):
         height: float = DEFAULT_FLOOR_HEIGHT,
         parapet_height: float | None = None,
         source: SourceDrawing | None = None,
-        mezzanine: bool = False,
+        type: FloorType | str = FloorType.FLOOR,
         above_host: float | None = None,
     ) -> str:
-        """A floor added to a building: one per ordinal, else ``mezzanine``: one standing in
-        the building's floor of that ordinal (its host), ``above_host`` metres above it (by
-        default, half its height), any number of them on a floor. Codes are the building's
-        own: F00, F01, B01 by ordinal; M00 for a mezzanine over F00, M00B for a second."""
+        """A level added to a building, of its ``type``: a floor, one per ordinal; a
+        mezzanine, standing in the building's floor of that ordinal (its host),
+        ``above_host`` metres above it (by default, half its height), any number of them on
+        a floor; or a roof, above every floor (``ordinal`` None: the next one up). Codes are
+        the building's own: F00, F01, B01 by ordinal; M00 for a mezzanine over F00, M00B
+        for a second; RF for the roof, RF2 for a second. A roof stays its building's top: a
+        floor added at or above it puts the roofs above it (ordinals are no part of IDs)."""
         b = self.building(building_id)
+        level = FloorType(type)
         taken = {f.code for f in b.floors}
+        if level != FloorType.MEZZANINE and above_host is not None:
+            raise ValueError("above_host is a mezzanine's")
+        if ordinal is None and level != FloorType.ROOF:
+            raise ValueError(f"a {level.value}'s ordinal: 0 the ground floor, 1 the first, -1 the first basement")
         host = None
-        if mezzanine:
-            host = next((f for f in b.floors if f.ordinal == ordinal and not f.mezzanine), None)
+        lift = 0  # how far the building's roofs go up, to stay above a floor added
+        if level == FloorType.MEZZANINE:
+            host = next((f for f in b.floors if f.ordinal == ordinal and f.type == FloorType.FLOOR), None)
             if host is None:
                 raise ValueError(f"a mezzanine stands in a floor: {building_id} has no floor {ordinal}")
             if elevation is not None:
@@ -472,22 +491,38 @@ class Workspace(BaseModel):
             if not math.isfinite(above_host) or above_host <= 0:
                 raise ValueError("a mezzanine stands above its host floor: above_host is metres, more than 0")
             code = validate_segment(code or default_mezzanine_code(ordinal, taken))
-        else:
-            if above_host is not None:
-                raise ValueError("above_host is a mezzanine's")
-            code = validate_segment(code or default_floor_code(ordinal))
+        elif level == FloorType.ROOF:
+            top = max((f for f in b.floors if f.type == FloorType.FLOOR), key=lambda f: f.ordinal, default=None)
+            if ordinal is None:
+                ordinal = max((f.ordinal + 1 for f in b.floors if not f.mezzanine), default=0)
+            if top is not None and ordinal <= top.ordinal:
+                raise ValueError(f"a roof is its building's top: {building_id} has {top.name} ({top.code}) at floor "
+                                 f"{top.ordinal}, so its roof is {top.ordinal + 1} or more")
+            code = validate_segment(code or default_roof_code(taken))
             if any(f.ordinal == ordinal and not f.mezzanine for f in b.floors):
                 raise ValueError(f"floor ordinal {ordinal} already used in {building_id}")
+        else:
+            code = validate_segment(code or default_floor_code(ordinal))
+            if any(f.ordinal == ordinal and f.type == FloorType.FLOOR for f in b.floors):
+                raise ValueError(f"floor ordinal {ordinal} already used in {building_id}")
+            lowest_roof = min((f.ordinal for f in b.floors if f.roof), default=None)
+            if lowest_roof is not None and ordinal >= lowest_roof:
+                lift = ordinal - lowest_roof + 1
         if code in taken:
             raise ValueError(f"floor code {code} already used in {building_id}")
+        for r in (f for f in b.floors if f.roof) if lift else ():
+            r.ordinal += lift
+            r.elevation = round(r.elevation + lift * height, 3)  # (restack puts it exactly)
         b.floors.append(
             Floor(
                 code=code,
-                name=name or (MEZZANINE_NAME if mezzanine else f"Floor {ordinal}"),
+                name=name or (MEZZANINE_NAME if level == FloorType.MEZZANINE
+                              else ROOF_NAME if level == FloorType.ROOF else f"Floor {ordinal}"),
                 ordinal=ordinal,
                 elevation=(round(host.elevation + above_host, 3) if host is not None
                            else ordinal * height if elevation is None else elevation),
                 height=height,
+                type=level,
                 parapet_height=parapet_height,
                 source=source,
                 host=host.code if host is not None else None,

@@ -68,7 +68,7 @@ DECIMALS = 3  # points, in metres
 # through one costs ROOM_PENALTY_S each way in). The others are not walked: plant
 # rooms, shafts, voids. FORMAT.md, "Navigation (0.8)".
 PASS_TYPES = frozenset({"corridor", "lobby", "open_area", "elevator", "stairs", "escalator", "ramp", "parking",
-                        "terrace", "balcony", "living_room", "dining_room"})
+                        "terrace", "balcony", "roof", "living_room", "dining_room"})
 ROOM_TYPES = frozenset({"office", "room", "meeting_room", "restroom", "kitchen", "storage", "bedroom", "bathroom",
                         "dressing_room", "laundry", "prayer_room", "unspecified"})
 WALKABLE = PASS_TYPES | ROOM_TYPES

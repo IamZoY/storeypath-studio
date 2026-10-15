@@ -47,6 +47,8 @@ blocks:
 #   block: pattern matched against block names placed inside the space
 #   layer: pattern matched against the layer of the space's outline
 rules:
+  # a lift's machine room (often on the roof) is a technical room, not the lift (no stop); a plant room too
+  - { type: utility, label: '\b(machine|m/?c|plant|pump)\.?\s*rooms?\b|\blmr\b' }
   - { type: lobby, label: '\b(lobby|reception|foyer|entrance hall)\b' }
   - { type: elevator, label: '\b(elev(ator)?|lift)s?\b' }
   - { type: elevator, block: '.*(elev|lift).*' }
@@ -64,3 +66,5 @@ rules:
   - { type: storage, label: '\b(stor(age|e)?|archive|file room)\b' }
   - { type: utility, label: '\b(elec(trical)?|mech(anical)?|server|it|data|janitor|jan\.?|utility|comms?)\b' }
   - { type: shaft, label: '\b(shaft|riser|duct)s?\b' }
+  # the open roof itself, named so alone (not a ROOF SLAB level, a ROOF DRAIN, a ROOF TERRACE)
+  - { type: roof, label: '^\s*((main|upper|lower)\s+)?(roof(\s*top|\s+area|\s+deck)?|rooftop)\s*$|^\s*سطح\s*$' }

@@ -25,7 +25,8 @@ const WORDS = {
   prayer_room: ["prayer", "mosque", "musalla", "مصلى"],
   parking: ["parking", "car", "garage", "مواقف"],
   balcony: ["balcony", "شرفة", "بلكونة"],
-  terrace: ["terrace", "roof", "تراس"],
+  terrace: ["terrace", "تراس"],
+  roof: ["roof", "rooftop", "سطح"],
 };
 const COMMON = ["office", "meeting_room", "storage", "corridor", "restroom", "utility", "open_area", "lobby", "kitchen", "room"];
 

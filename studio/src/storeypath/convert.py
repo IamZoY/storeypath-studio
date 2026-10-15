@@ -22,7 +22,7 @@ from .analyse import analyse, name_hint, plan_texts
 from .cad import file_sha256, meters_per_unit, read_drawing, read_notes
 from .extract import (ExtractedDoor, ExtractedSpace, FloorExtraction, _assign_labels, _drawn_line, add_lift_doors,
                       find_spaces, find_spaces_around, finish_floor, gather_plan, keep_to_the_building,
-                      plan_labels, plan_walls, stair_flights, type_stairs, type_zoned_spaces)
+                      on_the_roof, plan_labels, plan_walls, stair_flights, type_stairs, type_zoned_spaces)
 from .geometry import iou
 from .ids import child_id, parse_id
 from .llm import LocalModel, worth_reading
@@ -137,17 +137,23 @@ def read_floor(
         profile, layers = analysis.profile, analysis.summary()
     else:
         profile, layers = base, []
-    extraction, read = _extract(floor_id, doc, profile, src, floor.edits, reader, drawing, layers, last, say)
+    extraction, read = _extract(floor_id, doc, profile, src, floor.edits, reader, drawing, layers, last, say,
+                                roof=floor.roof)
     _drawn_spaces(extraction, floor.edits.spaces, profile.spaces.min_area)
     tally: dict = {}  # what vision looked at (the report's)
     _read_room_types(extraction, reader)
     spotted, spot_failed = _spot_symbols(floor, doc, profile, symbols, extraction.scale, sha)
     type_rooms(extraction.units(), spotted)
+    if floor.roof:  # its open ground the roof's deck, a lift on it its machine room (no stop)
+        on_the_roof(extraction, deck_only=True)
     add_lift_doors(extraction)
     if vision is not None or ws.vision:
         sheet = FloorPrint(doc, extraction.scale, keep=tiles, sha=sha, region=src.region)
         units = extraction.units()
-        merged = look_at_rooms(units, doc, src, extraction.scale, sha, vision, ws.vision, say, sheet=sheet, tally=tally)
+        # (a roof's deck is not asked about: what vision would call the outside is it)
+        deck = {i for i, u in enumerate(units) if u.type == SpaceType.ROOF} if floor.roof else set()
+        merged = look_at_rooms(units, doc, src, extraction.scale, sha, vision, ws.vision, say, sheet=sheet, tally=tally,
+                               only=set(range(len(units))) - deck if deck else None)
         if zones := split_merged(extraction, units, doc, src, sha, vision, ws.vision, merged, say, sheet):
             _name_zones(extraction, zones, profile, reader, spotted)
             units = extraction.units()
@@ -155,10 +161,14 @@ def read_floor(
                           only={i for i, u in enumerate(units) if any(u is z for z in zones)}, sheet=sheet, tally=tally)
         if (ways := keep_ways_through(extraction)) and say is not None:
             say(f"vision: {ways} area(s) it saw as no room kept, as doors join them to several rooms")
+        if floor.roof:  # what vision saw as no room, or the outside, on a roof is its deck
+            on_the_roof(extraction)
         type_stairs(extraction.units(), _flights(doc, src, extraction.scale))
         type_zoned_spaces(extraction.spaces, extraction.zones)
         keep_to_the_building(extraction)
     else:
+        if floor.roof:
+            on_the_roof(extraction)
         type_stairs(extraction.units(), _flights(doc, src, extraction.scale))
     _sizes_from_the_schedule(extraction, doc, src.region, vision, model, say)
     _drawn_openings(extraction, floor.edits.openings, profile.doors.reach)
@@ -348,7 +358,7 @@ def kept_read(floor_id: str, src, reads: str | Path | None = None) -> bool:
 
 
 def _extract(floor_id: str, doc, profile, src, edits, reader: TextReader, drawing: tuple, layers: list,
-             last: "_Read | None", say=None) -> tuple[FloorExtraction, "_Read"]:
+             last: "_Read | None", say=None, roof: bool = False) -> tuple[FloorExtraction, "_Read"]:
     """The floor's extraction (extract_floor), and the read to keep of it. Read again
     after a person drew on it (``last``: its last read), what its plan holds is taken
     from that read, and so are its spaces: as they were when its walls are (a door, a
@@ -373,7 +383,7 @@ def _extract(floor_id: str, doc, profile, src, edits, reader: TextReader, drawin
                 say("the rooms near the walls drawn found again" if found is not None
                     else f"the whole floor read: {why[0]}")
     if found is None:
-        found = find_spaces(plan, profile, labels, lines, fills, edits.walls, src.offset)
+        found = find_spaces(plan, profile, labels, lines, fills, edits.walls, src.offset, open_ground=roof)
     read = _Read(drawing, [list(map(list, w)) for w in edits.walls], profile, layers,
                  last.plan if last is not None else pickle.dumps(plan, protocol=pickle.HIGHEST_PROTOCOL),
                  pickle.dumps(found, protocol=pickle.HIGHEST_PROTOCOL))  # (before finish_floor names them)
