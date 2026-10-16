@@ -91,10 +91,12 @@ Find plans already tells a site plan by its title (`site_plan`). Its card offers
    so most surely): an opening of type gate each.
 5. **Buildings and land**: texts are read by rules (and the language model for the ones the
    rules do not know): a building's name, a floor's level (FFL, SSL, TOP), a roof say
-   building; a ground level (FGL, NGL), PARKING, GARDEN, DRIVEWAY, ROAD say land. The open
-   land is the largest face against the boundary walls and the faces land texts are in;
-   the rest inside the walls, in one piece, is a footprint when a building's text is in it
-   or walls close round it, its outer outline (no holes): buildings are holes in the land.
+   building; a ground level (FGL, NGL), PARKING, GARDEN, DRIVEWAY, ROAD say land. Outlines on
+   site plans are often left open (a building's walls drawn short of meeting), so the free
+   ground between the lines is flooded from what the texts say (and from inside each gate),
+   the widest places first: floods meet at the narrowest place, a gap in a building's walls.
+   Each face is what most of it was flooded as; the buildings' faces with their walls are
+   footprints, each its outer outline (no holes): buildings are holes in the land.
 6. **Areas**: the land's faces by their texts (a labelled face is its label's type); the
    faces with none together are the yard; outside the plot, a face labelled ROAD is road.
 7. **North**: a block named so (NORTH, N-ARROW, COMPASS, شمال), or one holding an N, the one
