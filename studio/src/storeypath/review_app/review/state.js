@@ -3,7 +3,7 @@
 // what needs a look, names and colours). One object each, shared by every part.
 
 import { TYPE_COLORS, typeLabel } from "../theme.js";
-import { saved } from "./dom.js";
+import { el, saved } from "./dom.js";
 
 export const CODE = new URLSearchParams(location.search).get("p");
 export const BASE = `projects/${encodeURIComponent(CODE || "")}`;
@@ -84,8 +84,43 @@ export function matches(s, q) {
     .some((v) => v && v.toLowerCase().includes(q));
 }
 
-/** A floor's building: its ID's first parts. */
+/** A floor's building: its ID's first parts. (A location's layout's: its land, PROJECT-LOCATION-LAND.) */
 export const buildingOf = (floorId) => floorId.split("-").slice(0, 3).join("-");
+
+// ---- a location's layout (format 0.12) -----------------------------------------------
+// It opens as a floor does: its areas are its spaces, its gates its openings, its plot its
+// outline; the footprints of the buildings standing on it are its own (drawn under the rest,
+// changed on the project's page).
+
+/** Whether the floor shown is a location's layout (its land), not a floor of a building. */
+export const onLayout = () => Boolean(state.floor?.layout);
+
+/** A floor as the lists name it: a layout "⟨location⟩ — Layout", a floor by its name. */
+export const floorTitle = (f) => (f?.layout ? `${f.location} — ${f.name}` : f?.name || "");
+
+/** The land's area types (what Studio offers first on a layout), of those it knows. */
+export function landTypes() {
+  const all = state.project?.types || [];
+  return (state.project?.land_types || []).filter((t) => all.includes(t));
+}
+
+/** The types a space may be given here, in order: on a layout, the land's first. */
+export function typesHere() {
+  const all = state.project?.types || [];
+  if (!onLayout()) return all;
+  const land = landTypes();
+  return [...land, ...all.filter((t) => !land.includes(t))];
+}
+
+/** The types a space may be given here, as a <select>'s options: on a layout, the land's
+ * first, in a group of their own. */
+export function typeOptions() {
+  const option = (t) => el("option", { value: t }, typeName(t));
+  const land = onLayout() ? landTypes() : [];
+  if (!land.length) return (state.project?.types || []).map(option);
+  return [el("optgroup", { label: "Land" }, ...land.map(option)),
+    el("optgroup", { label: "Other types" }, ...typesHere().filter((t) => !land.includes(t)).map(option))];
+}
 
 /** Whether the floor has its drawing, to read it again with what is added. */
 export const readable = () => Boolean(state.floor?.source);

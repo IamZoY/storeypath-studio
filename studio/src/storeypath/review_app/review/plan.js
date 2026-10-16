@@ -155,6 +155,7 @@ function renderDrawing({ groups, texts }) {
 // ---- the floor's spaces, doors and what was drawn ---------------------------------------
 
 export function renderPlan() {
+  renderFootprints();
   renderOutline();
   renderSpaces();
   renderDoors();
@@ -180,6 +181,7 @@ export function patchPlan(d, before) {
     if (s) drawSpace(s);
   }
   if ("outline" in d) renderOutline();
+  if ("footprints" in d) renderFootprints();
   if (d.doors.length || "walls" in d) renderDoors();
   if ("edits" in d) renderDrawn();
   placeLabels();
@@ -188,6 +190,49 @@ export function patchPlan(d, before) {
 function renderOutline() {
   const f = state.floor;
   $("outline").setAttribute("d", f.outline ? pathData(f.outline) : "");
+}
+
+// ---- a location's layout: the footprints of the buildings standing on it (format 0.12) ----
+// Drawn under everything (its areas have holes where they are), each named by the building
+// standing on it, else by its own name from the site plan, else "no building". Not chosen
+// nor changed here: the project's page places the buildings on them.
+
+/** The layers of the footprints, made the first time a floor has some: their shapes under
+ * the spaces (the plan's metres), their names over the plan (its pixels, as the labels). */
+function footprintLayers() {
+  if (!$("footprints")) {
+    $("outline").before(svg("g", { id: "footprints" }));
+    $("labels").before(svg("g", { id: "footprint-labels" }));
+  }
+  return [$("footprints"), $("footprint-labels")];
+}
+
+function renderFootprints() {
+  const prints = state.floor?.footprints || [];
+  if (!prints.length && !$("footprints")) return; // (a building's floor: none, ever)
+  const [g] = footprintLayers();
+  g.replaceChildren(...prints.map((fp) => {
+    const path = svg("path", { d: pathData(fp.geometry), class: fp.building ? "footprint" : "footprint none" });
+    path.dataset.footprint = fp.id;
+    return path;
+  }));
+  placeLabels();
+}
+
+/** Each footprint's name, in the middle of it, when it has room (written again as the view moves). */
+function placeFootprintNames() {
+  const names = $("footprint-labels");
+  if (!names) return;
+  const { k, tx, ty } = state.view;
+  names.replaceChildren(...(state.floor?.footprints || []).flatMap((fp) => {
+    const b = extent(fp.geometry);
+    const room = b ? (b[2] - b[0]) * k - 8 : 0;
+    if (!b || room < 36 || (b[3] - b[1]) * k < 16) return [];
+    const t = svg("text", { x: ((b[0] + b[2]) / 2) * k + tx, y: -((b[1] + b[3]) / 2) * k + ty + 4,
+      class: fp.building_name ? "" : fp.name ? "unplaced" : "unplaced none" });
+    t.textContent = fitted(fp.building_name || fp.name || "no building", room, true);
+    return [t];
+  }));
 }
 
 function renderSpaces() {
@@ -227,7 +272,7 @@ function renderDoors() {
   // thin: a window), with a mark in the middle; where the span is not known, the mark.
   // A door whose swing was drawn is shown as plans show it: the leaf open, and the arc
   // it sweeps to shut.
-  const kind = (d) => (d.type === "door" ? "door" : d.type === "window" ? "window" : "way");
+  const kind = (d) => (d.type === "door" ? "door" : d.type === "window" ? "window" : d.type === "gate" ? "gate" : "way");
   const swung = f.doors.filter((d) => d.type === "door" && d.span && d.swings?.length);
   const leaf = (d, [h, q]) => {
     const from = (p) => Math.hypot(p[0] - h[0], p[1] - h[1]);
@@ -406,6 +451,7 @@ export function placeLabels() {
   if (labelFrame) return;
   labelFrame = requestAnimationFrame(() => {
     labelFrame = 0;
+    placeFootprintNames(); // (a layout's)
     const { k, tx, ty } = state.view;
     for (const s of units()) {
       const label = state.labels.get(s.id);
@@ -448,7 +494,9 @@ export function viewport() {
 export function floorBounds() {
   const f = state.floor;
   if (!f) return null;
-  return union([...state.bounds.values(), extent(f.outline)]) || state.drawingBounds;
+  // (a layout's footprints too: a building's may stand at its plot's edge)
+  return union([...state.bounds.values(), extent(f.outline), ...(f.footprints || []).map((fp) => extent(fp.geometry))])
+    || state.drawingBounds;
 }
 
 export function scaleFor(bounds, pad = 40) {

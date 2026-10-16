@@ -171,6 +171,46 @@ dialog.private-review p { margin: 0; }
 .site-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
 .site-fields input { width: 7em; }
 
+/* a location's layout on its site plan (format 0.12): its land under the buildings */
+.site-plan .land .area { fill-opacity: .38; stroke: none; }
+.site-plan .land .plot { fill: none; stroke: var(--text-muted); stroke-width: 1.5; stroke-dasharray: 10 3 2 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.site-plan .land .walls { fill: none; stroke: var(--text); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
+.site-plan .land .gate-gap { stroke: var(--bg); stroke-width: 6; vector-effect: non-scaling-stroke; }
+.site-plan .land .gate-mark { stroke: var(--warning); stroke-width: 2.5; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; }
+.site-plan .land .footprint { fill: color-mix(in srgb, var(--text-muted) 14%, transparent); stroke: var(--text-muted); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.site-plan .land .footprint.empty { fill: color-mix(in srgb, var(--text-muted) 8%, transparent); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.site-plan .land .fp-name { font-style: italic; fill: var(--text-muted); text-anchor: middle; dominant-baseline: middle; pointer-events: none;
+  paint-order: stroke; stroke: var(--bg); stroke-width: 3px; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.site-plan .fp-lit { fill: color-mix(in srgb, var(--select) 18%, transparent); stroke: var(--select); stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.site-plan .building.bare path { stroke-dasharray: 6 3; cursor: default; }
+.site-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.site-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.site-legend .swatch { opacity: .8; }
+.site-legend .lg-wall { width: 16px; height: 0; border-top: 2px solid var(--text); }
+.site-legend .lg-gate { width: 16px; height: 0; border-top: 3px dashed var(--warning); }
+.site-legend .lg-footprint { width: 14px; height: 10px; border: 1.5px dashed var(--text-muted); border-radius: 2px; }
+.site-part { margin-top: 18px; }
+.site-part h3 { margin: 0; font-size: 14px; }
+.site-part > p { margin: 4px 0 0; }
+.layout-table td.actions button { margin-left: 12px; padding: 3px 10px; font-size: 13px; }
+.footprints td.actions { white-space: normal; }
+.footprints .fp-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
+.footprints .fp-actions button { margin-left: 0; padding: 3px 10px; font-size: 13px; }
+.footprints .fp-actions select, .footprints .fp-actions input { width: auto; min-width: 10em; padding: 3px 8px; font-size: 13px; }
+.footprints tr:hover td, .footprints tr:focus-within td { background: color-mix(in srgb, var(--select) 7%, transparent); }
+.fp-ambiguous { color: var(--warning-text); }
+.site-north .north-actions { margin-top: 8px; align-items: end; }
+.site-north .north-set { display: flex; gap: 8px; align-items: end; }
+.site-north .north-set label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.site-north .north-set input { width: 8em; }
+/* a site plan's card in Find plans: Use as ⟨location⟩'s layout */
+.layout-use { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.layout-use-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--accent-text); }
+.layout-use p { margin: 0; }
+.layout-use select, .layout-use input { flex: 1; min-width: 0; font-size: var(--fs-md); }
+.layout-replaces { color: var(--warning-text); }
+
 /* logging in, setting up */
 .auth-page { max-width: 440px; padding-top: 56px; }
 .auth-card { display: flex; flex-direction: column; gap: 14px; padding: 24px; }

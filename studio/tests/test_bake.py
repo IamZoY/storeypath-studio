@@ -89,7 +89,8 @@ def test_pre_building_adds_the_world_and_changes_nothing_else(converted, monkeyp
 
 def test_without_node_the_package_is_as_before_and_says_why(converted, monkeypatch, tmp_path):
     ws, d, *_ = converted
-    before = {"manifest.json", *FILES.values(), "FORMAT.md", *(f"schema/{n}" for n in json_schemas())}
+    before = {"manifest.json", *(n for r, n in FILES.items() if r not in ("layout", "footprints")), "FORMAT.md",
+              *(f"schema/{n}" for n in json_schemas())}  # (a layout's own files: in its package alone, 0.12)
 
     def export(name):
         said = []

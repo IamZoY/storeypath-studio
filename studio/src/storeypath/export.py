@@ -23,7 +23,7 @@ from .assets import format_spec
 from .bake import WORLD_DIR, bake_world
 from .geometry import as_polygons
 from .georef import Georeferencer
-from .ids import child_id, is_item_id, make_id
+from .ids import LAND_CODE, child_id, is_item_id, is_land, make_id
 from .catalogue import GRADES, MODELS, Catalogue, default_catalogue, shape_of
 from .package import (
     DRAWINGS,
@@ -44,8 +44,9 @@ from .levels import DEFAULT_PARAPET_M
 from .navigation import NAVIGATION_FILE, navigation_file
 from . import finishes
 from .stacks import stack_of
-from .types import FloorType, OpeningType, SpaceType
-from .workspace import ExportRecord, LastPackage, Placement, SitePosition, Workspace, floor_order, utcnow
+from .types import BUILDING_LEVELS, OpeningType, SpaceType
+from .workspace import (ExportRecord, LastPackage, Placement, SitePosition, Workspace, floor_order, site_bearing,
+                        utcnow)
 
 COORD_DECIMALS = 7  # ~1 cm
 LOCAL_DECIMALS = 4  # metres, in a building's own frame: a tenth of a millimetre
@@ -234,7 +235,7 @@ def placements(ws: Workspace) -> dict[str, tuple[Placement, bool]]:
     0°N 0°E, where its shape and size are true and its position on earth is not."""
     out = {}
     for loc in ws.locations:
-        site = loc.placement or Placement(lon=0.0, lat=0.0, x=0.0, y=0.0, bearing=0.0)
+        site = site_placement(loc)
         positions = site_positions(loc)
         for b in loc.buildings:
             b_id = make_id(ws.id, loc.code, b.code)
@@ -251,6 +252,15 @@ def placements(ws: Workspace) -> dict[str, tuple[Placement, bool]]:
             out[b_id] = (Placement(lon=site.lon, lat=site.lat, x=round(ax, 4), y=round(ay, 4),
                                    bearing=round((site.bearing + pos.rotation) % 360, 6)), loc.placement is not None)
     return out
+
+
+def site_placement(loc) -> Placement:
+    """Where a location's site is on the map: its centre (the origin of the site's frame,
+    where its layout is drawn: format 0.12) at its placement's longitude and latitude, its
+    up at its bearing; not on the map, around 0°N 0°E, its up at its north (site_bearing)."""
+    if loc.placement is not None:
+        return Placement(lon=loc.placement.lon, lat=loc.placement.lat, x=0.0, y=0.0, bearing=loc.placement.bearing)
+    return Placement(lon=0.0, lat=0.0, x=0.0, y=0.0, bearing=site_bearing(loc))
 
 
 OUTDOOR = {SpaceType.TERRACE.value, SpaceType.BALCONY.value, SpaceType.ROOF.value}
@@ -521,6 +531,104 @@ def build_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bo
     return out
 
 
+def north_said(loc) -> dict:
+    """How a location's site's bearing is known (format 0.12, its layout's ``north``): the
+    bearing its plan's up faces, and from what: the map (its placement), the drawing (its
+    site plan's north arrow), a person; null: not known (up is north)."""
+    if loc.placement is not None:
+        return {"bearing": round(loc.placement.bearing % 360, 6), "from": "map"}
+    if loc.north is not None:
+        return {"bearing": round(loc.north.bearing % 360, 6), "from": loc.north.source}
+    return {"bearing": 0.0, "from": None}
+
+
+def footprint_of(ws: Workspace, r) -> str | None:
+    """The building a footprint is, in a package: as a person said, else the one placed
+    on it; None for none."""
+    from .ids import parse_id
+
+    o = ws.overrides.get(r.id)
+    if o is not None and o.building is not None:
+        return o.building or None
+    loc = ws.location(parse_id(r.id).prefix("location"))
+    return next((make_id(ws.id, loc.code, b.code) for b in loc.buildings
+                 if b.site is not None and b.site.footprint == r.id), None)
+
+
+def site_frame(b) -> dict | None:
+    """Where a building's own frame lies on its location's site (format 0.12): the origin
+    of its frame in the site's frame, and its turn (degrees clockwise); None when it is on
+    the map by itself."""
+    from .layout import site_frame_of
+
+    if b.placement is not None or b.site is None:
+        return None
+    x, y, r = site_frame_of(b)
+    return {"x_m": x, "y_m": y, "rotation_deg": r}
+
+
+def layout_features(ws: Workspace, cat: Catalogue | None = None, *, own_frame: bool = False,
+                    only: set[str] | None = None) -> dict[str, list[dict]]:
+    """Every location's layout (format 0.12) as features: the layout itself (its boundary
+    its geometry), its footprints, its areas (spaces), its gates (openings) and the items on
+    it, on the map (its site's placement: the layout is drawn in the site's frame); with
+    ``own_frame``, where the site's frame is (what export compares). ``only``: the lands
+    (PROJECT-LOCATION-LAND) whose layouts are worked out."""
+    cat = cat or default_catalogue()
+    out: dict[str, list[dict]] = {k: [] for k in ("layout", "footprints", "spaces", "openings", "items")}
+    for loc, land, f, f_id in ws.iter_layouts():
+        land_id = f_id.rsplit("-", 1)[0]
+        if only is not None and land_id not in only:
+            continue
+        loc_id = make_id(ws.id, loc.code)
+        placed = OWN_FRAME if own_frame else site_placement(loc)
+        g = Georeferencer(placed)
+        outline = shape(f.outline) if f.outline else None
+        walls = shape(f.walls) if f.walls else None
+        out["layout"].append(_feature(f_id, _geo(outline, g) if outline is not None else None, {
+            "kind": "layout", "code": f.code, "name": f.name, "location_id": loc_id,
+            "area_m2": round(outline.area, 2) if outline is not None else None,
+            "display_point": _lonlat(g, _label_point(outline)) if outline is not None else None,
+            "walls": _geo(walls, g) if walls is not None else None,
+            "wall_thickness_m": f.wall_thickness, "wall_height_m": f.height,
+            "north": north_said(loc)}))
+        positions = {make_id(ws.id, loc.code, b.code): b for b in loc.buildings}
+        for r in sorted(ws.floor_objects(f_id), key=lambda r: r.id):
+            eff = ws.effective(r)
+            geom = shape(r.geometry)
+            if r.kind == "space":
+                out["spaces"].append(_feature(r.id, _geo(geom, g), {
+                    "kind": "space", "type": eff["type"], "name": eff["name"], "number": eff["number"],
+                    "drawing_label": r.label, "floor_id": f_id, "area_m2": round(geom.area, 2),
+                    "display_point": _lonlat(g, _label_point(geom)), "zones": [], "outdoor": True,
+                    "capacity": eff["capacity"], "capacity_from": "review" if eff["capacity"] is not None else None,
+                    "grade": None, "stack": None, "floor_finish": None, "wall_finish": None, "wall_finishes": None,
+                    "hidden": eff["hidden"], "ignored": eff["ignored"]}))
+            elif r.kind == "opening":
+                out["openings"].append(_feature(r.id, _geo(geom, g), {
+                    "kind": "opening", "type": eff["type"] if eff["type"] in {t.value for t in OpeningType} else r.type,
+                    "floor_id": f_id, "connects": r.connects,
+                    "exterior": len(r.connects) < 2 or any(
+                        ws.effective(ws.objects[c])["type"] == SpaceType.ROAD.value for c in r.connects if c in ws.objects),
+                    "width_m": r.width, "span": [_lonlat(g, p) for p in r.span] if r.span else None,
+                    "swings": None, "sill_m": None, "height_m": r.height,
+                    "hidden": eff["hidden"], "ignored": eff["ignored"]}))
+            elif r.kind == "footprint":
+                b_id = footprint_of(ws, r)
+                b = positions.get(b_id)
+                out["footprints"].append(_feature(r.id, _geo(geom, g), {
+                    "kind": "footprint", "layout_id": f_id, "building_id": b_id, "name": r.name,
+                    "drawing_label": r.label, "area_m2": round(geom.area, 2),
+                    "display_point": _lonlat(g, _label_point(geom)),
+                    "site": site_frame(b) if b is not None else None,
+                    "hidden": eff["hidden"], "ignored": eff["ignored"]}))
+        units = floor_units(ws, f_id)
+        doors = {r.id for r in walked_doors(ws, f_id)}
+        for it in sorted(ws.floor_items(f_id), key=lambda i: i.id):
+            out["items"].append(_item_feature(it, cat.get(it.type), g, placed.bearing, None, units, doors))
+    return out
+
+
 def _round_pt(p) -> list[float]:
     return [round(p.x, COORD_DECIMALS), round(p.y, COORD_DECIMALS)]
 
@@ -531,13 +639,17 @@ def _objects_csv(ws: Workspace, features: dict[str, list[dict]]) -> str:
     w.writeheader()
     w.writerow({"id": ws.id, "kind": "project", "name": ws.project.name, "project_id": ws.id})
     ordinals = {f["id"]: f["properties"]["ordinal"] for f in features["floors"]}
-    for role in ("location", "buildings", "floors", "spaces", "zones", "openings", "items"):
-        for f in features[role]:
+    for role in ("location", "buildings", "floors", "layout", "spaces", "zones", "openings", "footprints", "items"):
+        for f in features.get(role, []):
             p = f["properties"]
             # an item's ID says nothing of where it is: its floor does
             segs = (p["floor_id"] if role == "items" else f["id"]).split("-")
             ids = {lvl: "-".join(segs[:n]) for n, lvl in
                    ((2, "location_id"), (3, "building_id"), (4, "floor_id")) if len(segs) >= n}
+            if len(segs) >= 3 and segs[2] == LAND_CODE:  # (a layout's: on the land, in no building; 0.12)
+                ids.pop("building_id", None)
+                if role == "layout":
+                    ids.pop("floor_id", None)
             pt = p.get("display_point") or (f["geometry"]["coordinates"] if f["geometry"] and f["geometry"]["type"] == "Point" else None)
             w.writerow({
                 "id": f["id"], "kind": p["kind"], "type": p.get("type", ""),
@@ -570,12 +682,18 @@ def compared(ws: Workspace, cat: Catalogue | None, held=lambda role, f: True,
     ``only``: as build_features."""
     placed = placements(ws)
     out = {}
-    for role, fs in build_features(ws, cat, own_frame=True, only=only).items():
+    features = build_features(ws, cat, own_frame=True, only=only)
+    for role, fs in layout_features(ws, cat, own_frame=True, only=only).items():
+        features[role] = features.get(role, []) + fs
+    for role, fs in features.items():
         for f in fs:
             if not held(role, f):
                 continue
             if role == "buildings":
                 f = {**f, "placement": placed[f["id"]][0].model_dump()}
+            elif role == "layout":  # (the site on the map, as a building is compared with its placement)
+                loc = ws.location(f["properties"]["location_id"])
+                f = {**f, "placement": site_placement(loc).model_dump()}
             elif role == "location":
                 said = {k: v for k, v in f["properties"].items() if k != "display_point"}
                 f = {**f, "geometry": None, "properties": said}
@@ -665,12 +783,38 @@ def export_package(ws: Workspace, out_path, *, building: str | None = None, reco
                     item_types=item_types, models=models, drawings=drawings)
 
 
+def land_ids(ws: Workspace) -> list[str]:
+    """The lands of the project's locations that have a layout (format 0.12): PROJECT-LOCATION-LAND."""
+    return [make_id(ws.id, loc.code, LAND_CODE) for loc in ws.locations if loc.layout is not None and loc.layout.floors]
+
+
+def export_layout_package(ws: Workspace, out_path, layout: str, *, record: bool = True, say=None,
+                          catalogue: Catalogue | None = None, item_types: str = "used", models=None,
+                          drawings=None) -> Manifest:
+    """Write the package of a location's layout (format 0.12; ``layout``: its ID, or its
+    land's), a package of its own as a building's is: the layout, its footprints, areas,
+    gates and the items on it, and its location; its manifest's ``scope`` names it. What
+    changed is listed against the last package that held it, in the site's frame. With
+    ``record`` the export is entered in the workspace (as export_package)."""
+    land = layout if layout.count("-") == 2 else layout.rsplit("-", 1)[0]
+    if item_types not in ITEM_TYPES:
+        raise ExportError(f"item types: {' or '.join(ITEM_TYPES)}, not {str(item_types)[:20]!r}")
+    if land not in land_ids(ws):
+        raise ExportError(f"no layout {layout} in this project")
+    return _package(ws, out_path, [land], record=record, bake=False, say=say, catalogue=catalogue,
+                    item_types=item_types, models=models, drawings=drawings)
+
+
 def preview_package(ws: Workspace, out_path, *, buildings: list[str] | None = None,
                     catalogue: Catalogue | None = None, models=None) -> Manifest:
     """The project as it is now, for Studio's own viewers: some buildings (all of them
     without ``buildings``), not entered as an export and not pre-built, with the whole
-    catalogue (a type no item has yet may be placed in them). It is never sent anywhere:
-    what is sent is a building's package (export_package)."""
+    catalogue (a type no item has yet may be placed in them); or a location's layout (its
+    land's ID). It is never sent anywhere: what is sent is a building's package
+    (export_package), or a layout's (export_layout_package)."""
+    if buildings and len(buildings) == 1 and buildings[0] in land_ids(ws):
+        return _package(ws, out_path, buildings, record=False, bake=False, catalogue=catalogue, item_types="all",
+                        models=models, alone=True)
     known = building_ids(ws)
     buildings = known if buildings is None else buildings
     if unknown := sorted(set(buildings) - set(known)):
@@ -688,6 +832,10 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     buildings = sorted(set(buildings))
     locations = {b.rsplit("-", 1)[0] for b in buildings}
     scoped = in_buildings(buildings)
+    # a location's layout (format 0.12) is a package of its own: its land's ID is its scope here
+    lands = [b for b in buildings if is_land(b)]
+    if lands and len(buildings) != 1:
+        raise ExportError("a location's layout is a package of its own: export it alone")
 
     def held(role: str, f: dict) -> bool:
         if role == "location":
@@ -695,9 +843,13 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
         return scoped(f["properties"]["floor_id"] if role == "items" else f["id"])  # an item: where it is
 
     # a package is worked out from the whole project (an item that moved to another
-    # building is said to have); a preview, from its buildings ``alone``
+    # building, or onto a layout, is said to have); a preview, from its buildings ``alone``
     only = set(buildings) if alone else None
     everything = build_features(ws, cat, only=only)
+    for role, fs in layout_features(ws, cat, only=only).items():
+        everything[role] = everything.get(role, []) + fs
+    if not lands:  # (a building's package holds no layout)
+        everything.pop("layout"), everything.pop("footprints")
     features = {role: [f for f in fs if held(role, f)] for role, fs in everything.items()}
     placed = placements(ws)
     sequence = (ws.exports[-1].sequence + 1) if ws.exports else 1
@@ -714,10 +866,12 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
         prev_hashes: dict[str, str] = {}
         for p in last.values():
             prev_hashes.update(p.objects)
-        places = {f["id"]: f["properties"]["building_id"] for f in everything["items"]}  # every item in use, now
+        # every item in use, now: the building it stands in, or the land of the layout it stands on
+        places = {f["id"]: f["properties"]["building_id"] or f["properties"]["floor_id"].rsplit("-", 1)[0]
+                  for f in everything["items"]}
         here = {f["id"] for f in features["items"]}
         gone = sorted(i for i in prev_hashes if i not in hashes)
-        moved_away = [MovedAway(id=i, building_id=places[i]) for i in gone if i in places]
+        moved_away = [MovedAway(id=i, building_id=_holder(ws, places[i])) for i in gone if i in places]
 
         def item(i: str) -> bool:  # an item's ID: one the project has, or a package of it held (of any format)
             return i in ws.items or i in known or is_item_id(i)
@@ -750,22 +904,30 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
         )
 
     now = utcnow()
+    levels = [(fid, f) for _, _, f, fid in ws.iter_floors(layouts=True) if scoped(fid)]  # (a layout's: its own)
+    if lands:  # the layout's package: its site's placement, by the layout's ID (format 0.12)
+        layout_id = next((fid for fid, _ in levels), f"{lands[0]}-G00")
+        loc = ws.location(lands[0].rsplit("-", 1)[0])
+        site = site_placement(loc)
+        placed_here = {layout_id: PlacementInfo(**site.model_dump(), placed=loc.placement is not None)}
+        scope = Scope(buildings=[], layout=layout_id)
+    else:
+        placed_here = {b_id: PlacementInfo(**p.model_dump(), placed=real, site=site_frame(ws.building(b_id)))
+                       for b_id, (p, real) in placed.items() if scoped(b_id)}
+        scope = Scope(buildings=buildings)
+    roles = [r for r in FILES if r in features or r in ("objects", "changes", "catalogue")]
     manifest = Manifest(
         generator=Generator(name="storeypath", version=version("storeypath")),
         project=ProjectInfo(id=ws.id, name=ws.project.name),
         export=ExportInfo(sequence=sequence, exported_at=now, previous_sequence=changes.previous_sequence),
-        files={**FILES, "spec": "FORMAT.md", "schemas": "schema/"},
+        files={**{r: FILES[r] for r in roles if r != "navigation"}, "spec": "FORMAT.md", "schemas": "schema/"},
         counts={role: len(fs) for role, fs in features.items()},
         types={"space": [t.value for t in SpaceType], "zone": [t.value for t in SpaceType],
-               "opening": [t.value for t in OpeningType], "floor": [t.value for t in FloorType]},
-        sources=[
-            SourceInfo(floor_id=fid, file=Path(f.source.path).name, sha256=f.source.sha256)
-            for _, _, f, fid in ws.iter_floors() if f.source and scoped(fid)
-        ],
-        placements={
-            b_id: PlacementInfo(**p.model_dump(), placed=real) for b_id, (p, real) in placed.items() if scoped(b_id)
-        },
-        scope=Scope(buildings=buildings),
+               "opening": [t.value for t in OpeningType], "floor": [t.value for t in BUILDING_LEVELS]},
+        sources=[SourceInfo(floor_id=fid, file=Path(f.source.path).name, sha256=f.source.sha256)
+                 for fid, f in levels if f.source],
+        placements=placed_here,
+        scope=scope,
     )
 
     # its item types (format 0.9.1): those its items use, each once, or the whole catalogue;
@@ -780,12 +942,14 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     if model_files:
         manifest.files["models"] = MODELS
 
-    # the walking network of its building (format 0.8)
-    navigation = navigation_file(ws, buildings, cat, placed)
-    manifest.files["navigation"] = NAVIGATION_FILE
+    # the walking network of its building (format 0.8); a layout has none yet
+    navigation = None
+    if not lands:
+        navigation = navigation_file(ws, buildings, cat, placed)
+        manifest.files["navigation"] = NAVIGATION_FILE
 
     world: dict[str, bytes] = {}
-    if bake:  # the package as it is so far, for the baker to read
+    if bake and not lands:  # the package as it is so far, for the baker to read
         with tempfile.TemporaryDirectory(prefix="storeypath-export-") as tmp:
             plain = Path(tmp) / "package.storeypath"
             _write(plain, ws, manifest, features, changes, model_files, written, navigation)
@@ -797,7 +961,7 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     # each floor's drawing as drawn (format 0.11), when asked for: its source names it
     views: dict[str, bytes] = {}
     if drawings is not None:
-        floors = [(fid, f.source) for _, _, f, fid in ws.iter_floors() if f.source and scoped(fid)]
+        floors = [(fid, f.source) for fid, f in levels if f.source]
         for (fid, _), data in zip(floors, drawings(floors) if floors else []):
             if data:
                 views[f"{DRAWINGS}{fid}.view"] = data
@@ -826,6 +990,16 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
             sequence=sequence, exported_at=now, file=Path(out_path).name, buildings=buildings,
             held=held_now, items_held=sorted(known | here)))
     return manifest
+
+
+def _holder(ws: Workspace, held_by: str) -> str:
+    """What holds an item now, as a package says it (moved_away): its building, or the
+    layout of the land it stands on (format 0.12)."""
+    if is_land(held_by):
+        loc = ws.location(held_by.rsplit("-", 1)[0])
+        layout = loc.layout.floors[0].code if loc.layout is not None and loc.layout.floors else "G00"
+        return f"{held_by}-{layout}"
+    return held_by
 
 
 def _write(out, ws: Workspace, manifest: Manifest, features: dict[str, list[dict]], changes: Changes,

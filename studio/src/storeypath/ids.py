@@ -15,6 +15,11 @@ the separator.
 
 Items (furniture and equipment) are assets, not places: their IDs are random tags
 with a check symbol, 7K2Q-XM9F-4DP, of no project or place (below).
+
+A location's land, its layout (format 0.12), is a level of the location as a floor is of
+its building: the building's segment LAND (reserved: no building has it) and the level
+G00, so its areas, gates and footprints have IDs of five segments as every place does,
+K7Q2XM-SITE-LAND-G00-0004, from the land's own counter.
 """
 
 from __future__ import annotations
@@ -35,6 +40,26 @@ MAX_ID_LENGTH = len(LEVELS) * SEGMENT_MAX_LENGTH + len(LEVELS) - 1
 
 # ASCII only, the whole string (\Z: no trailing line break, as $ would let through)
 _SEGMENT_RE = re.compile(rf"\A[A-Z0-9]{{1,{SEGMENT_MAX_LENGTH}}}\Z")
+
+
+# A location's land (format 0.12): the building's segment no building may have, and its
+# layout's level (the only one in 0.12)
+LAND_CODE = "LAND"
+LAYOUT_CODE = "G00"
+
+
+def layout_id(location_id: str) -> str:
+    """The ID of a location's layout: PROJECT-LOCATION-LAND-G00."""
+    return f"{location_id}{SEPARATOR}{LAND_CODE}{SEPARATOR}{LAYOUT_CODE}"
+
+
+def is_land(value: str) -> bool:
+    """Whether a place's ID is of a location's land (its layout, or what is on it): its
+    building's segment is LAND. Never an item's ID."""
+    if not isinstance(value, str) or len(value) > MAX_ID_LENGTH or is_item_id(value):
+        return False
+    segments = value.split(SEPARATOR)
+    return len(segments) >= 3 and segments[2] == LAND_CODE
 
 
 def generate_project_code() -> str:

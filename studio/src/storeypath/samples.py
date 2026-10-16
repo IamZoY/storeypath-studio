@@ -851,3 +851,152 @@ def build_showcase(directory: str | Path) -> tuple[Path, list[Path]]:
         export_package(ws, packages[-1], building=make_id(ws.id, loc.split("-")[-1], code))
     ws.save(ws_path)
     return ws_path, packages
+
+
+# ---- a site plan: a made-up plot with its buildings (location layouts, format 0.12) --------------
+
+@dataclass
+class SiteBuilding:
+    """A building drawn on a site plan: its outline (metres, the plot's frame) and labels."""
+
+    outline: list[tuple[float, float]]
+    labels: list[str]
+    walls: bool = True  # drawn with double lines (walls); else one line round it
+
+
+@dataclass
+class SitePlan:
+    """A made-up plot, metres from its south-west corner: its size, its buildings, the
+    gates in its south wall ((x from, x to), leaves), its areas ((outline, label)), and
+    which way north is (the bearing the plan's up faces)."""
+
+    width: float = 50.0
+    depth: float = 36.0
+    buildings: list[SiteBuilding] = field(default_factory=list)
+    gates: list[tuple[tuple[float, float], int]] = field(default_factory=list)
+    areas: list[tuple[list[tuple[float, float]], str]] = field(default_factory=list)
+    north: float | None = 30.0
+    road: str | None = "STREET"
+    ground: list[tuple[float, float]] = field(default_factory=list)  # where the ground's level is written
+    property: str = "text"  # how the property limits are marked: "text" (along them), "layer", or "none"
+    wall: float = 0.25  # the boundary walls' thickness
+
+
+HOUSE = [(0.0, 0.0), (18.0, 0.0), (18.0, 7.0), (12.0, 7.0), (12.0, 12.0), (0.0, 12.0)]  # an L, metres
+GUEST = [(0.0, 0.0), (8.0, 0.0), (8.0, 6.0), (0.0, 6.0)]
+STORE = [(0.0, 0.0), (5.0, 0.0), (5.0, 4.0), (0.0, 4.0)]
+
+
+def _placed(ring, at=(0.0, 0.0), turn: float = 0.0):
+    """A ring turned ``turn`` degrees counter-clockwise about its origin, then moved to ``at``."""
+    r = math.radians(turn)
+    return [(round(at[0] + x * math.cos(r) - y * math.sin(r), 6), round(at[1] + x * math.sin(r) + y * math.cos(r), 6))
+            for x, y in ring]
+
+
+def sample_site_plan() -> SitePlan:
+    """The tests' plot: 50 by 36 m, a main house (an L) in its middle, two guest houses alike
+    but for their names in its north corners, a store by the gate that no building of the
+    project is, parking and a garden, a vehicle gate and a pedestrian gate in its south wall,
+    the street beyond it, its north arrow turned 30°."""
+    return SitePlan(
+        buildings=[
+            SiteBuilding(_placed(HOUSE, (16.0, 12.0)), ["MAIN HOUSE", "+0.45 FFL"]),
+            SiteBuilding(_placed(GUEST, (2.0, 27.0)), ["GUEST HOUSE A"]),
+            SiteBuilding(_placed(GUEST, (40.0, 27.0)), ["GUEST HOUSE B"]),
+            SiteBuilding(_placed(STORE, (42.0, 2.0)), ["STORE"]),
+        ],
+        gates=[((21.0, 26.0), 2), ((32.0, 33.2), 1)],
+        areas=[([(2.0, 2.0), (14.0, 2.0), (14.0, 8.0), (2.0, 8.0)], "PARKING"),
+               ([(38.0, 12.0), (47.0, 12.0), (47.0, 22.0), (38.0, 22.0)], "GARDEN")],
+        ground=[(28.0, 6.0), (8.0, 20.0)],
+    )
+
+
+def write_site_plan_dxf(path: str | Path, plan: SitePlan, *, origin=(300.0, 200.0), units: str = "m",
+                        title: str = "SITE PLAN", buildings_turned: float = 0.0) -> None:
+    """Write a site plan as architects draw one: its property limits dashed (marked as
+    ``plan.property`` says), its boundary walls with gaps for its gates (each a leaf or two
+    drawn swinging in), its buildings in double lines with their names and levels, its
+    areas' kerbs and names, the ground's levels, the street's name beyond the plot, a north
+    arrow (a block with an N, turned), a title under it. ``units``: "m" or "mm"."""
+    doc = ezdxf.new("R2018", setup=True)
+    doc.units = ezdxf.units.M if units == "m" else ezdxf.units.MM
+    k = 1.0 if units == "m" else 1000.0
+    for name, color in (("PLOT-LINE" if plan.property == "layer" else "A-ANNO-SITE", 1), ("A-WALL-SITE", 7),
+                        ("A-BLDG", 7), ("A-SITE-KERB", 8), ("A-ANNO-TEXT", 2), ("A-ANNO-SYMB", 3)):
+        doc.layers.add(name, color=color)
+    limits = "PLOT-LINE" if plan.property == "layer" else "A-ANNO-SITE"
+    msp = doc.modelspace()
+    ox, oy = origin
+
+    def at(x: float, y: float) -> tuple[float, float]:
+        return round((ox + x) * k, 4), round((oy + y) * k, 4)
+
+    W, D, t = plan.width, plan.depth, plan.wall
+    # the property limits: dashed, past the corners as surveyors draw them
+    for (x0, y0), (x1, y1) in (((-3, 0), (W + 3, 0)), ((W, -3), (W, D + 3)), ((W + 3, D), (-3, D)), ((0, D + 3), (0, -3))):
+        msp.add_line(at(x0, y0), at(x1, y1), dxfattribs={"layer": limits, "linetype": "DASHED"})
+    if plan.property == "text":
+        for x, y, rot in ((W / 4, D + 0.4, 0), (3 * W / 4, -0.4, 0), (-0.4, D / 2, 90), (W + 0.4, D / 3, 90)):
+            msp.add_text("PROPERTY LINE", height=0.25 * k, rotation=rot, dxfattribs={"layer": "A-ANNO-TEXT"}
+                         ).set_placement(at(x, y), align=TextEntityAlignment.MIDDLE_CENTER)
+    # the boundary walls, inside the limits, open at the gates
+    band = box(0, 0, W, D).difference(box(t, t, W - t, D - t))
+    for (g0, g1), _ in plan.gates:
+        band = band.difference(box(g0, -1, g1, t + 1))
+    for b in plan.buildings:  # a building against the boundary stands on it: its walls are the boundary's
+        band = band.difference(Polygon(b.outline).buffer(-0.01))
+    for poly in getattr(band, "geoms", [band]):
+        msp.add_lwpolyline([at(*p) for p in poly.exterior.coords][:-1], close=True, dxfattribs={"layer": "A-WALL-SITE"})
+    for (g0, g1), leaves in plan.gates:  # the leaves, drawn open into the plot
+        w = (g1 - g0) / leaves
+        for i in range(leaves):
+            hinge = g0 if i == 0 else g1
+            sign = 1 if i == 0 else -1
+            cx, cy = at(hinge, t)
+            msp.add_line(at(hinge, t), at(hinge, t + w), dxfattribs={"layer": "A-WALL-SITE"})
+            start, end = (0, 90) if sign > 0 else (90, 180)
+            msp.add_arc((cx, cy), w * k, start, end, dxfattribs={"layer": "A-WALL-SITE"})
+    # the buildings
+    for b in plan.buildings:
+        ring = _placed(b.outline, (0, 0), 0)
+        shell = Polygon(ring)
+        if b.walls:
+            for poly in [shell, shell.buffer(-WALL, join_style="mitre")]:
+                msp.add_lwpolyline([at(*p) for p in poly.exterior.coords][:-1], close=True, dxfattribs={"layer": "A-BLDG"})
+        else:
+            msp.add_lwpolyline([at(*p) for p in ring], close=True, dxfattribs={"layer": "A-BLDG"})
+        c = shell.representative_point()
+        for i, label in enumerate(b.labels):
+            msp.add_text(label, height=0.35 * k, dxfattribs={"layer": "A-ANNO-TEXT"}).set_placement(
+                at(c.x, c.y - 0.6 * i), align=TextEntityAlignment.MIDDLE_CENTER)
+    # the areas' kerbs and names
+    for ring, label in plan.areas:
+        msp.add_lwpolyline([at(*p) for p in ring], close=True, dxfattribs={"layer": "A-SITE-KERB"})
+        c = Polygon(ring).representative_point()
+        msp.add_text(label, height=0.35 * k, dxfattribs={"layer": "A-ANNO-TEXT"}).set_placement(
+            at(c.x, c.y), align=TextEntityAlignment.MIDDLE_CENTER)
+    for x, y in plan.ground:
+        msp.add_text("+0.00 FGL", height=0.25 * k, dxfattribs={"layer": "A-ANNO-TEXT"}).set_placement(
+            at(x, y), align=TextEntityAlignment.MIDDLE_CENTER)
+    if plan.road:
+        msp.add_text(plan.road, height=0.5 * k, dxfattribs={"layer": "A-ANNO-TEXT"}).set_placement(
+            at(W / 2, -4.0), align=TextEntityAlignment.MIDDLE_CENTER)
+    if plan.north is not None:  # an arrow pointing up its block, an N over it; turned so north is where it is
+        arrow = doc.blocks.new("NORTH-ARROW")
+        arrow.add_lwpolyline([(0, -1.2 * k), (0.5 * k, -0.6 * k), (0, 1.0 * k), (-0.5 * k, -0.6 * k)], close=True)
+        arrow.add_circle((0, 0), 1.3 * k)
+        arrow.add_text("N", height=0.5 * k).set_placement((0, 1.6 * k), align=TextEntityAlignment.MIDDLE_CENTER)
+        msp.add_blockref("NORTH-ARROW", at(-6.0, 4.0), dxfattribs={"layer": "A-ANNO-SYMB", "rotation": plan.north})
+    msp.add_text(title, height=0.6 * k, dxfattribs={"layer": "A-ANNO-TEXT"}).set_placement(
+        at(W / 2, -8.0), align=TextEntityAlignment.MIDDLE_CENTER)
+    doc.saveas(path)
+
+
+def site_plan_region(plan: SitePlan, origin=(300.0, 200.0), units: str = "m") -> tuple[float, float, float, float]:
+    """The region of a site plan written by write_site_plan_dxf, in its drawing units: the
+    plot, its street and its arrow, its title."""
+    k = 1.0 if units == "m" else 1000.0
+    ox, oy = origin
+    return ((ox - 10) * k, (oy - 10) * k, (ox + plan.width + 6) * k, (oy + plan.depth + 6) * k)

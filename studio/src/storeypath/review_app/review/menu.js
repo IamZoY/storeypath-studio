@@ -112,10 +112,11 @@ export function openMenu(cx, cy, p) {
     select(s.id);
     items.push(...heading(title(s), typeLabel(s.type)));
     if (editable()) {
-      const now = finish.shown(s), wall = finish.wallAt(s, p, WALL_REACH_M);
-      items.push(menuItem(`Paint the floor: ${finishOf(now.floor)?.name ?? now.floor}…`, () => finish.chooseAt(cx, cy, s, "floor"), { ico: "paint-roller" }));
+      const land = Boolean(state.floor?.layout); // (an area of a layout: its ground, no walls of its own)
+      const now = finish.shown(s), wall = land ? null : finish.wallAt(s, p, WALL_REACH_M);
+      items.push(menuItem(`Paint the ${land ? "ground" : "floor"}: ${finishOf(now.floor)?.name ?? now.floor}…`, () => finish.chooseAt(cx, cy, s, "floor"), { ico: "paint-roller" }));
       if (wall) items.push(menuItem("Paint this wall…", () => finish.chooseAt(cx, cy, s, "wall", wall), { ico: "paint-roller" }));
-      items.push(menuItem(`Paint all its walls: ${finishOf(now.wall)?.name ?? now.wall}…`, () => finish.chooseAt(cx, cy, s, "wall"), { ico: "paint-roller" }));
+      if (!land) items.push(menuItem(`Paint all its walls: ${finishOf(now.wall)?.name ?? now.wall}…`, () => finish.chooseAt(cx, cy, s, "wall"), { ico: "paint-roller" }));
     }
     items.push(menuItem(s.ignored ? "Restore this space" : "Delete this space", () => setFlag(s.id, "ignored", !s.ignored),
       { danger: !s.ignored, hint: s.ignored ? "" : key("edit.delete"), ico: s.ignored ? "rotate-cw" : "trash-2" }));
@@ -124,9 +125,13 @@ export function openMenu(cx, cy, p) {
   // what is added is read with the floor's drawing: a floor from a package has none yet
   const onWall = Boolean(openingAt(p, 0.9));
   const off = !readable() ? "needs its drawing" : onWall ? "" : "on a wall";
-  items.push(menuItem("Add a door here", () => addOpening("door", p), { disabled: !onWall || !readable(), hint: off, ico: "door-open" }));
-  items.push(menuItem("Add a window here", () => addOpening("window", p), { disabled: !onWall || !readable(), hint: off }));
-  items.push(menuItem("Add an opening here", () => addOpening("opening", p), { disabled: !onWall || !readable(), hint: off }));
+  if (state.floor?.layout) { // (a location's layout: what is drawn in its boundary walls is a gate)
+    items.push(menuItem("Add a gate here", () => addOpening("gate", p), { disabled: !onWall || !readable(), hint: off, ico: "door-open" }));
+  } else {
+    items.push(menuItem("Add a door here", () => addOpening("door", p), { disabled: !onWall || !readable(), hint: off, ico: "door-open" }));
+    items.push(menuItem("Add a window here", () => addOpening("window", p), { disabled: !onWall || !readable(), hint: off }));
+    items.push(menuItem("Add an opening here", () => addOpening("opening", p), { disabled: !onWall || !readable(), hint: off }));
+  }
   items.push(el("hr"));
   items.push(menuItem("Draw a wall from here", () => startLine("wall", p), { disabled: !readable(), hint: readable() ? key("tool.wall") : "needs its drawing", ico: "brick-wall" }));
   items.push(menuItem("Divide a space from here", () => startLine("divide", p), { disabled: !readable(), hint: readable() ? key("tool.divide") : "needs its drawing", ico: "square-split-horizontal" }));

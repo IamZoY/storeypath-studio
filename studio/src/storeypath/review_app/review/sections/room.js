@@ -13,7 +13,7 @@ import { accept, correct, GRADE_NAMES, itemsIn, saveSpace, seatsOf, setFlag, use
 import { toast } from "../notify.js";
 import { advance, likelyTypes, reviewing } from "../reviewmode.js";
 import { select, selectAsset } from "../selection.js";
-import { code, color, state, title, typeName, typeOf } from "../state.js";
+import { code, color, state, title, typeName, typeOf, typeOptions } from "../state.js";
 import * as vertical from "../vertical.js";
 import { roomHistory } from "./history.js";
 
@@ -99,7 +99,7 @@ function correctAndGo(s, type) {
 
 function classification({ space: s, editable }) {
   const select_ = el("select", { id: "ed-type", "aria-label": "Type", disabled: !editable || null });
-  select_.append(...state.project.types.map((t) => el("option", { value: t }, typeName(t))));
+  select_.append(...typeOptions()); // (on a layout, the land's types first)
   select_.value = s.type;
   select_.style.setProperty("--type-colour", color(s.type));
   select_.addEventListener("change", () => correct(s, { type: select_.value }));

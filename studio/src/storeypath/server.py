@@ -112,8 +112,8 @@ from .assets import asset_dir
 from .backup import backup_name, write_backup
 from .bundle import ProjectExists
 from .db.store import Editor, StepLock, drawing_name
-from .ids import (default_floor_code, default_mezzanine_code, default_roof_code, make_id, normalize_item_id,
-                  validate_segment)
+from .ids import (LAND_CODE, default_floor_code, default_mezzanine_code, default_roof_code, is_land, make_id,
+                  normalize_item_id, validate_segment)
 from .cad import UNIT_NAMES, UNIT_WORDS, DrawingError, header_units, meters_per_unit, read_drawing
 from .llm import LocalModel, ModelUnavailable, read_titles, worth_reading
 from .sheets import mezzanine_of, read_title, title_level
@@ -590,7 +590,7 @@ class Studio:
         full = self.workspace(code)
         ws = sight.seen(full) if sight is not None else full
         info = self.review_project(code, sight)
-        from .export import footprint, site_positions
+        from .export import footprint, north_said, site_positions
 
         rooms: dict[str, int] = {}  # each floor's rooms and items in use (what deleting it retires)
         for i, r in full.objects.items():
@@ -611,13 +611,17 @@ class Studio:
                 whole_b = next(x for x in whole_loc.buildings if x.code == b.code)
                 outline = [shape(f.outline) for f in b.floors if f.outline]
                 centre = unary_union(outline).centroid if outline else None
+                # a building with no floors yet, on a footprint of its location's layout (0.12): it
+                # stands as that footprint (its frame the site's there)
+                stands = _footprint_shape(full, b) if not outline else None
                 buildings.append({
                     "id": b_id, "code": b.code, "name": b.name,
                     "placement": b.placement.model_dump() if b.placement else None,
                     # its place on the site plan (as its drawing places it when not set) and
                     # its footprint in its own drawing metres, for the site plan to draw
                     "site": {**positions[b.code].model_dump(), "set": whole_b.site is not None},
-                    "footprint": _rings(footprint(b)),
+                    "footprint": _rings(footprint(b) if stands is None else stands),
+                    "on_footprint": b.site.footprint if b.site is not None else None,
                     "centre": [round(centre.x, 2), round(centre.y, 2)] if centre is not None else None,
                     # (each floor's part of its drawing, in drawing units, and how it was read:
                     # the drawing viewer outlines it)
@@ -640,7 +644,13 @@ class Studio:
                                for f in sorted(b.floors, key=floor_order)],
                 })
             tree.append({"id": f"{ws.id}-{loc.code}", "code": loc.code, "name": loc.name, "buildings": buildings,
-                         "placement": loc.placement.model_dump() if loc.placement else None})
+                         "placement": loc.placement.model_dump() if loc.placement else None,
+                         # which way north is (0.12): the site's bearing, and how it is known
+                         "north": {**north_said(whole_loc), "sure": whole_loc.north.sure
+                                   if whole_loc.north is not None else None},
+                         # its layout (0.12): its land, read from a site plan
+                         "layout": _layout_page(full, whole_loc, items) if loc.layout is not None and loc.layout.floors
+                         else None})
         kept = [d for d in self.store.drawings(code) if Path(d["name"]).suffix.lower() in DRAWING_TYPES]
         exports = self.store.export_files(code)
         if sight is not None and not sight.whole:
@@ -1269,7 +1279,7 @@ class Studio:
 
         def run(job: Job):
             ws = self.workspace(code)
-            floors = [fid for *_, fid in ws.iter_floors() if floor in (None, fid)]
+            floors = [fid for *_, fid in ws.iter_floors(layouts=True) if floor in (None, fid)]
             # a building read for the first time (its first reading failed, say) is put
             # beside the others when its drawing would stack it on one of them
             unread = {f"{ws.id}-{loc.code}-{b.code}" for loc in ws.locations for b in loc.buildings
@@ -1321,9 +1331,17 @@ class Studio:
                 # the project is held only while it is applied, a second or two.
                 with StepLock(self.db, f"{fid} read"):
                     ws = self.store.load(code)
-                    source = ws.floor(fid).source.model_dump(exclude={"sha256"})
+                    layout = ws.floor(fid).layout  # a location's layout (0.12): its site plan read here
+                    # (what its drawing is: a layout's offset is chosen by its first read)
+                    unread = {"sha256", "offset"} if layout else {"sha256"}
+                    source = ws.floor(fid).source.model_dump(exclude=unread)
                     try:
-                        if self.readers is not None:  # in a process of its own
+                        if layout:
+                            from .layout import read_layout
+
+                            floor_read = read_layout(ws, fid, folder, self.model if self.model.available() else None,
+                                                     say=say)
+                        elif self.readers is not None:  # in a process of its own
                             floor_read, readings, answers = self.readers.read(fid, {
                                 "ws": ws.model_dump_json(), "folder": str(folder), "tiles": str(self.cache / TILES),
                                 "reads": str(self.cache / READS), "drawn": drawn, "models": settings},
@@ -1346,9 +1364,9 @@ class Studio:
                         return
                     with self._changing(code):
                         now = self.store.load(code)
-                        floor = next((f for *_, f, i in now.iter_floors() if i == fid), None)
+                        floor = next((f for *_, f, i in now.iter_floors(layouts=True) if i == fid), None)
                         if floor is None or floor.source is None or \
-                                floor.source.model_dump(exclude={"sha256"}) != source:
+                                floor.source.model_dump(exclude=unread) != source:
                             job.say(f"  {fid}: its drawing changed while it was read: not applied")
                             with noted:
                                 failed.append(f"{fid}: its drawing changed while it was read")
@@ -1356,7 +1374,12 @@ class Studio:
                         now.readings.update(ws.readings)
                         now.vision.update(ws.vision)
                         # a read that would retire most of a floor is not applied: the floor keeps its rooms
-                        report = apply_read(now, floor_read, force=force, drawn=drawn)
+                        if layout:
+                            from .layout import apply_layout
+
+                            report = apply_layout(now, floor_read, force=force)
+                        else:
+                            report = apply_read(now, floor_read, force=force, drawn=drawn)
                         self.store.save_floor(now, fid, by=by, more={"summary": report.summary(), "held": report.held})
                 job.say("  " + report.summary())
                 for w in report.warnings:
@@ -1545,9 +1568,215 @@ class Studio:
             self.store.save(ws, floors=[], by=by, part="building", kind="place", targets=[building_id])
         return {"placement": b.placement.model_dump()}
 
+    # ---- a location's layout (format 0.12: layout.py, siteplan.py) ---------------------------
+
+    def add_layout(self, code: str, body: dict, by=None) -> Job:
+        """A site plan of one of the project's drawings used as a location's layout:
+        ``drawing``, its ``units`` (as its plans were found in), ``plan`` ({region, title});
+        ``location_id`` (one of the project's), or ``location`` (a new one's name; with
+        neither, the project's first location). A location that has a layout is given this
+        plan in its place: what is on it keeps its IDs where it is still there. Read in a
+        job: its plot, walls, gates, areas, footprints and north; the location's buildings
+        matched to its footprints, none moved until a person says."""
+        drawing = self._drawing(code, body.get("drawing", ""))
+        units = body.get("units") or None
+        if units is not None and not isinstance(units, str) or units and units not in UNIT_NAMES:
+            raise ValueError(f"unknown units {units!r}: use one of {', '.join(UNIT_NAMES)}")
+        plan = body.get("plan")
+        if not isinstance(plan, dict):
+            raise ValueError("plan: the site plan to read ({region, title})")
+        region = plan.get("region")
+        if not isinstance(region, list) or len(region) != 4:
+            raise ValueError("plan: its region, [x0, y0, x1, y1] in drawing units")
+        region = tuple(_finite(v, "region") for v in region)
+        if not (region[0] < region[2] and region[1] < region[3]):
+            raise ValueError("plan: its region is x0, y0, x1, y1 with x0 < x1 and y0 < y1")
+        title = plan.get("title") if isinstance(plan.get("title"), str) else None
+        loc_id, loc_name = body.get("location_id") or None, (body.get("location") or "").strip() or None
+        for key, value in (("location_id", loc_id), ("location", loc_name)):
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"{key} is text")
+        if loc_id is not None:
+            try:
+                self.workspace(code).location(loc_id)
+            except (KeyError, ValueError):
+                raise ValueError(f"no location {loc_id}") from None
+
+        def run(job: Job):
+            with self._changing(code):
+                if self.store.drawing(code, drawing) is None:
+                    raise NotFound(f"no drawing {drawing}: it was deleted")
+                ws = self.store.load(code, floors=[])
+                where = loc_id
+                if where is None and loc_name is not None:
+                    same = next((x for x in ws.locations if x.name.strip().lower() == loc_name.lower()), None)
+                    if same is not None:
+                        where = make_id(ws.id, same.code)
+                    else:
+                        where = ws.add_location(_unique(_code(loc_name, "SITE"), {x.code for x in ws.locations}),
+                                                loc_name)
+                        job.say(f"location {loc_name} ({where})")
+                if where is None:
+                    if not ws.locations:
+                        ws.add_location("SITE", ws.project.name)
+                    where = make_id(ws.id, ws.locations[0].code)
+                source = SourceDrawing(path=f"drawings/{drawing}", profile=AUTO, units=units, region=region,
+                                       view=title)
+                had = ws.layout_of(where)
+                if had is not None and had.source is not None and had.source.path == source.path \
+                        and tuple(had.source.region or ()) == region and had.source.units == units:
+                    source.offset = had.source.offset  # the same plan: its frame as it was
+                layout_id = ws.add_layout(where, source)
+                self.store.save(ws, floors=[], by=by, part="project", kind="layout", targets=[layout_id],
+                                more={"drawing": drawing})
+            job.say(f"layout {layout_id}: {title or 'the site plan'}")
+            result = self._convert(code, [layout_id], job, by=by)
+            return {"layout": layout_id, **result}
+
+        return self.jobs.submit(f"Reading the site plan in {drawing}", run, project=code, user=_uid(by), kind="layout",
+                                about=drawing)
+
+    def _location(self, code: str, location_id) -> None:
+        """NotFound unless the project has this location."""
+        self._known(code)
+        try:
+            self.workspace(code).location(location_id)
+        except (KeyError, ValueError, TypeError):
+            raise NotFound(f"no location {location_id}") from None
+
+    def footprint(self, code: str, footprint_id: str, body: dict, by=None) -> dict:
+        """A footprint of a location's layout said to be one of the location's buildings
+        (``building``: its ID; "" or null: of none, skipped), that building placed on it so
+        its ground floor lies on it; or a new building of the location made for it
+        (``new``: true, with a ``name`` or the one its site plan gives), without floors. The
+        location's other buildings stay where they are on its site."""
+        from .layout import new_building, place
+        from .review import BUSY_MESSAGE, BUSY_WAIT_S
+
+        self._known(code)
+        building = body.get("building")
+        if building is not None and not isinstance(building, str):
+            raise ValueError("building: a building's ID, or \"\" for none")
+        if body.get("new") not in (None, False, True):
+            raise ValueError("new: true or false")
+        name = body.get("name")
+        if name is not None and (not isinstance(name, str) or len(name) > 80):
+            raise ValueError("name: a building's name, at most 80 characters")
+        layout_id = footprint_id.rsplit("-", 1)[0]
+        lock = self._changing(code)
+        if not lock.acquire(timeout=BUSY_WAIT_S):
+            raise Busy(BUSY_MESSAGE)
+        try:
+            ws = self.store.load(code, floors=[layout_id])
+            try:
+                if body.get("new"):
+                    building = new_building(ws, footprint_id, name=name)
+                    kind = "new building"
+                else:
+                    place(ws, footprint_id, building or None)
+                    kind = "footprint"
+            except KeyError as e:
+                raise NotFound(str(e).strip("'")) from None
+            b = ws.building(building) if building else None
+            self.store.save(ws, floors=[layout_id], by=by, part="building", kind=kind,
+                            targets=[x for x in (building, footprint_id) if x],
+                            more={"building_name": b.name if b is not None else None})
+            return {"footprint": footprint_id, "building": building or None,
+                    "site": b.site.model_dump(mode="json") if b is not None and b.site is not None else None}
+        finally:
+            lock.release()
+
+    def place_layout(self, code: str, location_id: str, body: dict | None = None, by=None) -> dict:
+        """Every footprint of a location's layout put to its building, as matched (at least
+        ``sure`` sure: the default, every match) or as a person said, each building placed
+        on its footprint (Apply all): those standing on theirs already left as they are,
+        unless ``again`` (placed anew, the layout read again)."""
+        from .layout import MATCH_FLOOR, place_all
+
+        body = body or {}
+        sure = _finite(body.get("sure", MATCH_FLOOR), "sure")
+        again = body.get("again", False)
+        if not isinstance(again, bool):
+            raise ValueError("again: true or false")
+        self._location(code, location_id)
+        with self._changing(code):
+            ws = self.store.load(code, floors=[])
+            layout = ws.layout_of(location_id)
+            if layout is None:
+                raise NotFound(f"{location_id} has no layout")
+            layout_id = f"{location_id}-{LAND_CODE}-{layout.code}"
+            ws = self.store.load(code, floors=[layout_id])
+            placed = place_all(ws, location_id, again=again, sure=sure, confirm=True)
+            if placed:
+                self.store.save(ws, floors=[layout_id], by=by, part="building", kind="placed",
+                                targets=[b for _, b in placed], more={"count": len(placed)})
+        return {"placed": [{"footprint": f, "building": b} for f, b in placed]}
+
+    def match_layout(self, code: str, location_id: str, by=None) -> Job:
+        """The location's buildings matched to its layout's footprints again (a building's
+        floors read since, say), the language model asked where words cannot say; nothing
+        moved."""
+        from .layout import match_buildings
+
+        self._location(code, location_id)
+
+        def run(job: Job):
+            with self._changing(code):
+                ws = self.store.load(code, floors=[])
+                layout = ws.layout_of(location_id)
+                if layout is None:
+                    raise NotFound(f"{location_id} has no layout")
+                layout_id = f"{location_id}-{LAND_CODE}-{layout.code}"
+                ws = self.store.load(code, floors=[layout_id])
+                found = match_buildings(ws, location_id, model=self.model if self.model.available() else None,
+                                        say=job.say)
+                self.store.save(ws, floors=[layout_id], by=by, part="floor", kind="read", targets=[layout_id],
+                                more={"summary": f"{len(found)} footprint(s) matched"})
+            return {"matched": found}
+
+        return self.jobs.submit("Matching buildings to the layout", run, project=code, user=_uid(by), kind="match",
+                                about=location_id)
+
+    def set_north(self, code: str, location_id: str, body: dict, by=None) -> dict:
+        """Which way north is on a location's site plan: ``bearing`` (degrees clockwise from
+        north the site plan's up faces), as a person says; or ``from``: "drawing", as its
+        layout's north arrow was read. On the map, the site's placement turns with it."""
+        from .workspace import North, Placement
+
+        self._location(code, location_id)
+        with self._changing(code):
+            ws = self.store.load(code, floors=[])
+            loc = ws.location(location_id)
+            if body.get("from") == "drawing":
+                layout = ws.layout_of(location_id)
+                if layout is None or layout.north is None:
+                    raise ValueError("its site plan's north arrow was not found: give the bearing")
+                north = North(bearing=layout.north.bearing % 360, source="drawing", sure=layout.north.sure)
+            else:
+                north = North(bearing=_number(body, "bearing") % 360, source="person")
+            loc.north = north
+            if loc.placement is not None:  # (the site on the map turns with it: the same bearing)
+                loc.placement = Placement(**{**loc.placement.model_dump(), "bearing": north.bearing})
+            self.store.save(ws, floors=[], by=by, part="project", kind="north", targets=[location_id],
+                            more={"bearing": round(north.bearing, 2)})
+        return {"north": north.model_dump(mode="json")}
+
     def export_building(self, code: str, body: dict | None = None) -> str:
         """The building a request to export names (``building``: its ID; may be left out
-        when the project has one building)."""
+        when the project has one building); or a location's layout (``layout``: its ID, or
+        its land's, 0.12): its land's ID, as a package of its own holds it."""
+        from .export import land_ids
+
+        layout = (body or {}).get("layout")
+        if layout is None and is_land(str((body or {}).get("building") or "")):
+            layout = body["building"]
+        if layout is not None:
+            if not isinstance(layout, str):
+                raise ValueError("layout: a location's layout's ID")
+            land = layout if layout.count("-") == 2 else layout.rsplit("-", 1)[0]
+            if land not in land_ids(self.workspace(code)):
+                raise ValueError(f"no layout {layout} in this project")
+            return land
         building = (body or {}).get("building")
         if building is None and isinstance((body or {}).get("buildings"), list) and len(body["buildings"]) == 1:
             building = body["buildings"][0]  # as earlier pages sent it
@@ -1596,8 +1825,9 @@ class Studio:
             with self._changing(code):
                 ws = self.store.load(code)
                 seq = (ws.exports[-1].sequence + 1) if ws.exports else 1  # a project opened from export 5 goes on at 6
-                # by code, with the building's
-                name = f"{ws.id}-{seq:03d}-{building.rsplit('-', 1)[-1]}.storeypath"
+                # by code, with the building's (a layout's: its location's and LAND)
+                own = "-".join(building.split("-")[1:3]) if is_land(building) else building.rsplit("-", 1)[-1]
+                name = f"{ws.id}-{seq:03d}-{own}.storeypath"
                 job.say(f"writing {name}")
                 self.work.mkdir(parents=True, exist_ok=True)
                 manifest, data = make_valid_package(ws, name, building, self.catalogue(), job.say, folder=self.work,
@@ -1756,7 +1986,7 @@ class Studio:
         ws = self.store.load(code)
         if sight is not None:
             ws = sight.seen(ws)
-        if not any(f.converted_at for _, _, f, _ in ws.iter_floors()):
+        if not any(f.converted_at for _, _, f, _ in ws.iter_floors(layouts=True)):
             raise NotFound("nothing converted yet: add floors first")
         buf = io.BytesIO()
         try:
@@ -2083,6 +2313,60 @@ def _and(words: list[str], last: str = " and ") -> str:
     return words[0] if len(words) == 1 else ", ".join(words[:-1]) + last + words[-1]
 
 
+def _footprint_shape(ws: Workspace, b):
+    """The footprint of its location's layout a building stands on (0.12), in its own
+    frame: for a building with no floors yet, placed there with the site's frame as its own."""
+    from shapely import affinity
+
+    if b.site is None or not b.site.footprint:
+        return None
+    r = ws.objects.get(b.site.footprint)
+    if r is None or r.status != "active":
+        return None
+    # (its own frame from the site's: the site position turned back)
+    pos = b.site
+    g = affinity.translate(shape(r.geometry), -pos.x, -pos.y)
+    g = affinity.rotate(g, pos.rotation, origin=(0, 0))
+    return affinity.translate(g, pos.pivot[0], pos.pivot[1])
+
+
+def _layout_page(ws: Workspace, loc, items: dict) -> dict:
+    """A location's layout as the project's page shows it (0.12): its site plan, how it
+    was read, its plot, walls, areas, gates and footprints in the site's metres, each
+    footprint with the building it is (a person's choice, else the one standing on it) and
+    what it was matched to, the north its arrow says, and what is on it."""
+    from .export import footprint_of
+    from .layout import MATCH_FLOOR
+
+    f = loc.layout.floors[0]
+    f_id = make_id(ws.id, loc.code, loc.layout.code, f.code)
+    objects = ws.floor_objects(f_id)
+    standing = {b.site.footprint: make_id(ws.id, loc.code, b.code) for b in loc.buildings
+                if b.site is not None and b.site.footprint}
+    prints = []
+    for r in sorted((r for r in objects if r.kind == "footprint"), key=lambda r: r.id):
+        o = ws.overrides.get(r.id)
+        prints.append({"id": r.id, "name": r.name, "label": r.label, "rings": _rings(shape(r.geometry)),
+                       "issues": list(r.issues),
+                       "building": footprint_of(ws, r), "chosen": o.building if o is not None else None,
+                       "standing": standing.get(r.id), "match": r.match})
+    return {
+        "id": f_id, "land": f_id.rsplit("-", 1)[0], "name": f.name,
+        "drawing": Path(f.source.path).name if f.source else None, "view": f.source.view if f.source else None,
+        "region": list(f.source.region) if f.source and f.source.region else None,
+        "offset": list(f.source.offset) if f.source and f.source.offset else None,
+        "units": f.source.units if f.source else None, "converted": f.converted_at is not None,
+        "warnings": f.warnings, "plot": _rings(shape(f.outline)) if f.outline else None,
+        "walls": _rings(shape(f.walls)) if f.walls else None, "wall_height": f.height,
+        "areas": [{"id": r.id, "type": ws.effective(r)["type"], "name": ws.effective(r)["name"],
+                   "rings": _rings(shape(r.geometry))} for r in objects if r.kind == "space"],
+        "gates": [{"id": r.id, "span": r.span, "width": r.width} for r in objects if r.kind == "opening"],
+        "footprints": prints, "match_floor": MATCH_FLOOR,
+        "north": f.north.model_dump(mode="json") if f.north else None,
+        "items": items.get(f_id, 0),
+    }
+
+
 def _owning(name: str) -> str:
     """A name as what owns something: HQ's, Offices'."""
     return f"{name}'" if name.endswith("s") else f"{name}'s"
@@ -2094,9 +2378,10 @@ def _in_use(ws: Workspace, name: str) -> tuple[str | None, list[str]]:
     and First floor: …"); and their IDs. (None, []) when no floor does."""
     buildings: dict[tuple[str, str], tuple[str, list[str]]] = {}
     ids = []
-    for loc, b, f, f_id in ws.iter_floors():
+    for loc, b, f, f_id in ws.iter_floors(layouts=True):
         if f.source is not None and drawing_name(f.source.path) == name:
-            buildings.setdefault((loc.code, b.code), (b.name or b.code, []))[1].append(f.name or f.code)
+            owner = f"{loc.name} land" if f.layout else b.name or b.code
+            buildings.setdefault((loc.code, b.code), (owner, []))[1].append(f.name or f.code)
             ids.append(f_id)
     if not ids:
         return None, []
@@ -2142,8 +2427,14 @@ def make_valid_package(ws: Workspace, name: str, building: str | None, catalogue
     try:
         part = where / name  # the name it is entered under
         before = list(ws.exports)
-        manifest = export_package(ws, part, building=building, say=say, catalogue=catalogue, item_types=item_types,
-                                  models=models, drawings=drawings)
+        if is_land(building or ""):  # a location's layout (0.12): a package of its own
+            from .export import export_layout_package
+
+            manifest = export_layout_package(ws, part, building, say=say, catalogue=catalogue, item_types=item_types,
+                                             models=models, drawings=drawings)
+        else:
+            manifest = export_package(ws, part, building=building, say=say, catalogue=catalogue,
+                                      item_types=item_types, models=models, drawings=drawings)
         errors = validate_package(part)
         for e in errors:
             say("invalid: " + e)
@@ -2768,6 +3059,31 @@ class Gate:
                 if not sight.sees_building(place.building_id):
                     raise NotFound(f"no building {place.building_id}")
                 _need(sight.building(place.building_id), "edit", f"the building {place.building_id}")
+        return sight
+
+    def add_layout(self, code: str, body: dict) -> Sight:
+        """A site plan used as a location's layout (0.12): edit on the whole project (its
+        drawing is the project's; a location may be made, and its land is the location's)."""
+        return self.project(code, "edit")
+
+    def footprint(self, code: str, footprint_id: str, body: dict) -> Sight:
+        """A footprint said to be a building (placed on it): edit on the land (its layout),
+        and on that building (it moves on its site); a new building for it: edit on the
+        whole project."""
+        sight = self.see(code)
+        if not isinstance(footprint_id, str) or not is_land(footprint_id):
+            raise NotFound(f"no footprint {footprint_id}")
+        land = footprint_id.rsplit("-", 2)[0]
+        if not sight.sees_building(land):
+            raise NotFound(f"no footprint {footprint_id}")
+        _need(sight.building(land), "edit", "the location's layout")
+        building = body.get("building")
+        if body.get("new"):
+            _need(sight.project, "edit", "the whole project (a new building)")
+        elif isinstance(building, str) and building:
+            if not sight.sees_building(building):
+                raise NotFound(f"no building {building}")
+            _need(sight.building(building), "edit", f"the building {building}")
         return sight
 
     def export(self, code: str, body: dict) -> str:

@@ -12,7 +12,7 @@
 //   section({
 //     id: "room.type",              unique; its open or closed state is remembered by it
 //     kinds: ["space"],             what it is shown for
-//     title: "Classification",      its heading
+//     title: "Classification",      its heading (or a function of what is shown: its heading there)
 //     order: 20,                    top to bottom
 //     open: true,                   open at first (false: closed until opened)
 //     render: (ctx) => element | [elements] | null,   null: not shown for this one
@@ -91,7 +91,7 @@ function sectionBox(s, ctx) {
   const id = `sec-${s.id.replace(/\W/g, "-")}`;
   const summary = !shown && s.summary ? s.summary(ctx) : "";
   const head = el("button", { type: "button", class: "sec-head", "aria-expanded": String(shown), "aria-controls": id },
-    icon("chevron-right", { size: 14, cls: "chev" }), el("span", { class: "sec-title" }, s.title),
+    icon("chevron-right", { size: 14, cls: "chev" }), el("span", { class: "sec-title" }, typeof s.title === "function" ? s.title(ctx) : s.title),
     summary ? el("span", { class: "sec-summary" }, summary) : null);
   const box = el("section", { class: `insp-section${shown ? " open" : ""}`, "data-section": s.id },
     head, el("div", { class: "sec-body", id, hidden: !shown || null }, body));

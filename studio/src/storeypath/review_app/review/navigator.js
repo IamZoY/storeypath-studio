@@ -23,7 +23,7 @@ import { placeLabels, styleSpace } from "./plan.js";
 import { reviewing } from "./reviewmode.js";
 import { doorsMode, lookSpeed, setLookSpeed } from "./view3d.js";
 import { isChosen, select, selectAsset } from "./selection.js";
-import { code, color, matches, reviewSpaces, state, title, tucked, typeName, typeOf, units, view3d, visible, within } from "./state.js";
+import { code, color, matches, reviewSpaces, state, title, tucked, typeName, typeOf, typesHere, units, view3d, visible, within } from "./state.js";
 import { normalizeItemId } from "/viewer/src/ids.js"; // items' IDs as people type them (the viewers' own)
 
 const TABS = ["rooms", "items", "view"];
@@ -74,7 +74,7 @@ function roomGroups(rooms) {
     if (!by.has(s.type)) by.set(s.type, []);
     by.get(s.type).push(s);
   }
-  const order = state.project.types;
+  const order = typesHere(); // (on a layout, the land's types first)
   return [...by].sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
     .map(([type, list]) => ({ key: `type:${type}`, name: typeName(type), swatch: el("span", { class: "swatch", style: `background:${color(type)}` }), rooms: list }));
 }
@@ -86,8 +86,9 @@ function renderReviewRow() {
   const all = units().filter((s) => !tucked(s)).length;
   const key = keysOf("review.next")[0];
   if (!n) {
+    const land = Boolean(state.floor.layout); // (a location's layout: its areas)
     box.replaceChildren(el("div", { class: "queue-done" }, icon("circle-check", { size: 16 }),
-      el("span", {}, all ? "Every room is checked" : "No rooms on this floor")));
+      el("span", {}, all ? `Every ${land ? "area" : "room"} is checked` : land ? "No areas on this layout" : "No rooms on this floor")));
     return;
   }
   const b = el("button", { type: "button", class: `queue-row${reviewing() ? " active" : ""}`, id: "review-start",

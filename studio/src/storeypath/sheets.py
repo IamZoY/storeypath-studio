@@ -140,6 +140,10 @@ def _plans_by_walls(doc, scale, texts, is_room_name) -> list[View]:
         g = VIEW_GAP_M / 2  # (the blob: its walls and this much round them)
         return has_doors(blob) or titled((x0 + g, y0 + g, x1 - g, y1 - g))
 
+    def site_titled(bounds) -> bool:  # a site plan's title under walls (metres): buildings drawn without doors
+        title = _title(tuple(v / scale for v in bounds), texts, scale)
+        return bool(title) and bool(SITE_TITLE.search(title)) and not NOT_PLAN_WORDS.search(title)
+
     joined = _courtyards_joined([m for m, _ in found], VIEW_GAP_M, holds=holds)
     views = []
     for members, (x0, y0, x1, y1) in ((m, shapely.union_all(m).bounds) for m in joined):
@@ -149,7 +153,7 @@ def _plans_by_walls(doc, scale, texts, is_room_name) -> list[View]:
                 if len(pts) else 0
 
         doors, rooms = inside(swing_pts), inside(room_pts)
-        if doors < 2 and not (doors >= 1 and rooms >= 3):
+        if doors < 2 and not (doors >= 1 and rooms >= 3) and not site_titled((x0, y0, x1, y1)):
             continue  # walls without doors: a table, title block, frame or elevation
         views.append((members, (x0, y0, x1, y1)))
     # a plan's facade standing apart from its walls (piers and windows along an open hall's side)
@@ -455,10 +459,11 @@ def _title(bounds, texts, scale) -> str | None:
     return best[3] if best[0] or best[1] * scale >= 0.3 else None
 
 
+SITE_TITLE = re.compile(r"\b(site|location|development|key)\s+plan\b", re.I)  # a plan of a plot (format 0.12)
 TITLE_KINDS = [
     ("elevation", re.compile(r"\b(elevations?|fa[cç]ades?)\b", re.I)),
     ("section", re.compile(r"\b(sections?|cross.?section)\b", re.I)),
-    ("site_plan", re.compile(r"\b(site|location|development|key)\s+plan\b", re.I)),
+    ("site_plan", SITE_TITLE),
     ("schedule", re.compile(r"\bschedules?\b", re.I)),
     ("roof_plan", re.compile(r"\broof\b.*\bplan\b", re.I)),
     ("floor_plan", re.compile(r"\b(floor|level|storey|story|basement|mezzanine)\b.*\bplan\b|\bplan\b", re.I)),

@@ -27,14 +27,27 @@ const WORDS = {
   balcony: ["balcony", "شرفة", "بلكونة"],
   terrace: ["terrace", "تراس"],
   roof: ["roof", "rooftop", "سطح"],
+  // a location's land (format 0.12): its areas
+  yard: ["yard", "paving", "paved", "plaza", "ساحة"],
+  driveway: ["driveway", "drive"],
+  garden: ["garden", "lawn", "landscape", "landscaping", "planting", "حديقة"],
+  courtyard: ["courtyard", "court", "فناء"],
+  path: ["path", "pathway", "walkway", "footpath", "pavement", "sidewalk", "رصيف"],
+  gate_area: ["gate", "بوابة"],
+  road: ["road", "street", "highway", "شارع", "طريق"],
+  pool: ["pool", "swimming", "مسبح"],
 };
 const COMMON = ["office", "meeting_room", "storage", "corridor", "restroom", "utility", "open_area", "lobby", "kitchen", "room"];
+const COMMON_LAND = ["yard", "parking", "driveway", "garden", "path", "courtyard", "gate_area", "road"]; // on a layout
+// the types only land has: never offered by its words for a room of a building's floor
+const LAND_ONLY = new Set(["yard", "driveway", "garden", "courtyard", "path", "gate_area", "road", "pool"]);
 
 const tokens = (text) => new Set((text || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(" ").filter((w) => w.length > 1 && !/^\d+$/.test(w)));
 
 /** The likely types of ``s`` among ``rooms`` (the floor's, in use), most likely first:
- * [{type, why}], at most ``n``, never "unspecified". */
-export function likelyTypes(s, rooms, types, n = 9) {
+ * [{type, why}], at most ``n``, never "unspecified". ``land``: the areas of a location's
+ * layout (what is common there is the land's). */
+export function likelyTypes(s, rooms, types, n = 9, { land = false } = {}) {
   const score = new Map(), why = new Map();
   const add = (t, v, reason) => {
     if (!t || t === "unspecified" || !types.includes(t)) return;
@@ -51,6 +64,7 @@ export function likelyTypes(s, rooms, types, n = 9) {
   const known = rooms.filter((o) => o.id !== s.id && o.type !== "unspecified" && !(o.reasons || []).length);
   if (mine.size) {
     for (const [type, words] of Object.entries(WORDS)) {
+      if (!land && LAND_ONLY.has(type)) continue;
       const hit = words.find((w) => mine.has(w));
       if (hit) add(type, 4, `“${hit}” in its name`);
     }
@@ -73,10 +87,10 @@ export function likelyTypes(s, rooms, types, n = 9) {
     for (const { o } of near) by.set(o.type, (by.get(o.type) || 0) + 1);
     for (const [type, k] of by) add(type, (2 * k) / near.length, `${k} of the rooms its size (${Math.round(s.area)} m²) here`);
   }
-  // long and narrow: a corridor; very small: a shaft or a store
+  // long and narrow: a corridor (on land, a path); very small: a shaft or a store (not on land)
   const [w, h] = s.label_room || [0, 0];
-  if (w && h && Math.max(w, h) / Math.min(w, h) > 4 && Math.min(w, h) < 3) add("corridor", 1.5, "long and narrow");
-  if (s.area > 0 && s.area < 2.5) {
+  if (w && h && Math.max(w, h) / Math.min(w, h) > 4 && Math.min(w, h) < 3) add(land ? "path" : "corridor", 1.5, "long and narrow");
+  if (!land && s.area > 0 && s.area < 2.5) {
     add("shaft", 1.2, "very small");
     add("storage", 1, "very small");
   }
@@ -85,7 +99,7 @@ export function likelyTypes(s, rooms, types, n = 9) {
   for (const o of rooms) if (o.type !== "unspecified") count.set(o.type, (count.get(o.type) || 0) + 1);
   const total = rooms.length || 1;
   for (const [type, k] of count) add(type, k / total, null);
-  for (const t of COMMON) add(t, 0.01, null);
+  for (const t of land ? COMMON_LAND : COMMON) add(t, 0.01, null);
   return [...score].sort((a, b) => b[1] - a[1]).slice(0, n)
     .map(([type]) => ({ type, why: (why.get(type) || [`common on this floor`]).join(" · ") }));
 }

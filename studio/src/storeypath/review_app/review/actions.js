@@ -218,7 +218,9 @@ export function setupActions() {
     wrongView: () => "In 3D, drag to turn the view, Shift-drag to move it",
     hint: () => "Drag to move the plan · scroll to zoom · Space held moves it with any tool" });
   tool({ id: "route", label: "Find the way", icon: "route", key: "g", group: "share", views: ["2d", "3d", "walk"],
-    words: "navigate route kiosk wayfinding directions", action: () => location.assign(navigateUrl()) }); // (in this tab: Back, or its crumb, comes back)
+    words: "navigate route kiosk wayfinding directions", action: () => location.assign(navigateUrl()), // (in this tab: Back, or its crumb, comes back)
+    // (a location's layout has no walking network yet: the way is found in a building)
+    available: () => (state.floor?.layout ? "The way is found in a building: open one of its floors" : "") });
 
   // ---- views ---------------------------------------------------------------------------------
   const converted = () => Boolean(state.floor?.converted_at);

@@ -11,6 +11,7 @@ import { itemTypesPage } from "./itemtypes.js";
 import { downloadSealed, putFile } from "./seal.js";
 import { openShare } from "./share.js";
 import { ProjectStream } from "./stream.js";
+import { TYPE_COLORS, typeLabel } from "./theme.js"; // (the viewer's: the areas' colours, as Review draws them)
 import { toast } from "./toast.js";
 import { avatar } from "./together.js";
 import { usersPage } from "./users.js";
@@ -281,7 +282,8 @@ async function projectPage(code) {
           title: "The project as it is now, in 3D: orbit it as a dollhouse or walk through it" }, "Walk in 3D") : null)),
     onProject(p, "edit") ? drawingsCard(code, p, plansArea) : null,
     plansArea,
-    ...p.locations.filter((loc) => loc.buildings.some((b) => b.footprint)).map((loc) => siteCard(code, loc, p)),
+    // (a location with a layout has a site plan of its land, buildings on it or not)
+    ...p.locations.filter((loc) => loc.layout || loc.buildings.some((b) => b.footprint)).map((loc) => siteCard(code, loc, p)),
     buildingsCard(code, p),
     exportCard(code, p),
     p.can?.delete !== false ? deleteCard(code, p) : null,
@@ -318,7 +320,9 @@ async function resume(code, p, plansArea) {
   // (of a drawing still here: one deleted since is forgotten with its plans)
   const plans = jobs.find((j) => j.kind === "plans" && j.state === "done" && ours(j)
     && p.drawings.some((d) => d.name === j.about));
-  const addedSince = plans && jobs.some((j) => j.kind === "floors" && j.about === plans.about && j.submitted > plans.submitted);
+  // (a site plan of it read as a location's layout, as floors added from it: they are put away)
+  const addedSince = plans && jobs.some((j) => (j.kind === "floors" || (j.kind === "layout" && j.state === "done"))
+    && j.about === plans.about && j.submitted > plans.submitted);
   if (plans && !addedSince && !plansClosed().includes(plans.id) && findingPlans === null && !plansArea.childElementCount) {
     showPlans(code, plans.about, plansArea, plans.result, plans.ended, plans.id);
   }
@@ -556,8 +560,14 @@ function floorMarks(p, drawing) {
         units ??= f.units;
       }
     }
+    const l = loc.layout; // (a location's layout read from it: its site plan, outlined too)
+    if (l?.drawing === drawing) {
+      const named = `Layout · ${loc.name}`;
+      marks.push({ label: named, title: l.region ? named : `${named} (the whole drawing)`, region: l.region });
+      units ??= l.units;
+    }
   }
-  return { marks, units, legend: "Read as floors" };
+  return { marks, units, legend: p.locations.some((loc) => loc.layout?.drawing === drawing) ? "Read as floors and layouts" : "Read as floors" };
 }
 
 // What a drawing holds that is private, found as it is added: each goes unless it is
@@ -693,7 +703,10 @@ async function showPlans(code, drawing, area, result, found = null, jobId = null
   const top = floorsKnown.length ? Math.max(...floorsKnown) : 0;
   // the roof's plan, and the roof of what stands on it (an upper roof: RF2 when both are here)
   const mainRoof = result.plans.some((x) => x.type === "roof" && !x.upper);
-  const cards = result.plans.map((plan) => planCard(plan, top, result.levels, project, mainRoof));
+  // a site plan: a location's layout, read from it (format 0.12)
+  const asLayout = (plan) => (where) => readLayout(code, { drawing, units: result.units,
+    plan: { region: plan.region, title: plan.title }, ...where });
+  const cards = result.plans.map((plan) => planCard(plan, top, result.levels, project, mainRoof, asLayout(plan)));
   // One plan per floor of a building to start with, the largest: a second "ground
   // floor plan" on a sheet is often an outbuilding's.
   const largest = new Map();
@@ -878,7 +891,7 @@ function roofCode(taken) {
 const MIN_ABOVE_HOST = 2.4; // a mezzanine's default level above its floor, at least (workspace.MIN_ABOVE_HOST)
 const LEVELS = { floor: "Floor", mezzanine: "Mezzanine", roof: "Roof" }; // what level a plan is (format 0.11)
 
-function planCard(plan, top, levels, project, mainRoof = false) {
+function planCard(plan, top, levels, project, mainRoof = false, useAsLayout = null) {
   const isFloor = plan.kind === "floor_plan" || plan.kind === "roof_plan";
   const ordinal = plan.floor ?? (plan.type === "roof" ? top + 1 : null);
   // (the roof of what stands on the roof is not a level people use: not chosen to start with)
@@ -1005,6 +1018,7 @@ function planCard(plan, top, levels, project, mainRoof = false) {
         String(plan.index)), el("span", { class: `badge ${isFloor ? "plan-kind" : ""}` }, KIND[plan.kind] || plan.kind),
         el("span", { class: "muted small" }, `${plan.size[0]} × ${plan.size[1]} m`)),
       el("div", { class: "title" }, plan.title || `Untitled plan ${plan.index}`),
+      plan.kind === "site_plan" && useAsLayout ? layoutChoice(project, useAsLayout) : null,
       el("label", { class: "check" }, check, "Add as a floor"),
       el("div", { class: "fields" },
         el("label", { style: "grid-column: 1 / -1" }, "Location", location, locationName),
@@ -1119,6 +1133,138 @@ function thumbnail(plan) {
   return svg;
 }
 
+// ---- a location's layout, read from a site plan (format 0.12) ---------------------------------
+
+/** A name as what owns something: HQ's, Offices'. */
+const owning = (name) => (name.endsWith("s") ? `${name}'` : `${name}'s`);
+
+/** On a site plan's card: Use as ⟨location⟩'s layout, the project's first location to start
+ * with, another of its locations, or a new one by name. A location that has a layout is told
+ * this plan replaces its site plan, and that what is on it keeps its IDs. ``use(where)``
+ * reads it (a job): {location_id} or {location: a new one's name}; resolves true when read. */
+function layoutChoice(project, use) {
+  const locations = project.locations;
+  const where = el("select", { "aria-label": "The location whose layout it is", "data-testid": "layout-location" },
+    ...locations.map((l) => el("option", { value: l.id }, l.name)), el("option", { value: NEW }, "New location…"));
+  const name = el("input", { type: "text", value: locations.length ? "" : project.project.name,
+    placeholder: "the new location's name, e.g. North campus", "aria-label": "The new location's name" });
+  if (!locations.length) where.value = NEW;
+  const go = el("button", { type: "button", "data-testid": "layout-use",
+    title: "Read this site plan as the location's land: its plot, boundary walls, gates, outdoor areas and its buildings' footprints" });
+  const note = el("p", { class: "muted small" });
+  const chosen = () => locations.find((l) => l.id === where.value) || null;
+  const show = () => {
+    const loc = chosen(), named = name.value.trim();
+    name.hidden = Boolean(loc);
+    go.textContent = `Use as ${owning(loc ? loc.name : named || "the new location")} layout`;
+    go.disabled = !loc && !named;
+    const had = loc?.layout;
+    note.className = had ? "small layout-replaces" : "muted small";
+    note.textContent = had
+      ? `${loc.name} has a layout already${had.drawing ? `, from ${had.drawing}${had.view ? ` (${had.view})` : ""}` : ""}: `
+        + "this site plan replaces its site plan. What is on it keeps its IDs where it is still there."
+      : "Its plot, boundary walls, gates, outdoor areas and the footprints of its buildings are read; the location's "
+        + "buildings are matched to their footprints, and none moves until you apply it.";
+  };
+  where.addEventListener("change", show);
+  name.addEventListener("input", show);
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    go.textContent = "Reading the site plan…";
+    const loc = chosen();
+    if (!(await use(loc ? { location_id: loc.id } : { location: name.value.trim() }))) show();
+  });
+  show();
+  return el("div", { class: "layout-use" },
+    el("div", { class: "layout-use-head" }, "A location's layout"),
+    el("div", { class: "row" }, where, name), note, el("div", { class: "row" }, go));
+}
+
+/** Why a read of a layout was held back, as the question whether to read it anyway. */
+function heldLayout(result, id) {
+  const why = result?.why?.[id] || "nothing was changed: the layout keeps what it has";
+  return `${why.charAt(0).toUpperCase()}${why.slice(1)}.\n\nWhat it no longer has is retired if you read it anyway (its IDs are never used again). Read anyway?`;
+}
+
+/** A site plan read as a location's layout (``body``: POST …/layouts; a job, its progress
+ * shown), then the project's page at that location's site plan. Whether it was read. */
+async function readLayout(code, body) {
+  try {
+    const r = await runJob(api(`projects/${code}/layouts`, body));
+    let held = (r?.held || []).includes(r.layout);
+    if (held && confirm(heldLayout(r, r.layout))) {
+      await runJob(api(`projects/${code}/convert`, { floor: r.layout, force: true }));
+      held = false;
+    }
+    toast(held ? "The site plan was not read in: the layout stays as it was"
+      : "Layout read: the matches of its buildings to their footprints are on the site plan, to apply", held, 8000);
+    await projectPage(code);
+    const site = r.layout.split("-").slice(0, 2).join("-"); // (its location: its ID's first two parts)
+    document.querySelector(`[data-site="${CSS.escape(site)}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return true;
+  } catch (e) {
+    toast(e.message, true);
+    return false;
+  }
+}
+
+/** Reading a location's layout again from its site plan: what is on it keeps its IDs, and
+ * the buildings placed on their footprints stay placed. */
+function readLayoutAgain(code, loc) {
+  const l = loc.layout;
+  const button = el("button", { type: "button", "data-testid": "layout-read",
+    title: `Read the site plan in ${l.drawing} again (a revised one too): what is on it keeps its IDs` }, "Read");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      const r = await runJob(api(`projects/${code}/convert`, { floor: l.id }));
+      if ((r?.held || []).includes(l.id) && confirm(heldLayout(r, l.id))) await runJob(api(`projects/${code}/convert`, { floor: l.id, force: true }));
+      toast(`${owning(loc.name)} layout read`);
+      await projectPage(code);
+    } catch (e) {
+      toast(e.stopped ? `Reading stopped: ${e.message}` : e.message, !e.stopped);
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
+/** A location's layout on its site plan card: one row, as a floor's (who is on it, read
+ * again, Review, 3D, its package). */
+function layoutTable(code, loc, p) {
+  const l = loc.layout;
+  const plural = (n, what) => `${n} ${what}${n === 1 ? "" : "s"}`;
+  const counts = [plural(l.areas.length, "area"), plural(l.gates.length, "gate"), plural(l.footprints.length, "footprint"),
+    plural(l.items || 0, "item")].join(" · ");
+  const whole = onProject(p, "edit");
+  const view = whole && l.drawing ? el("button", { type: "button", class: "btn-link small", "data-testid": "layout-drawing",
+    title: "The whole drawing as it is drawn, the site plan outlined",
+    onclick: () => viewDrawing(code, l.drawing, { units: l.units, legend: "The layout's site plan",
+      marks: [{ label: "Layout", title: `${owning(loc.name)} layout${l.view ? ` · ${l.view}` : ""}`, region: l.region }] }) }, "View") : null;
+  const exporting = onBuilding(p, l.land, "edit") && l.converted
+    ? el("button", { type: "button", "data-testid": "layout-export", title: `${owning(loc.name)} layout as a package of its own: its land, areas, gates, items and the buildings' footprints`,
+      onclick: (e) => exportPackage(code, { layout: l.id, item_types: "used" }, e.currentTarget) }, "Export") : null;
+  return el("table", { class: "floors layout-table" },
+    el("thead", {}, el("tr", {}, el("th", {}, "Layout"), el("th", {}, "From"), el("th", {}, "How it was read"), el("th", {}, ""))),
+    el("tbody", {}, el("tr", { "data-floor": l.id },
+      el("td", {}, el("strong", {}, `${loc.name} — ${l.name || "Layout"}`),
+        el("div", { class: "muted small" }, l.converted ? counts : l.id.split("-").slice(-2).join("-")),
+        el("div", { class: "on-floor", "data-on-floor": l.id })),
+      el("td", {}, l.drawing || "–", view ? [" ", view] : null, el("div", { class: "muted small" }, l.view || "")),
+      el("td", {}, !l.converted ? el("span", { class: "muted small" }, "not read")
+        : l.warnings.length
+          ? el("details", {}, el("summary", {}, `${plural(l.warnings.length, "warning")} from its reading`),
+            el("ul", { class: "layers" }, l.warnings.map((w) => el("li", {}, w))))
+          : el("span", { class: "muted small" }, `from its site plan · its walls ${Number(l.wall_height || 0).toFixed(1)} m high`)),
+      el("td", { class: "actions" }, l.converted ? [
+        el("a", { href: `/review.html?p=${encodeURIComponent(code)}#floor=${encodeURIComponent(l.id)}`, "data-testid": "layout-review" },
+          onFloor(p, l.id, "edit") ? "Review" : "View"),
+        el("a", { href: worldUrl(code, { building: l.land }), target: "_blank", title: "The land in 3D: its areas, walls and gates, the buildings on their footprints" }, "3D"),
+      ] : null,
+      l.drawing && onFloor(p, l.id, "edit") ? readLayoutAgain(code, loc) : null,
+      exporting))));
+}
+
 // ---- buildings, placement, export -------------------------------------------------
 
 /** Studio's 3D page (world.html) showing the project as it is now: no export needed. */
@@ -1144,6 +1290,9 @@ function buildingsCard(code, p) {
           title: "Find the way in this building: from a kiosk, an entrance or any room, to any room" }, "Navigate") : null,
       b.floors.some((f) => f.converted)
         ? el("a", { class: "button", href: worldUrl(code, { building: b.id }), target: "_blank" }, "3D") : null),
+    // a building made for a footprint of its location's layout, without floors yet
+    !b.floors.length && b.on_footprint ? el("p", { class: "muted small" },
+      "No floors yet: it stands on its footprint on the site plan. Find the plans in its drawings and add them to it as floors.") :
     el("table", { class: "floors" },
       el("thead", {}, el("tr", {}, el("th", {}, "Floor"), el("th", {}, "From"), el("th", {}, "How it was read"), el("th", {}, ""))),
       el("tbody", {}, b.floors.map((f) => el("tr", { "data-floor": f.id },
@@ -1234,14 +1383,60 @@ const bearingSaid = (deg) => {
   const d = ((deg % 360) + 360) % 360;
   return `${+d.toFixed(1)}° (${WINDS[Math.round(d / 22.5) % 16]})`;
 };
+const percent = (v) => `${Math.round((v || 0) * 100)}%`;
+
+/** How a site's north is known, in words (a location's ``north``: from the map, its site
+ * plan's north arrow, or a person). */
+function northHow(north) {
+  if (north.from === "map") return "as the site is placed on the map";
+  if (north.from === "drawing") return `as its site plan's north arrow says${north.sure != null ? ` (${percent(north.sure)} sure)` : ""}`;
+  if (north.from === "person") return "as a person set it";
+  return "";
+}
+
+// a layout's areas in the legend in this order (the land's types first), and how a
+// footprint's building was matched to it
+const LAND_ORDER = ["yard", "parking", "driveway", "garden", "courtyard", "path", "gate_area", "road", "pool", "terrace"];
+const MATCHED_BY = { label: "by its label", shape: "by its shape", both: "by its label and shape",
+  model: "by the language model, from its label" };
+
+/** An SVG element, its attributes set and its text, if any. */
+function svgEl(tag, attrs = {}, text = null) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) e.setAttribute(k, v);
+  if (text !== null) e.textContent = text;
+  return e;
+}
+
+/** Rings of site metres ([[[x, y], …], …]) as an SVG path's data (y down). */
+const ringsPath = (rings) => (rings || []).map((ring) => `M${ring.map(([a, b]) => `${a.toFixed(2)},${(-b).toFixed(2)}`).join("L")}Z`).join("");
+
+/** The box round rings: [x0, y0, x1, y1] (null: none). */
+function ringsBox(rings) {
+  const pts = (rings || []).flat();
+  if (!pts.length) return null;
+  const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
+/** A type's name, its first letter capital ("Gate area"). */
+const typeName = (type) => {
+  const t = typeLabel(type);
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
 
 function siteCard(code, loc, p) {
   // a building is moved by who may change it; the site's arrangement and its place on
-  // the map, by who may change the whole project
+  // the map, by who may change the whole project. One without floors yet (made for a
+  // footprint of the layout) stands on its footprint: it is not moved by hand.
   const buildings = loc.buildings.filter((b) => b.footprint)
-    .map((b) => ({ ...b, site: { ...b.site }, locked: !onBuilding(p, b.id, "edit") }));
+    .map((b) => ({ ...b, site: { ...b.site }, locked: !onBuilding(p, b.id, "edit"), bare: !b.floors.length }));
+  const movable = (b) => !b.placement && !b.locked && !b.bare;
   const whole = onProject(p, "edit");
-  let chosen = buildings.find((b) => !b.placement && !b.locked)?.id ?? null;
+  // its land (format 0.12), read from a site plan: drawn under the buildings
+  const layout = loc.layout;
+  let lit = null; // the footprint whose row the pointer is on: outlined over everything
+  let chosen = buildings.find(movable)?.id ?? null;
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.classList.add("site-plan");
   svg.setAttribute("role", "application");
@@ -1252,11 +1447,13 @@ function siteCard(code, loc, p) {
   const which = el("strong", {});
   const facing = el("span", { class: "muted small site-facing" });
   const note = el("p", { class: "muted small" });
-  // north: the site's up faces the bearing it is placed on the map with (none: north is up)
-  const upFaces = loc.placement?.bearing ?? 0;
+  // north: the site's up faces the bearing it is placed on the map with; else the one its
+  // site plan's arrow says, or a person set (none: north is up)
+  const north = loc.north ?? { bearing: loc.placement?.bearing ?? 0, from: loc.placement ? "map" : null };
+  const upFaces = north.from ? north.bearing : 0;
   const compass = el("div", { class: "site-compass", role: "img", "data-testid": "site-compass",
     "aria-label": `North: the site plan's up faces ${bearingSaid(upFaces)}` });
-  compass.title = loc.placement ? `North: the site plan's up faces ${bearingSaid(upFaces)}, as the site is placed on the map`
+  compass.title = north.from ? `North: the site plan's up faces ${bearingSaid(upFaces)}, ${northHow(north)}`
     : "North: up on the site plan, until the site is placed on the map with another bearing of up";
   compass.innerHTML = `<svg viewBox="-20 -20 40 40" width="44" height="44" aria-hidden="true"><circle class="cp-ring" r="18.5"/>`
     + `<g class="cp-needle" transform="rotate(${-upFaces})"><path class="cp-north" d="M0,-9.5L3.6,0H-3.6Z"/>`
@@ -1267,8 +1464,11 @@ function siteCard(code, loc, p) {
     const dx = px - b.site.pivot[0], dy = py - b.site.pivot[1];
     return [b.site.x + dx * Math.cos(r) + dy * Math.sin(r), b.site.y - dx * Math.sin(r) + dy * Math.cos(r)];
   };
+  // the land's corners (site metres already): the plot, its footprints and areas
+  const landCorners = () => (layout ? [...(layout.plot || []), ...layout.footprints.flatMap((f) => f.rings || []),
+    ...layout.areas.flatMap((a) => a.rings || [])].flat() : []);
   const extent = () => {
-    const pts = buildings.flatMap((b) => b.footprint.flat().map((p) => onSite(b, p))).concat([[0, 0]]);
+    const pts = buildings.flatMap((b) => b.footprint.flat().map((p) => onSite(b, p))).concat([[0, 0]], landCorners());
     const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
   };
@@ -1293,9 +1493,10 @@ function siteCard(code, loc, p) {
     const r = svg.getBoundingClientRect();
     return Math.max((view[2] - view[0]) / (r.width || 1), (view[3] - view[1]) / (r.height || 1));
   };
-  const snapped = (p) => { // a building's corner or the centre within 10 pixels, else where it is
+  const snapped = (p) => { // a building's corner, the land's, or the centre within 10 pixels, else where it is
     let best = null, reach = 10 * perPixel();
-    for (const q of [[0, 0], ...buildings.flatMap((b) => b.footprint.flat().map((c) => onSite(b, c)))]) {
+    const land = layout ? [...(layout.plot || []), ...layout.footprints.flatMap((f) => f.rings || [])].flat() : [];
+    for (const q of [[0, 0], ...buildings.flatMap((b) => b.footprint.flat().map((c) => onSite(b, c))), ...land]) {
       const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
       if (d <= reach) [best, reach] = [q, d];
     }
@@ -1310,6 +1511,48 @@ function siteCard(code, loc, p) {
     const q = pt.matrixTransform(svg.getScreenCTM().inverse());
     return [q.x, -q.y];
   };
+  // the layout's areas, the largest first (an area in another's hole is drawn over it: the
+  // rings given are their outer ones)
+  const boxArea = (rings) => {
+    const b = ringsBox(rings);
+    return b ? (b[2] - b[0]) * (b[3] - b[1]) : 0;
+  };
+  const areas = layout ? [...layout.areas].sort((a, b) => boxArea(b.rings) - boxArea(a.rings)) : [];
+  const fpName = (fp) => fp.name || (fp.label || "").split("\n")[0] || `Footprint ${fp.id.split("-").at(-1)}`;
+  /** The land, under the buildings: its areas filled lightly by type (each says what it is
+   * under the pointer), the plot's outline, the boundary walls, the gates (a gap in the
+   * wall, marked), and its footprints: those no building stands on dashed, with their names. */
+  const drawLand = (across) => {
+    const g = svgEl("g", { class: "land" });
+    for (const a of areas) {
+      const path = svgEl("path", { d: ringsPath(a.rings), class: "area", fill: TYPE_COLORS[a.type] || TYPE_COLORS.unspecified });
+      path.append(svgEl("title", {}, [typeName(a.type), a.name].filter(Boolean).join(" · ")));
+      g.append(path);
+    }
+    if (layout.plot) g.append(svgEl("path", { d: ringsPath(layout.plot), class: "plot" }, null));
+    if (layout.walls) g.append(svgEl("path", { d: ringsPath(layout.walls), class: "walls" }));
+    for (const gate of layout.gates.filter((x) => x.span?.length === 2)) {
+      const [[ax, ay], [bx, by]] = gate.span;
+      const at = { x1: ax, y1: -ay, x2: bx, y2: -by };
+      const mark = svgEl("g", { class: "gate" });
+      mark.append(svgEl("line", { ...at, class: "gate-gap" }), svgEl("line", { ...at, class: "gate-mark" }),
+        svgEl("title", {}, `Gate · ${Number(gate.width || Math.hypot(bx - ax, by - ay)).toFixed(1)} m wide`));
+      g.append(mark);
+    }
+    for (const fp of layout.footprints) {
+      const empty = !fp.standing;
+      const path = svgEl("path", { d: ringsPath(fp.rings), class: `footprint${empty ? " empty" : ""}` });
+      path.append(svgEl("title", {}, empty ? `${fpName(fp)}: a footprint no building stands on`
+        : `${fpName(fp)}: ${buildings.find((b) => b.id === fp.standing)?.name || "a building"} stands on it`));
+      g.append(path);
+      const box = ringsBox(fp.rings);
+      if (empty && box) {
+        g.append(svgEl("text", { x: (box[0] + box[2]) / 2, y: -(box[1] + box[3]) / 2, class: "fp-name",
+          "font-size": (across / 55).toFixed(2) }, fpName(fp)));
+      }
+    }
+    svg.append(g);
+  };
   const draw = () => {
     const [vx0, vy0, vx1, vy1] = view;
     svg.setAttribute("viewBox", `${vx0} ${-vy1} ${vx1 - vx0} ${vy1 - vy0}`);
@@ -1321,12 +1564,14 @@ function siteCard(code, loc, p) {
     for (let gx = Math.ceil(gx0 / step) * step; gx <= gx1; gx += step) parts.push(`<line class="grid" x1="${gx}" y1="${-gy1}" x2="${gx}" y2="${-gy0}"/>`);
     for (let gy = Math.ceil(gy0 / step) * step; gy <= gy1; gy += step) parts.push(`<line class="grid" x1="${gx0}" y1="${-gy}" x2="${gx1}" y2="${-gy}"/>`);
     svg.innerHTML = parts.join("");
+    if (layout) drawLand(vx1 - vx0);
     for (const b of buildings) {
       const pts = b.footprint.map((ring) => ring.map((p) => onSite(b, p)));
       const d = pts.map((ring) => `M${ring.map(([a, bb]) => `${a.toFixed(2)},${(-bb).toFixed(2)}`).join("L")}Z`).join("");
       const g = document.createElementNS(SVG_NS, "g");
       g.classList.add("building");
       if (b.placement || b.locked) g.classList.add("fixed");
+      if (b.bare) g.classList.add("bare");
       if (b.id === chosen) g.classList.add("chosen");
       const path = document.createElementNS(SVG_NS, "path");
       path.setAttribute("d", d);
@@ -1334,14 +1579,16 @@ function siteCard(code, loc, p) {
       path.dataset.id = b.id;
       const all = pts.flat();
       const top = Math.max(...all.map((p) => p[1]));
-      const [cx, cy] = [b.site.x, b.site.y];
+      // (one without floors: its footprint's middle, its frame the site's)
+      const box = b.bare ? ringsBox(pts) : null;
+      const [cx, cy] = box ? [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2] : [b.site.x, b.site.y];
       const label = document.createElementNS(SVG_NS, "text");
       label.setAttribute("x", cx);
       label.setAttribute("y", -cy);
       label.setAttribute("font-size", ((vx1 - vx0) / 45).toFixed(2));
       label.textContent = b.name;
       g.append(path, label);
-      if (!b.placement && !b.locked && b.id === chosen) {
+      if (movable(b) && b.id === chosen) {
         // the turning handle: above its middle, turned with it
         const r = (b.site.rotation * Math.PI) / 180, len = top - cy + Math.max(3, (vx1 - vx0) / 40);
         const hx = cx + len * Math.sin(r), hy = cy + len * Math.cos(r);
@@ -1354,6 +1601,8 @@ function siteCard(code, loc, p) {
       }
       svg.append(g);
     }
+    const shown = lit && layout?.footprints.find((f) => f.id === lit); // its row pointed at: over the buildings
+    if (shown) svg.append(svgEl("path", { d: ringsPath(shown.rings), class: "fp-lit" }));
     const c = Math.max(2, (vx1 - vx0) / 60); // the centre, over the buildings
     svg.insertAdjacentHTML("beforeend", `<g class="centre"><line x1="${-c}" y1="0" x2="${c}" y2="0"/><line x1="0" y1="${-c}" x2="0" y2="${c}"/><circle r="${c / 3}"/></g>`);
     // the measure: its line, its ends, and how long it is, over its middle
@@ -1384,8 +1633,9 @@ function siteCard(code, loc, p) {
     }
     // which way its plan's up faces: its own placement's, else turned on the site, from north
     facing.textContent = b ? `its plan's up faces ${bearingSaid(b.placement ? b.placement.bearing : upFaces + b.site.rotation)}` : "";
-    for (const input of [x, y, rot]) input.disabled = !b || Boolean(b.placement) || b.locked;
+    for (const input of [x, y, rot]) input.disabled = !b || !movable(b);
     note.textContent = b?.locked ? `${b.name} is not yours to move: you may look at it.`
+      : b?.bare ? `${b.name} has no floors yet: it stands on its footprint, and moves once its floors are added.`
       : b?.placement
       ? `${b.name} is placed on the map by itself: it stands there whatever the site plan says.`
       : "Drag a building to move it; drag its round handle to turn it (Shift: by 15°). Keys: arrows move 1 m (Shift: 10 m), [ and ] turn 1° (Shift: 15°).";
@@ -1424,7 +1674,7 @@ function siteCard(code, loc, p) {
       return;
     }
     chosen = b.id;
-    if (b.placement || b.locked) return draw();
+    if (!movable(b)) return draw();
     e.preventDefault();
     svg.setPointerCapture(e.pointerId);
     drag = { b, turn: Boolean(e.target.dataset?.turn), from: toSite(e), at: [b.site.x, b.site.y] };
@@ -1474,7 +1724,7 @@ function siteCard(code, loc, p) {
     }
     if (e.key === "Escape" && ruler.on) return setMeasuring(false);
     const b = buildings.find((o) => o.id === (e.target.dataset?.id || chosen));
-    if (!b || b.placement || b.locked) return;
+    if (!b || !movable(b)) return;
     const step = e.shiftKey ? 10 : SITE_STEP_M, turn = e.shiftKey ? 15 : 1;
     const moves = { ArrowLeft: [-step, 0, 0], ArrowRight: [step, 0, 0], ArrowUp: [0, step, 0], ArrowDown: [0, -step, 0],
       "[": [0, 0, -turn], "]": [0, 0, turn], "{": [0, 0, -15], "}": [0, 0, 15] };
@@ -1492,7 +1742,7 @@ function siteCard(code, loc, p) {
   for (const [input, key] of [[x, "x"], [y, "y"], [rot, "rotation"]]) {
     input.addEventListener("change", () => {
       const b = buildings.find((o) => o.id === chosen);
-      if (!b || b.locked || !Number.isFinite(Number(input.value))) return;
+      if (!b || b.locked || b.bare || !Number.isFinite(Number(input.value))) return;
       b.site[key] = key === "rotation" ? (Number(input.value) % 360 + 360) % 360 : Number(input.value);
       fit();
       draw();
@@ -1528,7 +1778,8 @@ function siteCard(code, loc, p) {
   const pl = loc.placement || {};
   const lat = el("input", { type: "number", step: "any", value: pl.lat ?? "", placeholder: "e.g. 25.2854" });
   const lon = el("input", { type: "number", step: "any", value: pl.lon ?? "", placeholder: "e.g. 51.5310" });
-  const bearing = el("input", { type: "number", step: "any", value: pl.bearing ?? 0 });
+  // (not on the map yet: up faces the location's north, as its site plan's arrow says or a person set it)
+  const bearing = el("input", { type: "number", step: "any", value: pl.bearing ?? (north.from ? +Number(north.bearing).toFixed(2) : 0) });
   const onMap = el("form", { class: "placement", onsubmit: async (e) => {
     e.preventDefault();
     try {
@@ -1543,21 +1794,248 @@ function siteCard(code, loc, p) {
 
   fit();
   draw();
-  return el("section", { class: "card site-card" },
+  /** A footprint outlined over everything (its row is pointed at), or none (null). */
+  const light = (id) => {
+    if (lit === id) return;
+    lit = id;
+    draw();
+  };
+  return el("section", { class: "card site-card", "data-site": loc.id },
     el("div", { class: "row" }, el("h2", { class: "grow" }, `Site plan · ${loc.name}`), measured, measureButton, unitsSwitch(el),
       whole ? sideBySide : null, fitButton),
     el("div", { class: "site-stage" }, svg, compass, scale,
       el("div", { class: "site-zoom", role: "group", "aria-label": "Zoom" }, zoomButton(0.8, "Zoom out", "−"), zoomButton(1.25, "Zoom in", "+"))),
+    layout ? landLegend(layout) : null,
     buildings.some((b) => !b.locked)
       ? el("div", { class: "site-fields" }, which, el("label", {}, "x (m)", x), el("label", {}, "y (m)", y), el("label", {}, "turned (°)", rot),
         facing)
       : null,
     buildings.some((b) => !b.locked) ? note : null,
+    layout ? el("div", { class: "site-part" }, layoutTable(code, loc, p)) : null,
+    layout ? footprintsPanel(code, loc, p, light) : null,
+    layout || north.from === "drawing" || north.from === "person" ? northRow(code, loc, p, north) : null,
     el("p", { class: "muted small", style: "margin-top: 12px" }, loc.placement
       ? "On the map: the site's centre (the cross) sits at this latitude and longitude; up points to this bearing."
       : whole ? "Not on the map: the buildings stand where the site plan has them, around 0°N 0°E, their shapes and sizes true. Give the latitude and longitude of the centre (the cross), and the compass bearing of up, to put them all on the map."
         : "Not on the map yet: the buildings stand where the site plan has them."),
     whole ? onMap : null);
+}
+
+/** What the site plan's land shows: its areas' types (their colours), the gates, the
+ * boundary walls, a footprint no building stands on. */
+function landLegend(layout) {
+  const rank = (t) => (LAND_ORDER.includes(t) ? LAND_ORDER.indexOf(t) : LAND_ORDER.length);
+  const types = [...new Set(layout.areas.map((a) => a.type))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  const item = (mark, text, tip = null) => el("span", { class: "site-legend-item", title: tip }, mark, text);
+  const many = (n, what) => `${n} ${what}${n === 1 ? "" : "s"}`;
+  return el("div", { class: "site-legend", "data-testid": "site-legend" },
+    ...types.map((t) => item(el("span", { class: "swatch", style: `background:${TYPE_COLORS[t] || TYPE_COLORS.unspecified}` }),
+      typeName(t), many(layout.areas.filter((a) => a.type === t).length, "area"))),
+    layout.walls ? item(el("span", { class: "lg-wall" }), "Boundary wall") : null,
+    layout.gates.length ? item(el("span", { class: "lg-gate" }), "Gate", many(layout.gates.length, "gate")) : null,
+    layout.footprints.some((f) => !f.standing) ? item(el("span", { class: "lg-footprint" }), "Footprint, no building on it") : null);
+}
+
+/** Which way north is on a location's site plan: how it is known (the map, its site plan's
+ * north arrow and how sure, a person), the arrow's to take, or a bearing to type. */
+function northRow(code, loc, p, north) {
+  const arrow = loc.layout?.north; // what its site plan's arrow was read as: {bearing, sure, how}
+  const whole = onProject(p, "edit");
+  const apart = (a, b) => Math.abs((((a - b) % 360) + 540) % 360 - 180);
+  const set = async (body, said) => {
+    try {
+      const r = await api(`projects/${code}/locations/${loc.id}/north`, body);
+      toast(said(r.north));
+      await projectPage(code);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+  const how = north.from === "drawing" && arrow?.how ? ` (${arrow.how})` : "";
+  const said = north.from ? `Up on the site plan faces ${bearingSaid(north.bearing)}, ${northHow(north)}${how}.`
+    : loc.layout ? "No north arrow was found on its site plan: up is taken as north until you say which way it faces."
+      : "Up is taken as north.";
+  const other = arrow && north.from !== "drawing"
+    ? ` Its site plan's arrow says ${bearingSaid(arrow.bearing)} (${percent(arrow.sure)} sure${arrow.how ? `: ${arrow.how}` : ""}).` : "";
+  const onMap = north.from === "map" ? " The site is on the map: north set here turns it there too." : "";
+  const useArrow = whole && arrow && !(north.from === "drawing" && apart(north.bearing, arrow.bearing) < 0.05)
+    ? el("button", { type: "button", "data-testid": "north-arrow",
+      title: `Up faces ${bearingSaid(arrow.bearing)}, as the arrow on the site plan was read (${percent(arrow.sure)} sure)`,
+      onclick: (e) => {
+        e.currentTarget.disabled = true;
+        set({ from: "drawing" }, (n) => `North as the site plan's arrow says: up faces ${bearingSaid(n.bearing)}`);
+      } }, "Use the arrow's") : null;
+  const bearing = el("input", { type: "number", step: "any", min: "0", max: "360", "data-testid": "north-bearing",
+    value: +Number(north.bearing ?? 0).toFixed(2), "aria-label": "Bearing of up, degrees clockwise from north" });
+  const form = whole ? el("form", { class: "north-set", onsubmit: (e) => {
+    e.preventDefault();
+    const v = Number(bearing.value);
+    if (bearing.value.trim() === "" || !Number.isFinite(v)) return toast("The bearing of up: degrees clockwise from north, 0 to 360", true);
+    set({ bearing: v }, (n) => `North set: up on the site plan faces ${bearingSaid(n.bearing)}`);
+  } }, el("label", {}, "Bearing of up (°)", bearing), el("button", { type: "submit" }, "Set north")) : null;
+  return el("div", { class: "site-part site-north", "data-testid": "site-north" },
+    el("h3", {}, "North"),
+    el("p", { class: "muted small" }, said, other, onMap),
+    whole ? el("div", { class: "row north-actions" }, useArrow, form) : null);
+}
+
+/** The buildings of a location's layout: one row a footprint (its name from the site plan,
+ * the building matched to it, how sure and by what, whether one stands on it), to apply,
+ * change, skip or make a new building for; for the location, Apply all and Match again.
+ * Nothing moves until a person clicks. ``light(id)`` outlines a footprint on the plan. */
+function footprintsPanel(code, loc, p, light) {
+  const layout = loc.layout;
+  const byId = new Map(loc.buildings.map((b) => [b.id, b]));
+  const nameOf = (id) => byId.get(id)?.name || id;
+  const fpName = (fp) => fp.name || (fp.label || "").split("\n")[0] || `Footprint ${fp.id.split("-").at(-1)}`;
+  const may = onBuilding(p, layout.land, "edit"); // (a building moved on it: the server asks for edit on that one too)
+  const whole = onProject(p, "edit");
+  const send = async (fp, body, said, button) => {
+    if (button) button.disabled = true;
+    try {
+      await api(`projects/${code}/footprints/${encodeURIComponent(fp.id)}`, body);
+      toast(said);
+      await projectPage(code);
+    } catch (e) {
+      toast(e.message, true);
+      if (button) button.disabled = false;
+    }
+  };
+  /** The building a footprint's match proposes (one of the location's), or null. */
+  const proposedOf = (fp) => (fp.match?.building && byId.has(fp.match.building) ? fp.match.building : null);
+
+  const row = (fp) => {
+    const m = fp.match || {};
+    const proposed = proposedOf(fp);
+    const skipped = fp.chosen === "";
+    const chosen = fp.chosen || null; // a person's choice
+    const state = fp.standing && !skipped ? "placed" : skipped ? "skipped" : chosen ? "moved" : proposed ? "proposed" : "none";
+    const its = state === "placed" ? fp.standing : state === "moved" ? chosen : state === "proposed" ? proposed : null;
+    const building = {
+      placed: [el("strong", {}, nameOf(fp.standing))],
+      moved: [el("strong", {}, nameOf(chosen)), el("div", { class: "muted small" }, "moved off it since")],
+      proposed: [el("strong", {}, nameOf(proposed)), el("div", { class: "muted small" }, "proposed")],
+      skipped: [el("span", {}, "None"), el("div", { class: "muted small" },
+        fp.standing ? `skipped; ${nameOf(fp.standing)} still stands on it: move it on the site plan` : "skipped: no building of the location")],
+      none: [el("span", { class: "muted" }, "No building matched")],
+    }[state];
+    // how sure the match is, and what says so (when the building shown is not the match: the match beside it);
+    // a person's say is no guess
+    const sure = m.by === "person" ? el("span", { class: "muted small" }, m.building ? "said by a person" : "skipped by a person")
+      : m.building ? [
+      el("strong", {}, percent(m.confidence)), " ", el("span", { class: "muted small" }, MATCHED_BY[m.by] || ""),
+      m.building !== its ? el("div", { class: "muted small" }, `matched: ${nameOf(m.building)}`) : null,
+      m.ambiguous ? el("div", { class: "small fp-ambiguous", title: "Two turns of its outline fit the footprint about as well: check which way it stands once placed" },
+        "turn ambiguous: its shape fits more than one way") : null,
+    ] : el("span", { class: "muted" }, "—");
+    const badge = { placed: ["ok", "Placed"], moved: ["warn", "Moved off"], proposed: ["", "Proposed"], skipped: ["", "Skipped"],
+      none: ["", "None"] }[state];
+    const actions = el("div", { class: "fp-actions" });
+    const buttons = () => {
+      const out = [];
+      const target = state === "moved" ? chosen : proposed;
+      if (may && target && state !== "placed") {
+        out.push(el("button", { type: "button", class: state === "proposed" ? "primary" : null, "data-testid": "footprint-apply",
+          title: `Place ${nameOf(target)} on this footprint: its ground floor laid on it`,
+          onclick: (e) => send(fp, { building: target }, `${nameOf(target)} placed on ${fpName(fp)}`, e.currentTarget) },
+        state === "skipped" ? `Apply ${nameOf(target)}` : "Apply"));
+      }
+      if (may && loc.buildings.length) out.push(el("button", { type: "button", "data-testid": "footprint-change", onclick: change }, "Change…"));
+      if (may && !skipped) {
+        out.push(el("button", { type: "button", "data-testid": "footprint-skip", title: "No building of the location stands on it: nothing is placed on it",
+          onclick: (e) => send(fp, { building: "" }, `${fpName(fp)}: skipped`, e.currentTarget) }, "Skip"));
+      }
+      if (whole && state !== "placed") out.push(el("button", { type: "button", "data-testid": "footprint-new", onclick: makeNew }, "New building…"));
+      actions.replaceChildren(...out);
+    };
+    // Change: another building of the location, placed on it
+    const change = () => {
+      const pick = el("select", { "aria-label": `The building on ${fpName(fp)}` },
+        ...loc.buildings.map((b) => {
+          const on = b.on_footprint && b.on_footprint !== fp.id ? layout.footprints.find((f) => f.id === b.on_footprint) : null;
+          return el("option", { value: b.id }, on ? `${b.name} (now on ${fpName(on)})` : b.name);
+        }));
+      pick.value = its && byId.has(its) ? its : loc.buildings[0].id;
+      const place = el("button", { type: "button", class: "primary", onclick: (e) => send(fp, { building: pick.value },
+        `${nameOf(pick.value)} placed on ${fpName(fp)}`, e.currentTarget) }, "Place it here");
+      actions.replaceChildren(pick, place, el("button", { type: "button", onclick: buttons }, "Cancel"));
+      pick.focus();
+    };
+    // New building: one of the location's, without floors, standing on it (named from it)
+    const makeNew = () => {
+      const name = el("input", { type: "text", maxlength: "80", value: fp.name || "", placeholder: "its name, e.g. Annex",
+        "aria-label": "The new building's name" });
+      const make = el("button", { type: "button", class: "primary", onclick: (e) => {
+        const n = name.value.trim();
+        send(fp, { new: true, ...(n ? { name: n } : {}) }, `${n || fpName(fp)}: a new building of ${loc.name}, standing on its footprint. Add its floors from its drawings`,
+          e.currentTarget);
+      } }, "Make it");
+      name.addEventListener("keydown", (e) => { if (e.key === "Enter") make.click(); else if (e.key === "Escape") buttons(); });
+      actions.replaceChildren(name, make, el("button", { type: "button", onclick: buttons }, "Cancel"));
+      name.focus();
+    };
+    buttons();
+    const labels = (fp.label || "").split("\n").map((t) => t.trim()).filter((t) => t && t !== fpName(fp));
+    const tr = el("tr", { "data-footprint": fp.id, class: `fp-${state}` },
+      el("td", {}, el("strong", {}, fpName(fp)), el("div", { class: "muted small" }, fp.id.split("-").at(-1),
+        labels.length ? ` · ${labels.join(" · ")}` : "")),
+      el("td", {}, building),
+      el("td", {}, sure),
+      el("td", {}, el("span", { class: `badge fp-state ${badge[0]}` }, badge[1])),
+      el("td", { class: "actions" }, actions));
+    tr.addEventListener("mouseenter", () => light(fp.id));
+    tr.addEventListener("mouseleave", () => light(null));
+    tr.addEventListener("focusin", () => light(fp.id));
+    tr.addEventListener("focusout", (e) => { if (!tr.contains(e.relatedTarget)) light(null); });
+    return tr;
+  };
+
+  // Apply all: every match sure enough (and every footprint a person said) put to its building
+  const todo = layout.footprints.filter((fp) => fp.chosen !== "" && !fp.standing
+    && (fp.chosen || (proposedOf(fp) && (fp.match.confidence ?? 0) >= (layout.match_floor ?? 0))));
+  const placing = todo.map((fp) => fp.chosen || proposedOf(fp));
+  const applyAll = el("button", { type: "button", class: "primary", "data-testid": "layout-apply-all", disabled: !todo.length,
+    title: todo.length ? `Place ${placing.map(nameOf).join(", ")} on ${todo.length === 1 ? "its footprint" : "their footprints"}`
+      : "Every building matched stands on its footprint already" }, "Apply all");
+  applyAll.addEventListener("click", async () => {
+    // buildings placed by hand that move onto their footprints: said first
+    const byHand = placing.filter((id) => byId.get(id)?.site?.set && !byId.get(id)?.on_footprint).map(nameOf);
+    if (byHand.length && !confirm(`Place ${placing.map(nameOf).join(", ")} on ${todo.length === 1 ? "its footprint" : "their footprints"}? `
+      + `${byHand.join(", ")} ${byHand.length === 1 ? "was" : "were"} placed by hand on the site plan, and move${byHand.length === 1 ? "s" : ""} too.`)) return;
+    applyAll.disabled = true;
+    try {
+      const r = await api(`projects/${code}/locations/${loc.id}/layout/place`, {});
+      const n = r.placed?.length ?? 0;
+      toast(n ? `${n} building${n === 1 ? "" : "s"} placed on ${n === 1 ? "its footprint" : "their footprints"}` : "Nothing to place");
+      await projectPage(code);
+    } catch (e) {
+      toast(e.message, true);
+      applyAll.disabled = false;
+    }
+  });
+  const again = el("button", { type: "button", "data-testid": "layout-match", disabled: !layout.footprints.length || !loc.buildings.length,
+    title: "Match the location's buildings to the footprints again (their floors read since, say), the language model asked where it can help: nothing moves" },
+  "Match again");
+  again.addEventListener("click", async () => {
+    again.disabled = true;
+    try {
+      const r = await runJob(api(`projects/${code}/locations/${loc.id}/layout/match`, {}));
+      const n = r?.matched?.length ?? 0;
+      toast(`Matched again: ${n} of ${layout.footprints.length} footprint${layout.footprints.length === 1 ? "" : "s"} with a building proposed`);
+      await projectPage(code);
+    } catch (e) {
+      toast(e.message, true);
+      again.disabled = false;
+    }
+  });
+  return el("div", { class: "site-part", "data-testid": "layout-footprints" },
+    el("div", { class: "row" }, el("h3", { class: "grow" }, "Buildings on the site plan"), whole ? again : null, whole ? applyAll : null),
+    el("p", { class: "muted small" }, layout.footprints.length
+      ? "Each footprint of the site plan, and the building of the location it is, matched by its label and by the building's outline fitted onto it. Nothing moves until you apply it: then the building's ground floor is laid on its footprint. Point at a row to see its footprint on the plan."
+      : "No buildings' footprints were found on the site plan."),
+    layout.footprints.length ? el("table", { class: "floors footprints" },
+      el("thead", {}, el("tr", {}, el("th", {}, "Footprint"), el("th", {}, "Building"), el("th", {}, "Match"), el("th", {}, "State"), el("th", {}, ""))),
+      el("tbody", {}, layout.footprints.map(row))) : null);
 }
 
 function placementForm(code, b) {
@@ -1643,14 +2121,40 @@ async function sealed(url, name) {
   }
 }
 
+/** A package made (``body``: POST …/export), downloaded at once, its copy kept in the list
+ * (``button``: held while it is made). */
+async function exportPackage(code, body, button = null) {
+  if (button) button.disabled = true;
+  try {
+    const r = await runJob(api(`projects/${code}/export`, body));
+    // downloaded at once; its copy stays in the list, the package as it was sent
+    const a = el("a", { href: `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(r.file)}`, download: r.file });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    toast(`Exported ${r.file}${r.drawings !== undefined ? `, with ${r.drawings} floor${r.drawings === 1 ? "" : "s"}' drawings` : ""}: `
+      + "downloading it. A copy stays in the list below", false, 8000);
+    projectPage(code);
+  } catch (e) {
+    toast(e.message, true);
+    if (button) button.disabled = false;
+  }
+}
+
+/** A package of a location's layout (its file named …-LOCATION-LAND.storeypath), not a building's. */
+const landPackage = (name) => /-LAND\.storeypath$/.test(name);
+
 function exportCard(code, p) {
   // a package holds one building: it lists what changed in that building alone (made by
-  // who may change the whole building)
+  // who may change the whole building); a location's layout is a package of its own
   const buildings = p.locations.flatMap((l) => l.buildings.filter((b) => b.floors.some((f) => f.converted)
     && onBuilding(p, b.id, "edit")));
-  if (!buildings.length && !onProject(p, "view") && !p.exports.length) return null;
-  const what = el("select", { "aria-label": "Building to export" },
-    ...buildings.map((b) => el("option", { value: b.id }, b.name)));
+  const layouts = p.locations.filter((l) => l.layout?.converted && onBuilding(p, l.layout.land, "edit"));
+  const any = buildings.length + layouts.length;
+  if (!any && !onProject(p, "view") && !p.exports.length) return null;
+  const what = el("select", { "aria-label": layouts.length ? "What to export" : "Building to export" },
+    ...buildings.map((b) => el("option", { value: b.id }, b.name)),
+    ...layouts.map((l) => el("option", { value: `layout:${l.layout.id}` }, `${l.name} — Layout`)));
   // its item types: those its items use (each once), or the whole catalogue for another system to choose from
   const types = el("select", { "aria-label": "Item types in the package", "data-testid": "export-item-types",
     title: "The item types the package carries, each once: what another system reads its items by, and may take into its own" },
@@ -1666,22 +2170,9 @@ function exportCard(code, p) {
     + "and names with a title once more; the rest goes. Readers show it under the plan. Big floors take half a minute each."
     : "Exporting with the drawings needs edit rights on the project" },
   drawings, " Include the drawings");
-  const button = el("button", { class: "primary", type: "button", disabled: !buildings.length, onclick: async () => {
-    try {
-      const r = await runJob(api(`projects/${code}/export`, { building: what.value, item_types: types.value,
-        drawings: drawings.checked }));
-      // downloaded at once; its copy stays in the list, the package as it was sent
-      const a = el("a", { href: `/api/projects/${encodeURIComponent(code)}/exports/${encodeURIComponent(r.file)}`, download: r.file });
-      document.body.append(a);
-      a.click();
-      a.remove();
-      toast(`Exported ${r.file}${r.drawings !== undefined ? `, with ${r.drawings} floor${r.drawings === 1 ? "" : "s"}' drawings` : ""}: `
-        + "downloading it. A copy stays in the list below", false, 8000);
-      projectPage(code);
-    } catch (e) {
-      toast(e.message, true);
-    }
-  } }, "Export package");
+  const button = el("button", { class: "primary", type: "button", disabled: !any, onclick: () => exportPackage(code, {
+    ...(what.value.startsWith("layout:") ? { layout: what.value.slice("layout:".length) } : { building: what.value }),
+    item_types: types.value, drawings: drawings.checked }) }, "Export package");
   const send = el("a", { class: "button", href: `/api/projects/${encodeURIComponent(code)}/project.storeypath-project`,
     download: `${code}.storeypath-project`,
     title: "One file for another Studio to continue this project: its drawings, corrections and edits (not a package: other systems read a building's)" },
@@ -1693,9 +2184,10 @@ function exportCard(code, p) {
   return el("section", { class: "card" },
     el("div", { class: "row" }, el("h2", { class: "grow" }, "Packages"), onProject(p, "view") ? send : null,
       onProject(p, "view") ? sendSealed : null,
-      buildings.length > 1 ? what : null, buildings.length ? types : null, buildings.length ? withDrawings : null,
-      buildings.length ? button : null),
-    el("p", { class: "muted small" }, "A package (.storeypath) holds one building: its floors, spaces, doors and items with their IDs, ready for the viewer and for any other system, which leaves the project's other buildings as they are. Every export lists what changed in that building since it was last exported; moving a building on the map changes nothing in it. It carries the item types its items use, each once (or every item type of this Studio), so another system knows them and may take them into its own. With Include the drawings, it carries each floor's drawing as drawn too, every layer and text, for readers to show under the plan: only when you tick it. Download project gives one file (.storeypath-project) to send to someone who continues the project in their Studio: they open it on their Projects page."),
+      any > 1 ? what : null, any ? types : null, any ? withDrawings : null,
+      any ? button : null),
+    el("p", { class: "muted small" }, "A package (.storeypath) holds one building: its floors, spaces, doors and items with their IDs, ready for the viewer and for any other system, which leaves the project's other buildings as they are. Every export lists what changed in that building since it was last exported; moving a building on the map changes nothing in it. It carries the item types its items use, each once (or every item type of this Studio), so another system knows them and may take them into its own. With Include the drawings, it carries each floor's drawing as drawn too, every layer and text, for readers to show under the plan: only when you tick it. Download project gives one file (.storeypath-project) to send to someone who continues the project in their Studio: they open it on their Projects page.",
+      layouts.length ? " A location's layout is a package of its own: its land (the plot, its walls, gates and areas), the items on it and where its buildings' footprints are." : ""),
     p.exports.length ? el("p", { class: "muted small" }, ...(p.exports_folder // (where the server keeps them: told to admins)
       ? ["Saved in ", el("code", {}, p.exports_folder), ", newest first:"] : ["Newest first:"])) : null,
     p.exports.length ? el("ul", { class: "exports" }, p.exports.map((f) => {
@@ -1704,11 +2196,13 @@ function exportCard(code, p) {
         el("a", { href: url, download: f }, "Download"),
         el("a", { href: "#", "data-testid": "export-sealed", title: "Encrypted with a password you choose (AES-256): to send where others could read it",
           onclick: (e) => { e.preventDefault(); sealed(url, f); } }, "Encrypted…"),
-        planPage ? el("a", { href: `/viewer/svg/example/index.html?package=${encodeURIComponent(url)}`, target: "_blank",
+        // (a layout's package: its land in 3D; the floors' plans and rooms by type are a building's)
+        planPage && !landPackage(f) ? el("a", { href: `/viewer/svg/example/index.html?package=${encodeURIComponent(url)}`, target: "_blank",
           title: "Each floor as a plan: walls, doors with their swings, windows, rooms coloured by type" }, "2D plan") : null,
         el("a", { href: `/world.html?pkg=${encodeURIComponent(url)}`, target: "_blank",
-          title: "The building as built: walls, doors and windows; walk through it, or orbit it as a dollhouse" }, "3D"),
-        el("a", { href: `/viewer/examples/basic/index.html?basemap=0&pkg=${encodeURIComponent(url)}`, target: "_blank",
+          title: landPackage(f) ? "The land in 3D: its areas, boundary walls and gates, and the buildings' footprints"
+            : "The building as built: walls, doors and windows; walk through it, or orbit it as a dollhouse" }, "3D"),
+        landPackage(f) ? null : el("a", { href: `/viewer/examples/basic/index.html?basemap=0&pkg=${encodeURIComponent(url)}`, target: "_blank",
           title: "Each room as a block coloured by its type, floors stacked on a map, with search: a check of the rooms, not the building's walls" },
         "Rooms by type"));
     })) : el("p", { class: "empty" }, "No packages yet."),

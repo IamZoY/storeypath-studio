@@ -5,6 +5,8 @@ import zipfile
 
 import pytest
 
+from storeypath.package import FORMAT_VERSION
+
 from storeypath.convert import convert_floor
 from storeypath.export import ExportError, export_package
 from storeypath.georef import Georeferencer
@@ -350,7 +352,7 @@ def test_a_package_carries_each_floors_drawing_in_its_own_frame_only_when_asked(
     assert validate_package(pkg) == []
     assert "drawings: 2 of 2 floor(s)" in said and [line for line in said if line.startswith("reading")] == ["reading sheet.dxf"]
     manifest = _read(pkg, "manifest.json")
-    assert manifest["format_version"] == "0.11.0" and manifest["files"]["drawings"] == "drawings/"
+    assert manifest["format_version"] == FORMAT_VERSION and manifest["files"]["drawings"] == "drawings/"
     assert {s["floor_id"]: s["view"] for s in manifest["sources"]} == {f: f"drawings/{f}.view" for f in (f0, f1)}
     floors = {f["id"]: f for f in _read(pkg, "floors.geojson")["features"]}
     g = Georeferencer(Placement(**{k: manifest["placements"][f"{ws.id}-SITE-HQ"][k] for k in ("lon", "lat", "x", "y", "bearing")}))

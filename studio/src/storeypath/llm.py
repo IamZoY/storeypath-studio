@@ -38,7 +38,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from .types import SpaceType
+from .types import LAND_ONLY, SpaceType
 
 DEFAULT_MODELS = Path("/opt/storeypath/models")
 BATCH = 24  # labels per question
@@ -243,7 +243,8 @@ TYPE_GUIDE = {
     "open_to_below": "void, open to below, double-height space over the floor below (فراغ, vide)",
     "room": "any other room that none of the types above fits: study, playroom, gym, classroom, library, a room with only a number",
 }
-assert set(TYPE_GUIDE) == {t.value for t in SpaceType} - {"unspecified"}
+# (a location's land has types of its own, read with a question of their own: siteplan.py)
+assert set(TYPE_GUIDE) == {t.value for t in SpaceType} - {"unspecified"} - {t.value for t in LAND_ONLY}
 
 NOT_A_ROOM = "not_a_room"
 LABEL_SYSTEM = (
@@ -443,6 +444,75 @@ def read_level_labels(model: LocalModel, labels: list[str]) -> dict[str, tuple[s
         floor = answer.get("floor")
         out[label] = (kind, floor if isinstance(floor, int) else None)
     return out
+
+# ---- site plans (siteplan.py, layout.py) ----------------------------------------------
+
+SITE_KINDS = ["building", "area", "ground_level", "building_level", "outside", "nothing"]
+SITE_AREAS = {
+    "parking": "parking, car park, carport (موقف)",
+    "driveway": "driveway, the way cars drive in",
+    "garden": "garden, lawn, landscaping, planting (حديقة)",
+    "courtyard": "courtyard, an open space closed round by buildings or walls (فناء, حوش)",
+    "yard": "yard, open ground, open area",
+    "path": "path, walkway, footpath, pavement",
+    "gate_area": "the area at a gate or entrance",
+    "road": "road, street (شارع, طريق)",
+    "pool": "swimming pool (مسبح)",
+    "terrace": "terrace, patio, deck, seating area",
+}
+SITE_SYSTEM = (
+    "You read the texts written on site plans: a plot of land, the buildings standing on it, the open ground "
+    "between them and the road outside, in any language, often abbreviated. For each text say what it is:\n"
+    "- building: the name of a building or of a room in one (VILLA, ANNEX, GUEST HOUSE, GH, SECURITY HUT, "
+    "MAID ROOM, WC)\n"
+    "- area: the name of an area of open ground; then give which: " + "; ".join(f"{k}: {v}" for k, v in SITE_AREAS.items())
+    + "\n- ground_level: a level of the ground (+0.00 FGL, NGL)\n"
+    "- building_level: a level of a building's floor, slab, roof or parapet (+0.45 FFL, SSL, TOP)\n"
+    "- outside: what is beyond the plot: a neighbour, another plot\n"
+    "- nothing: a dimension, a note, a title, a table's words, equipment, a door or window tag\n"
+    "Answer in compact JSON."
+)
+SITE_QUESTION = hashlib.sha1(SITE_SYSTEM.encode()).hexdigest()[:8]
+
+
+def read_site_texts(model: LocalModel, texts: list[str]) -> dict[str, tuple[str, str | None]]:
+    """What each text of a site plan is (SITE_KINDS), and for an area, of which kind
+    (SITE_AREAS): one text a question, as for room labels."""
+    schema = {"type": "object", "properties": {"kind": {"enum": SITE_KINDS}, "area": {"enum": [*SITE_AREAS, "none"]}},
+              "required": ["kind", "area"]}
+
+    def one(text: str):
+        try:
+            answer = model.ask(SITE_SYSTEM, f"Text: {text}", schema, max_tokens=40)
+        except BadAnswer:
+            return text, None
+        kind = answer.get("kind") if answer.get("kind") in SITE_KINDS else "nothing"
+        area = answer.get("area") if kind == "area" and answer.get("area") in SITE_AREAS else None
+        return text, (kind, area)
+
+    unique = list(dict.fromkeys(t.strip() for t in texts if t.strip()))
+    with ThreadPoolExecutor(max_workers=getattr(model, "parallel", 1)) as pool:
+        return {text: answer for text, answer in pool.map(one, unique) if answer is not None}
+
+
+WHICH_SYSTEM = (
+    "A building on a site plan is labelled with a text, in any language, often abbreviated (GH: guest house; "
+    "SEC. HUT: security hut; PROPOSED or NEW say nothing of which building it is). Say which of the "
+    "buildings listed it names, by its number, or 0 when it names none of them. Answer in compact JSON."
+)
+
+
+def which_building(model: LocalModel, label: str, names: list[str]) -> int | None:
+    """Which of ``names`` (buildings of a location) a site plan's label names: its index,
+    or None for none."""
+    if not names:
+        return None
+    schema = {"type": "object", "properties": {"n": {"type": "integer", "minimum": 0, "maximum": len(names)}},
+              "required": ["n"]}
+    user = f"Label: {label}\nBuildings:\n" + "\n".join(f"{i}. {n}" for i, n in enumerate(names, 1))
+    n = model.ask(WHICH_SYSTEM, user, schema, max_tokens=20).get("n")
+    return n - 1 if isinstance(n, int) and 1 <= n <= len(names) else None
+
 
 SCHEDULE_SYSTEM = (
     "You read one row of a door and window schedule from an architectural drawing: its cells, each with the "

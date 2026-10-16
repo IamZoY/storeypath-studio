@@ -67,7 +67,7 @@ from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, m
 from .ids import normalize_item_id
 from .profile import Profile, load_profile, resolve_profile
 from .stacks import NOT_LINKED, STACK_TYPES
-from .types import SpaceType
+from .types import LAND_TYPES, SpaceType
 from .workspace import DrawnOpening, FloorEdits, Item, ObjectRecord, Override, ResizedOpening, Workspace, utcnow
 
 __all__ = ["Busy", "NotFound", "Review", "ProjectFile", "StoredProject", "File"]
@@ -452,12 +452,14 @@ class Review:
     def project(self) -> dict:
         ws = self.workspace()
         floors = []
-        for loc, b, f, fid in ws.iter_floors():
+        for loc, b, f, fid in ws.iter_floors(layouts=True):
             spaces = [r for r in ws.floor_objects(fid) if r.kind in ("space", "zone") and not r.zones]
             floors.append({
                 "id": fid, "name": f.name, "ordinal": f.ordinal, "elevation": f.elevation,
                 "type": f.type.value,  # (a mezzanine stands in its building's floor of that ordinal)
-                "building": b.name, "building_id": fid.rsplit("-", 1)[0], "location": loc.name,
+                # a location's layout (0.12): its land, named by its location
+                "building": loc.name if f.layout else b.name, "building_id": fid.rsplit("-", 1)[0],
+                "location": loc.name, "layout": f.layout,
                 "source": Path(f.source.path).name if f.source else None,
                 "converted": f.converted_at is not None,
                 "spaces": len(spaces), "review": sum(1 for r in spaces if ws.review_reasons(r)),
@@ -467,6 +469,8 @@ class Review:
             "file": self.source.name,
             "floors": floors,
             "types": [t.value for t in SpaceType],
+            # what a layout's areas are (0.12): offered first there
+            "land_types": [t.value for t in LAND_TYPES],
         }
 
     # ---- what a shape gives ------------------------------------------------------
@@ -534,10 +538,29 @@ class Review:
             "spaces": [self._space(ws, r, seats, cat) for r in objects
                        if r.kind in ("space", "zone") and not self._shape(r)["empty"]],
             "doors": [self._door(ws, r, f.edits.resized) for r in objects if r.kind == "opening"],
+            # a layout's (0.12): the buildings standing on it, drawn under what is placed
+            **({"footprints": self._footprints(ws, objects)} if f.layout else {}),
             # furniture and equipment on the floor, retired ones too (to be restored), in
             # the order they were placed (the last on top: their IDs are in no order)
             "items": [self._item(i, cat) for i in ws.floor_items(floor_id, include_retired=True)],
         }
+
+    def _footprints(self, ws: Workspace, objects) -> list[dict]:
+        """A layout's footprints (0.12), each with the building it is, and that one's name."""
+        from .export import footprint_of
+
+        out = []
+        for r in objects:
+            if r.kind != "footprint" or r.status != "active":
+                continue
+            b_id = footprint_of(ws, r)
+            try:
+                name = ws.building(b_id).name if b_id else None
+            except (KeyError, ValueError):
+                b_id, name = None, None
+            out.append({"id": r.id, "name": r.name, "label": r.label, "geometry": r.geometry, "building": b_id,
+                        "building_name": name, "match": r.match})
+        return out
 
     def _floor_fields(self, f) -> dict:
         """A floor's own fields, as Review shows them."""
@@ -548,6 +571,9 @@ class Review:
             "method": f.method, "warnings": f.warnings, "outline": f.outline,
             # for drawing walls and doors onto: the walls as found, and what was drawn
             "walls": f.walls, "wall_thickness": f.wall_thickness, "edits": f.edits.model_dump(),
+            # a location's layout (0.12): its plot is its outline, its walls stand this high
+            "layout": f.layout, "height": f.height,
+            "north": f.north.model_dump(mode="json") if f.north is not None else None,
         }
 
     def _floor_since(self, ws: Workspace, f, floor_id: str, cat, version: int, since: int, touched) -> dict:
@@ -587,6 +613,8 @@ class Review:
                                           "grade": (seats.get(r.id) or {}).get("grade")}
         if itself:
             out.update(self._floor_fields(f))
+        if f.layout and (itself or any(objects[i].kind == "footprint" for i in mine if i in objects)):
+            out["footprints"] = self._footprints(ws, objects.values())
         return out
 
     # ---- items: furniture and equipment ---------------------------------------------
@@ -871,12 +899,15 @@ class Review:
                 (f.edits.walls if what == "wall" else f.edits.dividers).append(line)
             elif isinstance(body.get("add"), dict) and "opening" in body["add"]:
                 o = body["add"]["opening"]
-                if not isinstance(o, dict) or o.get("type") not in ("door", "window", "opening"):
-                    raise ValueError('an opening is {"type": "door", "window" or "opening", "span": [[x, y], [x, y]]}')
+                kinds = ("door", "window", "opening", "gate") if f.layout else ("door", "window", "opening")
+                if not isinstance(o, dict) or o.get("type") not in kinds:
+                    raise ValueError('an opening is {"type": "door", "window" or "opening" (on a layout, "gate"), '
+                                     '"span": [[x, y], [x, y]]}')
                 span = _points(o.get("span"), 2)
-                if not 0.3 <= LineString(span).length <= 6:
-                    raise ValueError("an opening is 0.3 to 6 m wide")
-                f.edits.openings.append(DrawnOpening(type=o["type"], span=span))
+                widest = 12 if f.layout else 6  # (a gate for cars)
+                if not 0.3 <= LineString(span).length <= widest:
+                    raise ValueError(f"an opening is 0.3 to {widest} m wide")
+                f.edits.openings.append(DrawnOpening(type="door" if o["type"] == "gate" else o["type"], span=span))
             elif isinstance(body.get("add"), dict) and "space" in body["add"]:
                 f.edits.spaces.append(_ring(body["add"]["space"]))
             elif isinstance(body.get("resize"), dict) and "at" in body["resize"]:
@@ -909,7 +940,8 @@ class Review:
         in the floor's edits, found again by its middle at every conversion. Which it was
         (door, window, opening)."""
         at = Point(_points([body["at"]], 1)[0])
-        sizes = {key: _size(body.get(key), key, band) for key, band in RESIZE_BANDS.items()}
+        bands = {**RESIZE_BANDS, "width": (0.3, 12.0)} if f.layout else RESIZE_BANDS  # (a gate for cars, 0.12)
+        sizes = {key: _size(body.get(key), key, band) for key, band in bands.items()}
         drawn = [(LineString(o.span).distance(at), i) for i, o in enumerate(f.edits.openings)]
         near = [d for d in drawn if d[0] <= REMOVE_REACH_M]
         if near:

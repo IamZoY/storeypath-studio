@@ -44,6 +44,7 @@ export function setup(given) {
   api.tool({
     id: "stairs", label: "Stairs and lifts", icon: "door-stairwell", key: "l", group: "draw", edits: true, drawing: true,
     words: "lift elevator escalator stair vertical",
+    available: () => (api.state.floor?.layout ? "Stairs and lifts are a building's: a location's layout has none" : ""),
     wrongView: () => "Stairs and lifts are drawn on the plan",
     hint: () => {
       const n = api.state.corners.length;

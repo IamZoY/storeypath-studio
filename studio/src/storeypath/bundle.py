@@ -40,17 +40,20 @@ from pyproj import Transformer
 from shapely.geometry import mapping, shape
 from shapely.ops import transform, unary_union
 
-from .export import build_features, compared, settle
-from .ids import format_object_code, is_item_id, is_legacy_item_id, item_id_for_legacy, parse_id
+from .export import build_features, compared, layout_features, settle
+from .ids import LAND_CODE, format_object_code, is_item_id, is_legacy_item_id, item_id_for_legacy, parse_id
 from .package import ASSET_IDS_FROM, FILES, Manifest, version_tuple
 from .types import FloorType
 from .workspace import (
+    BOUNDARY_WALL_HEIGHT,
+    LAND_NAME,
     Building,
     ExportRecord,
     Floor,
     Item,
     LastPackage,
     Location,
+    North,
     ObjectRecord,
     Override,
     Placement,
@@ -423,9 +426,10 @@ def _put_in_place(staging: Path, folder: Path, data: Path) -> None:
 
 
 def _building_ids(ws: Workspace) -> list[str]:
-    from .export import building_ids
+    """The project's buildings, and the lands of its locations' layouts (0.12)."""
+    from .export import building_ids, land_ids
 
-    return building_ids(ws)
+    return building_ids(ws) + land_ids(ws)
 
 
 def _building_of(item: Item) -> str:
@@ -543,14 +547,26 @@ def _merge(here: Workspace, pkg: Workspace) -> None:
             here.locations.append(loc)
             continue
         settle(mine)  # the site's other buildings stay where they are on it
-        for b in loc.buildings:
+        if loc.layout is not None:  # a layout's package (0.12): the site as it had it, where it is not said here
+            if mine.placement is None and loc.placement is not None:
+                mine.placement = loc.placement
+            if mine.north is None and loc.north is not None:
+                mine.north = loc.north
+        for b in [*loc.buildings, *([loc.layout] if loc.layout is not None else [])]:
             b_id = make_id(pkg.id, loc.code, b.code)
-            old = next((x for x in mine.buildings if x.code == b.code), None)
-            _onto_site(mine, old, b)
+            land = b is loc.layout
+            old = mine.layout if land else next((x for x in mine.buildings if x.code == b.code), None)
+            if not land:
+                _onto_site(mine, old, b)
             if old is not None:
                 _keep_drawn(old, b)
                 b.next_object_seq = max(b.next_object_seq, old.next_object_seq)  # no ID it gave is given again
-                mine.buildings[mine.buildings.index(old)] = b
+                if land:
+                    mine.layout = b
+                else:
+                    mine.buildings[mine.buildings.index(old)] = b
+            elif land:
+                mine.layout = b
             else:
                 mine.buildings.append(b)
             # what is in it now is the package's: one here it does not hold is retired (its ID
@@ -791,6 +807,34 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
         p = f["properties"]
         locations[f["id"]] = Location(code=p["code"], name=p["name"], address=p.get("address"))
         ws.locations.append(locations[f["id"]])
+    # a location's layout (0.12), in a package of its own: its land, its one level, on its site
+    floor_building: dict[str, str] = {}
+    exported_at = manifest.export.exported_at
+    lands: dict[str, Building] = {}
+    layout_id = manifest.scope.layout if manifest.scope is not None else None
+    if layout_id is not None and "layout" in manifest.files:
+        for f in json.loads(z.read(manifest.files["layout"]))["features"]:
+            p = f["properties"]
+            local = to_local[f["id"]]
+            loc = locations[p["location_id"]]
+            pl = manifest.placements[f["id"]]
+            if pl.placed:
+                loc.placement = Placement(lon=pl.lon, lat=pl.lat, x=0.0, y=0.0, bearing=pl.bearing)
+            said = p.get("north") or {}
+            if said.get("from") in ("drawing", "person"):
+                loc.north = North(bearing=said["bearing"], source=said["from"])
+            elif not pl.placed and said.get("from") == "map":
+                loc.north = North(bearing=said["bearing"], source="person")
+            land = loc.layout = Building(code=LAND_CODE, name=LAND_NAME)
+            land.floors.append(Floor(
+                code=p["code"], name=p["name"], ordinal=0, elevation=0.0, type=FloorType.LAYOUT,
+                height=p.get("wall_height_m") or BOUNDARY_WALL_HEIGHT,
+                outline=mapping(local.geometry(f["geometry"])) if f.get("geometry") else None,
+                walls=mapping(local.geometry(p["walls"])) if p.get("walls") else None,
+                wall_thickness=p.get("wall_thickness_m"), converted_at=exported_at, method="package",
+                warnings=[f"rebuilt from {file_name}: add its site plan to read it again"]))
+            lands[f["id"].rsplit("-", 1)[0]] = land
+            floor_building[f["id"]] = f["id"]  # (what is on it is placed by the layout's own placement)
     buildings: dict[str, Building] = {}
     for f in features["buildings"]:
         p = f["properties"]
@@ -798,8 +842,6 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
         placement = Placement(lon=pl.lon, lat=pl.lat, x=pl.x, y=pl.y, bearing=pl.bearing) if pl and pl.placed else None
         buildings[f["id"]] = Building(code=p["code"], name=p["name"], placement=placement)
         locations[p["location_id"]].buildings.append(buildings[f["id"]])
-    floor_building: dict[str, str] = {}
-    exported_at = manifest.export.exported_at
     for f in features["floors"]:
         p = f["properties"]
         b_id = p["building_id"]
@@ -840,11 +882,25 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
                 if p.get("swings"):
                     r.swings = [[local.point(q) for q in leaf] for leaf in p["swings"]]
             ws.objects[r.id] = r
+            if kind == "opening" and r.type == "gate":
+                r.type_source = "package"
             # what a person set in review: flags, and how many it seats (not what its desks say)
             capacity = p.get("capacity") if p.get("capacity_from") == "review" else None
             if p.get("hidden") or p.get("ignored") or capacity is not None:
                 ws.overrides[r.id] = Override(hidden=bool(p.get("hidden")) or None,
                                               ignored=bool(p.get("ignored")) or None, capacity=capacity)
+    # the buildings standing on a layout (0.12): each footprint, and the building it is
+    if layout_id is not None and "footprints" in manifest.files:
+        for f in json.loads(z.read(manifest.files["footprints"]))["features"]:
+            p = f["properties"]
+            local = to_local[p["layout_id"]]
+            ws.objects[f["id"]] = ObjectRecord(id=f["id"], kind="footprint", type="footprint", type_source="package",
+                                               name=p.get("name"), label=p.get("drawing_label"),
+                                               geometry=mapping(local.geometry(f["geometry"])), created_at=exported_at)
+            if p.get("building_id") or p.get("hidden") or p.get("ignored"):
+                ws.overrides[f["id"]] = Override(building=p.get("building_id"), hidden=bool(p.get("hidden")) or None,
+                                                 ignored=bool(p.get("ignored")) or None)
+
     # furniture and equipment, back where the package has them: where each stands in
     # its building (0.7); from an earlier package, its map position and heading (where
     # its front faces on earth) back to the building's frame. An item of a package
@@ -904,8 +960,8 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
         if loc.site_origin is None and abs(pl.bearing) < 1e-9:
             loc.site_origin = (pl.x, pl.y)  # the drawing point at the site's centre, as drawn
 
-    # each building gives new IDs after every one it gave
-    for b_id, b in buildings.items():
+    # each building (and land) gives new IDs after every one it gave
+    for b_id, b in [*buildings.items(), *lands.items()]:
         codes = [parse_id(i).code for i in ws.objects if i.startswith(b_id + "-") and parse_id(i).level == "object"]
         numbers = [int(c) for c in codes if c.isdigit()]
         b.next_object_seq = max(numbers, default=0) + 1
@@ -924,7 +980,7 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
         hashes[i] = "not kept"  # what the package says of it is not all here: changed in the next
     retired = changes.get("all_retired") or []
     held = {}
-    for b_id in buildings:  # (from 0.7, one)
+    for b_id in [*buildings, *lands]:  # (from 0.7, one: a building, or a layout's land)
         location = b_id.rsplit("-", 1)[0]
         held[b_id] = LastPackage(
             sequence=manifest.export.sequence,
@@ -936,7 +992,7 @@ def workspace_from_package(z: zipfile.ZipFile, file_name: str) -> Workspace:
     moved = [m["id"] for m in changes.get("moved_away") or []]
     ws.exports.append(ExportRecord(
         sequence=manifest.export.sequence, exported_at=exported_at, file=file_name,
-        buildings=sorted(buildings) if manifest.scope is not None else None, held=held,
+        buildings=sorted([*buildings, *lands]) if manifest.scope is not None else None, held=held,
         items_held=sorted({retagged.get(i, i) for i, it in ws.items.items() if it.status == "active"} | set(moved)
                           | {i for i in retired if is_item_id(i) or old_item(i)})))
     return ws
@@ -953,7 +1009,10 @@ def _not_kept(ws: Workspace, cat, z: zipfile.ZipFile, files: dict) -> set[str]:
     and what it lost there is to be listed as changed, not hidden."""
     out = set()
     names = set(z.namelist())
-    for role, fs in build_features(ws, cat).items():
+    features = build_features(ws, cat)
+    for role, fs in layout_features(ws, cat).items():  # (a layout's, 0.12)
+        features[role] = features.get(role, []) + fs
+    for role, fs in features.items():
         if files.get(role) not in names:
             continue
         theirs = {f["id"]: f["properties"] for f in json.loads(z.read(files[role]))["features"]}

@@ -809,7 +809,8 @@ class Sight:
         self.location_of: dict[str, str] = {}  # building ID -> its location's
         for loc in ws.locations:
             loc_id = make_id(ws.id, loc.code)
-            for b in loc.buildings:
+            # (its land, its layout's (format 0.12), is seen and granted as a building is)
+            for b in [*loc.buildings, *([loc.layout] if loc.layout is not None else [])]:
                 b_id = make_id(ws.id, loc.code, b.code)
                 self.location_of[b_id] = loc_id
                 self.buildings[b_id] = highest(self.project, *(g.level for g in mine if g.scope.kind == "building"
@@ -880,7 +881,13 @@ class Sight:
                 keep_floors |= {make_id(copy.id, loc.code, b.code, f.code) for f in b.floors}
                 if not b.floors and not self.buildings.get(b_id):
                     loc.buildings.remove(b)
-        copy.locations = [loc for loc in copy.locations if loc.buildings]
+            if loc.layout is not None:  # its layout, when seen
+                land = loc.layout
+                land.floors = [f for f in land.floors if self.floors.get(make_id(copy.id, loc.code, land.code, f.code))]
+                keep_floors |= {make_id(copy.id, loc.code, land.code, f.code) for f in land.floors}
+                if not land.floors:
+                    loc.layout = None
+        copy.locations = [loc for loc in copy.locations if loc.buildings or loc.layout is not None]
 
         def floor_of(object_id: str) -> str | None:
             try:

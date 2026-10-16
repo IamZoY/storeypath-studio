@@ -270,6 +270,8 @@ def _describe(e: dict) -> str:
             what = e.get("room_name") or "the floor"
             return f"took over editing {what} from {e.get('from_name') or 'someone'}"
         held = " (held back: it would have retired most of the rooms)" if e.get("held") else ""
+        if "-LAND-" in str((e.get("targets") or [""])[0]):  # (a location's layout, 0.12)
+            return f"read the layout's site plan again{held}"
         return f"read the floor's drawing again{held}"
     drawing = (e.get("targets") or [None])[0] if kind in ("drawing", "drawing removed") else None
     lines = {
@@ -284,6 +286,14 @@ def _describe(e: dict) -> str:
         "answers": "kept what vision saw on a read that did not finish",
         "place": "placed a building on the map" if part == "building" else "placed the site on the map",
         "open": "opened a file into the project" if part == "building" else "opened the project from a file",
+        # a location's layout (format 0.12)
+        "layout": f"used {e.get('drawing') or 'a site plan'} as a location's layout",
+        "footprint": (f"placed {e.get('building_name') or 'a building'} on its footprint on the layout"
+                      if e.get("building_name") else "said a footprint on the layout is of no building"),
+        "new building": f"added the building {e.get('building_name') or ''} for a footprint on the layout".replace("  ", " "),
+        "placed": f"placed {e.get('count') or 'the'} building(s) on their footprints on the layout",
+        "north": f"set north on the site plan: its up faces {e.get('bearing')}°" if e.get("bearing") is not None
+        else "set north on the site plan",
     }
     return lines.get(kind) or kind or "changed the project"
 

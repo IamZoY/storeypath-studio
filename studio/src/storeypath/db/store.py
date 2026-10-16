@@ -62,6 +62,7 @@ from psycopg.types.json import Jsonb
 from shapely.geometry import LineString, Point, Polygon, shape
 
 from ..errors import Conflict, Locked, NotFound
+from ..ids import LAND_CODE
 from ..workspace import (ExportRecord, FloorEdits, Item, Location, ObjectRecord, Override, Project, Reading,
                          Workspace)
 from . import CHANNEL, Database
@@ -69,7 +70,7 @@ from . import CHANNEL, Database
 COMMAND_LINE = "command line"  # who a change from the command line is of
 LOCAL = {"local": True}  # who a change is of on this computer without accounts
 OBJECT_MORE = ("connects", "parent", "zones", "span", "width", "swings", "sill", "height", "tag", "issues",
-               "detected_ignored")
+               "detected_ignored", "match")
 DRAWINGS = "drawings"  # a floor's drawing is drawings/<name>: its name in the project's drawings
 ROOM_IDLE_S = 5 * 60  # a room its person made no change to for this long is free again
 NEAR_M = 0.3  # what is drawn touches the rooms within this of it (half a thick wall)
@@ -255,11 +256,9 @@ def _spaces(ws: Workspace, floor: str, kind: str = "space"):
 
 
 def _edits_of(ws: Workspace, floor: str) -> FloorEdits:
-    for loc in ws.locations:
-        for b in loc.buildings:
-            for f in b.floors:
-                if f"{ws.id}-{loc.code}-{b.code}-{f.code}" == floor:
-                    return f.edits
+    for *_, f, f_id in ws.iter_floors(layouts=True):
+        if f_id == floor:
+            return f.edits
     return FloorEdits()
 
 
@@ -409,21 +408,21 @@ def _put_drawings(ch: Changes, drawings: dict | None) -> None:
 
 
 def _with_edits(ws: Workspace, edits: dict[str, FloorEdits]) -> list[Location]:
-    """The tree with these floors' drawn edits, sharing the rest of it."""
+    """The tree with these floors' drawn edits (a layout's too), sharing the rest of it."""
+
+    def edited(loc: Location, b):
+        floors = []
+        for f in b.floors:
+            f_id = f"{ws.id}-{loc.code}-{b.code}-{f.code}"
+            floors.append(f.model_copy(update={"edits": edits[f_id]}) if f_id in edits else f)
+        return b.model_copy(update={"floors": floors}) if any(x is not y for x, y in zip(floors, b.floors)) else b
+
     out = []
     for loc in ws.locations:
-        buildings, changed = [], False
-        for b in loc.buildings:
-            floors = []
-            for f in b.floors:
-                f_id = f"{ws.id}-{loc.code}-{b.code}-{f.code}"
-                floors.append(f.model_copy(update={"edits": edits[f_id]}) if f_id in edits else f)
-            if any(x is not y for x, y in zip(floors, b.floors)):
-                buildings.append(b.model_copy(update={"floors": floors}))
-                changed = True
-            else:
-                buildings.append(b)
-        out.append(loc.model_copy(update={"buildings": buildings}) if changed else loc)
+        buildings = [edited(loc, b) for b in loc.buildings]
+        layout = edited(loc, loc.layout) if loc.layout is not None else None
+        changed = any(x is not y for x, y in zip(buildings, loc.buildings)) or layout is not loc.layout
+        out.append(loc.model_copy(update={"buildings": buildings, "layout": layout}) if changed else loc)
     return out
 
 
@@ -435,9 +434,12 @@ def _tree_rows(ws: Workspace) -> dict[tuple, tuple[dict, Any]]:
     for i, loc in enumerate(ws.locations):
         out["locations", loc.code] = ({"position": i, "name": loc.name, "address": loc.address,
                                        "placement": loc.placement.model_dump(mode="json") if loc.placement else None,
-                                       "site_origin": list(loc.site_origin) if loc.site_origin is not None else None},
+                                       "site_origin": list(loc.site_origin) if loc.site_origin is not None else None,
+                                       "north": loc.north.model_dump(mode="json") if loc.north else None},
                                       loc)
-        for j, b in enumerate(loc.buildings):
+        # (its land, its layout's, a row of buildings of its own code after its buildings)
+        land = [loc.layout] if loc.layout is not None else []
+        for j, b in enumerate([*loc.buildings, *land]):
             out["buildings", loc.code, b.code] = (
                 {"position": j, "name": b.name, "next_object_seq": b.next_object_seq,
                  "placement": b.placement.model_dump(mode="json") if b.placement else None,
@@ -452,7 +454,7 @@ def _floor_row(f) -> dict:
     return {k: d[k] for k in ("name", "ordinal", "elevation", "height", "type", "host", "above_host", "parapet_height",
                               "source", "outline",
                               "converted_at", "method", "warnings", "layers", "walls", "wall_thickness",
-                              "symbols", "symbols_key", "edits")}
+                              "symbols", "symbols_key", "edits", "north")}
 
 
 def _object_row(code: str, r: ObjectRecord) -> tuple:
@@ -465,7 +467,7 @@ def _object_row(code: str, r: ObjectRecord) -> tuple:
 def _override_row(code: str, object_id: str, o: Override, by) -> tuple:
     return (code, object_id, floor_of(object_id), o.type.value if o.type is not None else None, o.name, o.number,
             o.hidden, o.ignored, o.capacity, o.stack, o.floor_finish, o.wall_finish,
-            _j([w.model_dump() for w in o.wall_finishes]) if o.wall_finishes else None, by)
+            _j([w.model_dump() for w in o.wall_finishes]) if o.wall_finishes else None, o.building, by)
 
 
 def _item_row(code: str, it: Item, by) -> tuple:
@@ -486,26 +488,29 @@ _FLOOR_JSON = ("jsonb_build_object('code', f.code, 'name', f.name, 'ordinal', f.
                "'parapet_height', f.parapet_height, 'source', f.source, 'outline', f.outline, "
                "'converted_at', f.converted_at, 'method', f.method, 'warnings', f.warnings, 'layers', f.layers, "
                "'walls', f.walls, 'wall_thickness', f.wall_thickness, 'symbols', f.symbols, "
-               "'symbols_key', f.symbols_key, 'edits', f.edits)")
+               "'symbols_key', f.symbols_key, 'edits', f.edits, 'north', f.north)")
+_BUILDING_JSON = ("json_build_object('code', b.code, 'name', b.name, 'placement', b.placement, 'site', b.site, "
+                  "'next_object_seq', b.next_object_seq, "
+                  f"'floors', COALESCE((SELECT json_agg({_FLOOR_JSON} ORDER BY f.position) FROM floors f "
+                  "WHERE f.project = b.project AND f.location = b.location AND f.building = b.code), '[]'))")
 _LOAD = f"""
 SELECT p.version, json_build_object(
   'format', 'storeypath-workspace', 'format_version', p.format_version,
   'project', json_build_object('code', p.code, 'name', p.name, 'created_at', p.created_at),
   'locations', COALESCE((SELECT json_agg(json_build_object(
       'code', l.code, 'name', l.name, 'address', l.address, 'placement', l.placement, 'site_origin', l.site_origin,
-      'buildings', COALESCE((SELECT json_agg(json_build_object(
-          'code', b.code, 'name', b.name, 'placement', b.placement, 'site', b.site,
-          'next_object_seq', b.next_object_seq,
-          'floors', COALESCE((SELECT json_agg({_FLOOR_JSON} ORDER BY f.position) FROM floors f
-                              WHERE f.project = b.project AND f.location = b.location AND f.building = b.code), '[]'))
-        ORDER BY b.position) FROM buildings b WHERE b.project = l.project AND b.location = l.code), '[]'))
+      'north', l.north,
+      'buildings', COALESCE((SELECT json_agg({_BUILDING_JSON} ORDER BY b.position) FROM buildings b
+                             WHERE b.project = l.project AND b.location = l.code AND b.code <> '{LAND_CODE}'), '[]'),
+      'layout', (SELECT {_BUILDING_JSON} FROM buildings b
+                 WHERE b.project = l.project AND b.location = l.code AND b.code = '{LAND_CODE}'))
     ORDER BY l.position) FROM locations l WHERE l.project = p.code), '[]'),
   'objects', COALESCE((SELECT json_object_agg(o.id, {_OBJECT_JSON} ORDER BY o.position) FROM objects o
                        WHERE o.project = p.code AND {{scope_o}}), '{{{{}}}}'),
   'overrides', COALESCE((SELECT json_object_agg(v.object, json_build_object(
       'type', v.type, 'name', v.name, 'number', v.number, 'hidden', v.hidden, 'ignored', v.ignored,
       'capacity', v.capacity, 'stack', v.stack, 'floor_finish', v.floor_finish, 'wall_finish', v.wall_finish,
-      'wall_finishes', v.wall_finishes)
+      'wall_finishes', v.wall_finishes, 'building', v.building)
       ORDER BY v.position) FROM overrides v WHERE v.project = p.code AND {{scope_v}}), '{{{{}}}}'),
   'items', COALESCE((SELECT json_object_agg(i.id, json_build_object(
       'id', i.id, 'type', i.type, 'floor_id', i.floor, 'x', i.x, 'y', i.y, 'rotation', i.rotation,
@@ -854,12 +859,13 @@ class ProjectStore:
             if put:
                 cur.executemany(
                     "INSERT INTO overrides (project, object, floor, type, name, number, hidden, ignored, capacity, "
-                    "stack, floor_finish, wall_finish, wall_finishes, changed_by) VALUES (%s, %s, %s, %s, %s, %s, %s, "
-                    "%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (project, "
+                    "stack, floor_finish, wall_finish, wall_finishes, building, changed_by) VALUES (%s, %s, %s, %s, %s, "
+                    "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (project, "
                     "object) DO UPDATE SET floor = EXCLUDED.floor, type = EXCLUDED.type, name = EXCLUDED.name, "
                     "number = EXCLUDED.number, hidden = EXCLUDED.hidden, ignored = EXCLUDED.ignored, "
                     "capacity = EXCLUDED.capacity, stack = EXCLUDED.stack, floor_finish = EXCLUDED.floor_finish, "
                     "wall_finish = EXCLUDED.wall_finish, wall_finishes = EXCLUDED.wall_finishes, "
+                    "building = EXCLUDED.building, "
                     "changed_by = EXCLUDED.changed_by, changed_at = now(), "
                     "version = overrides.version + 1", put)
             gone = [(code, i) for i, it in ch.items.items() if it is None]
@@ -1526,9 +1532,8 @@ def diff(ws: Workspace, base: Workspace, scope=None) -> Changes:
         for f in (it.floor_id if it is not None else None, base.items[i].floor_id if i in base.items else None):
             if f:
                 ch.floors.add(f)
-    known = {f"{ws.id}-{loc.code}-{b.code}-{f.code}" for loc in ws.locations for b in loc.buildings for f in b.floors}
-    ch.floors &= known | {f"{base.id}-{loc.code}-{b.code}-{f.code}" for loc in base.locations
-                          for b in loc.buildings for f in b.floors}
+    known = {f_id for *_, f_id in ws.iter_floors(layouts=True)}
+    ch.floors &= known | {f_id for *_, f_id in base.iter_floors(layouts=True)}
     return ch
 
 

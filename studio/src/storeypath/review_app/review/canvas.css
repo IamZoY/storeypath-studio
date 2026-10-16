@@ -80,6 +80,21 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 #doors circle.door, #doors circle.way { fill: var(--plan-door); stroke: #fff; stroke-width: 1.5; }
 #doors circle.window { fill: var(--plan-window); stroke: none; }
 #doors .span.selected, #doors .swing.selected { stroke: var(--select); }
+/* a location's layout (format 0.12): its gates, and the footprints of its buildings, under everything */
+#doors .span.gate { stroke: var(--plan-door); stroke-width: 7; stroke-dasharray: 9 4; stroke-linecap: butt; }
+#doors circle.gate { fill: var(--plan-door); stroke: #fff; stroke-width: 1.5; }
+.preview line.gate { stroke: var(--plan-door); stroke-width: 7; stroke-dasharray: 9 4; }
+#footprints { pointer-events: none; }
+#footprints path { fill: var(--plan-walls); fill-opacity: .14; fill-rule: evenodd; stroke: var(--plan-walls); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+#footprints path.none { fill-opacity: .06; stroke-dasharray: 6 4; }
+#map.printed #footprints path { fill-opacity: .08; }
+#footprint-labels { pointer-events: none; }
+#footprint-labels text {
+  font: 600 12px var(--font-ui); fill: var(--plan-label); text-anchor: middle; letter-spacing: .02em;
+  paint-order: stroke; stroke: var(--plan-label-halo); stroke-width: 3px; stroke-linejoin: round;
+}
+#footprint-labels text.unplaced { font-style: italic; font-weight: 400; fill: var(--canvas-muted); }
+#map:not(.labels-on) #footprint-labels { display: none; }
 #drawn line { stroke: var(--plan-drawn); stroke-width: 4; stroke-dasharray: 7 4; stroke-linecap: square; vector-effect: non-scaling-stroke; cursor: pointer; }
 #drawn line.hit { stroke: transparent; stroke-width: 14; stroke-dasharray: none; }
 #drawn line.divide { stroke: var(--plan-divider); stroke-width: 3; stroke-dasharray: 3 4; }

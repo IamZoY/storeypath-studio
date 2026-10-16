@@ -18,14 +18,20 @@ storeypath export house.spproj --building VILLA -o villa.storeypath     # its it
 storeypath export house.spproj --building VILLA -o villa.storeypath --item-types all  # or every one
 storeypath export house.spproj --building VILLA -o villa.storeypath --drawings  # each floor's drawing in it too
 storeypath validate villa.storeypath
+
+storeypath add-layout house.spproj <code>-HOME site.dwg --view "site plan"   # the location's land (format 0.12)
+storeypath place-buildings house.spproj <code>-HOME                    # each building on its footprint, as matched
+storeypath north house.spproj <code>-HOME --from-drawing              # north as the site plan's arrow says
+storeypath export house.spproj --layout HOME -o home-land.storeypath  # the layout's own package
 ```
 
 | | Commands |
 |---|---|
 | A project and its drawings | `new`, `save-as-new`, `add-location`, `add-building`, `add-floor` (`--view`, `--units`, `--region`), `views`, `align`, `levels`, `place` |
+| A location's layout (format 0.12) | `add-layout` (`--view`, `--region`, `--units`), `place-buildings` (`--footprint`, `--building`, `--skip`, `--new`, `--again`, `--match`), `north` (`--bearing`, `--from-drawing`) |
 | Reading them | `convert` (`--force`, `--no-model`, `--no-vision`, `--no-symbols`), `list` (`--review`), `fix`, `profiles` (the layer-mapping profiles) |
 | Checking and completing | `review` (the review editor, on this computer alone) |
-| Packages | `export --building` (`--item-types used\|all`, `--drawings`), `validate`, `view`, `item-id`, `schema` |
+| Packages | `export --building` or `--layout` (`--item-types used\|all`, `--drawings`), `validate`, `view`, `item-id`, `schema` |
 | The web app | `serve` (`--data`, `--host`, `--port`, `--allowed-host`, `--cert`/`--key`, `--http`, `--secure-cookies`, `--trusted-proxy`) |
 | Accounts and the database | `users` (`add`, `list`, `passwd`, `disable`, `enable`, `role`), `backup`, `restore`, `db` (`url`, `migrate`, `import`) |
 | Privacy | `private` (a copy of a drawing without its private information), `words` (every word left in it) |

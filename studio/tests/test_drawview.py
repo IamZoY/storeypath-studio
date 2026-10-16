@@ -18,6 +18,8 @@ import zipfile
 import ezdxf
 import numpy as np
 import pytest
+
+from storeypath.package import FORMAT_VERSION
 from ezdxf.enums import TextEntityAlignment
 
 from sessions import call
@@ -379,7 +381,7 @@ def test_a_package_carries_its_floors_drawings_only_when_asked(studio, tmp_path)
     floors = [f"{hq}-{f.code}" for f in s.store.current(code).building(hq).floors if f.source]
     ended, z = export({"building": hq, "drawings": True})
     manifest = json.loads(z.read("manifest.json"))
-    assert manifest["format_version"] == "0.11.0" and manifest["files"]["drawings"] == "drawings/"
+    assert manifest["format_version"] == FORMAT_VERSION and manifest["files"]["drawings"] == "drawings/"
     assert sorted(src["view"] for src in manifest["sources"]) == sorted(f"drawings/{f}.view" for f in floors)
     assert ended.result["drawings"] == len(floors) >= 2
     assert any(line.startswith("drawing ") and " from " in line for line in ended.log)  # (what it is doing)

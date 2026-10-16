@@ -136,8 +136,8 @@ relative to each other. Drag a building to move it, or its round handle to turn 
 15°), or type its x, y and turn, to any degree. *Side by side* lines them up 10 m apart.
 This is where a building is turned to stand as it really does: the whole building, every
 floor of it. The compass in the plan's corner says which way north is (up, until the site
-is placed on the map with another bearing of up), and beside the fields, which way the
-chosen building's plan faces. **−** and **+** in the corner zoom (as do <kbd>-</kbd> and
+is placed on the map with another bearing of up, or its layout's north arrow says
+otherwise), and beside the fields, which way the chosen building's plan faces. **−** and **+** in the corner zoom (as do <kbd>-</kbd> and
 <kbd>+</kbd>, and <kbd>⌘</kbd> or <kbd>Ctrl</kbd> with the wheel, or a pinch), dragging an
 empty place moves the plan, and *Fit* shows every building again; the grid's spacing is
 written in the other corner. **Measure** gives the distance between two points clicked,
@@ -152,6 +152,57 @@ then buildings are exported around 0°N 0°E with their true shapes and sizes, m
 not placed. Moving or turning a building, on the site plan or the map, changes
 nothing in it: its rooms, doors and items keep their IDs and their places in the
 building.
+
+### A location's layout: its land, from its site plan
+
+A location's **layout** is its land: the plot its buildings stand on, its boundary walls
+and gates, the open ground between the buildings (the yard, parking, a driveway, a garden,
+the road outside), the things placed on it (cameras on poles, card readers at gates,
+barriers, lights) and the footprint of each building. It is read from the site plan, and
+it places the location's buildings where the site plan has them.
+
+1. **Find plans** in the drawing that holds the site plan. A plan titled as one (SITE,
+   LOCATION, DEVELOPMENT or KEY PLAN) is marked *Site plan*, and its card offers **Use as
+   ⟨location⟩'s layout**: choose the location (or a new one, by its name) and Studio reads
+   it. A location that has a layout is given the new site plan in its place: what is on it
+   keeps its IDs.
+2. **What it read** is drawn on the location's site plan card, under the buildings: the plot,
+   its areas filled by type (a legend under the plan), its walls and gates, and each footprint
+   (dashed and named where no building stands on it). The layout has a row of its own there,
+   as a floor has: *Review*, *3D*, *Read* (again) and *Export*, and *View* to see its site plan
+   in the drawing. North comes from the plan's north arrow, with how sure Studio is of it: the
+   compass turns to it, and the *North* row says how it is known. Correct it there (*Use the
+   arrow's*, or type the bearing the site plan's up faces and *Set north*); placed on the map,
+   the site turns with it.
+3. **Buildings on the site plan** lists each footprint with the building Studio takes it to
+   be and how sure it is (by its name on the plan, by its shape fitted to the building's
+   ground floor, by both, or by the language model; *turn ambiguous* when a shape fits more
+   than one way): **Apply** puts the building on its footprint, turned and moved so its
+   ground floor lies on it; **Change…** says it is another building; **Skip** says it is none
+   of the project's; **New building…** makes one of the location for it, named from the plan
+   (change the name if you like), with no floors yet: it stands on its footprint, and its
+   drawings, added later, are matched to it. **Apply all** applies every match (it asks first
+   when a building you placed by hand would move); **Match again** matches anew (a building's
+   floors read since, say). Pointing at a row outlines its footprint on the plan. Nothing
+   moves until you click, and moving a building this way changes nothing in it: its rooms
+   keep their IDs and places.
+4. **Review** the layout as a floor: it is in the floor list as *⟨location⟩ — Layout*. Type
+   its areas (the land's types come first: yard, parking, driveway, garden, courtyard, path,
+   gate area, road, pool), draw a wall or a dividing line it leaves out, add a gate (the
+   opening tool offers *Gate* on a layout, up to 12 m wide; a right-click, *Add a gate here*),
+   and place what stands on the land with *Place item*: a camera on a pole (*CCTV camera on a
+   pole*) or on a facade, its view drawn as on a floor; a card reader or a *Vehicle barrier* at
+   a gate, linked to it as a reader is to a door; a light pole. The footprints are drawn under
+   it, each with its building's name, and the inspector, with nothing chosen, says what is on
+   the land and which buildings stand on it. In 3D the land is a flat ground, its areas
+   coloured by type, its walls standing, each building a block on its footprint.
+5. **Read again** reads a revised site plan: its areas, gates and footprints keep their IDs,
+   and every building a person placed stays where it is (place it again to follow a moved
+   footprint).
+6. **Export** the layout as its own package (format 0.12; *⟨location⟩ — Layout* in the
+   Packages card's list, or *Export* on its row), beside its buildings' packages:
+   the land, its footprints (each with its building), its areas, gates and items. A system
+   placing outdoor cameras, or saying "at the gate" or "in the parking", reads it.
 
 ### Review: correct, complete, check
 
@@ -421,7 +472,7 @@ replace.
 
 ### Export: one building per package
 
-*Export package* writes the package (`.storeypath`, [format 0.11](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md)) of
+*Export package* writes the package (`.storeypath`, [format 0.12](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md)) of
 one building, chosen from the list: its floors, spaces, zones, doors, windows and
 openings, its items and their types (each once: those its items use, or, chosen
 beside *Export package*, every item type of the Studio, for another system to take

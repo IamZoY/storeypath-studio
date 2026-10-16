@@ -16,9 +16,10 @@ import { carry, dirty3d, update3d } from "./view3d.js";
 // what is to be read again: everything, or what these IDs are of; and whether a read is under way
 const live = { busy: false, waiting: null, retry: 0 };
 
-// a floor's own fields, sent with what changed when the floor itself changed (Review.floor)
+// a floor's own fields, sent with what changed when the floor itself changed (Review.floor); a
+// layout's too (format 0.12: its walls' height, its north arrow, the footprints when one changed)
 const FLOOR_FIELDS = ["name", "ordinal", "source", "converted_at", "method", "warnings", "outline", "walls",
-  "wall_thickness", "edits"];
+  "wall_thickness", "edits", "layout", "height", "north", "footprints"];
 
 /** The floor the page has, with what changed since (Review.floor ``since``): the spaces,
  * openings and items changed in it, those gone out, what the items say of each space, the

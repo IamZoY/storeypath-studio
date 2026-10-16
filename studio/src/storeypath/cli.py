@@ -155,8 +155,9 @@ def add_floor(
 ):
     """Add a floor and its source drawing to a building. The units the drawing is
     read in are kept with the floor: --units, or the units the drawing shows."""
-    if type not in [t.value for t in FloorType]:
-        _fail(f"--type is one of {', '.join(t.value for t in FloorType)}, not {type!r}")
+    levels = [t.value for t in FloorType if t != FloorType.LAYOUT]  # (a layout: `storeypath add-layout`)
+    if type not in levels:
+        _fail(f"--type is one of {', '.join(levels)}, not {type!r}")
     if ordinal is None and type != FloorType.ROOF:
         _fail(f"a {type} needs --ordinal")
     ws = _load(workspace)
@@ -185,6 +186,150 @@ def add_floor(
         _fail(str(e))
     ws.save(workspace)
     typer.echo(f_id)
+
+
+@app.command("add-layout")
+def add_layout(
+    workspace: WorkspaceArg,
+    location_id: str,
+    drawing: Annotated[Path, typer.Argument(help="DWG or DXF file of the site plan")],
+    units: Annotated[Optional[str], typer.Option(help="override drawing units: mm, cm, m, in, ft")] = None,
+    view: Annotated[Optional[str], typer.Option(
+        help="the site plan when the drawing holds several plans: its number or part of its title "
+             "(see `storeypath views`)")] = None,
+    region: Annotated[Optional[str], typer.Option(
+        help="the part of the drawing with the site plan: x0,y0,x1,y1 in drawing units")] = None,
+    use_model: Annotated[bool, typer.Option("--model/--no-model",
+                                            help="read texts the rules do not know with the local language model")] = True,
+):
+    """A location's layout (format 0.12): a site plan read as the location's land (its plot,
+    boundary walls, gates, areas, the footprints of its buildings, north), and the
+    location's buildings matched to the footprints. Nothing is placed: see
+    `storeypath place-buildings`. A location that has a layout is given this site plan in
+    its place: what is on it keeps its IDs."""
+    from .layout import convert_layout
+    from .llm import LocalModel
+
+    ws = _load(workspace)
+    if not drawing.exists():
+        _fail(f"{drawing} does not exist")
+    if units is None:
+        decision = _units(drawing, use_model)
+        units = decision.units
+        if not decision.sure:
+            typer.secho(f"{decision.reason} Add the layout again with --units to choose.", fg="yellow", err=True)
+    source = SourceDrawing(path=_relative_to(drawing, workspace.parent), profile=AUTO, units=units)
+    if region:
+        try:
+            x0, y0, x1, y1 = (float(v) for v in region.split(","))
+        except ValueError:
+            _fail("--region needs four numbers: x0,y0,x1,y1")
+        source.region = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+    elif view:
+        source.region, source.view = _pick_view(drawing, load_profile(AUTO), units, view)
+    try:
+        layout_id = ws.add_layout(location_id, source)
+    except (KeyError, ValueError) as e:
+        _fail(str(e))
+    model = LocalModel() if use_model else None
+    try:
+        report = convert_layout(ws, layout_id, workspace.parent, model, say=lambda m: typer.echo(f"  {m}"))
+    except DrawingError as e:
+        _fail(str(e))
+    finally:
+        if model is not None:
+            model.close()
+    ws.save(workspace)
+    typer.echo(report.summary())
+    for w in report.warnings:
+        typer.secho(f"  warning: {w}", fg="yellow")
+    _say_footprints(ws, layout_id)
+
+
+def _say_footprints(ws: Workspace, layout_id: str) -> None:
+    from .layout import footprint_building
+
+    for r in sorted((r for r in ws.floor_objects(layout_id) if r.kind == "footprint"), key=lambda r: r.id):
+        m = r.match or {}
+        b = footprint_building(ws, r)
+        said = f"{b} ({m.get('confidence', 0):.0%} by {m.get('by')})" if b else "no building"
+        placed = next((make_id(ws.id, loc.code, x.code) for loc, *_ in ws.iter_layouts()
+                       for x in loc.buildings if x.site is not None and x.site.footprint == r.id), None)
+        typer.echo(f"{r.id}  {(r.name or '(no name)')[:24]:<24}  {said}" + ("  placed" if placed else ""))
+
+
+@app.command("place-buildings")
+def place_buildings(
+    workspace: WorkspaceArg,
+    location_id: str,
+    footprint: Annotated[Optional[str], typer.Option(help="one footprint (its ID): said to be --building, or none")] = None,
+    building: Annotated[Optional[str], typer.Option(help="the building the footprint is (its ID); with --footprint")] = None,
+    skip: Annotated[bool, typer.Option("--skip", help="the footprint is of no building of the location")] = False,
+    new: Annotated[Optional[str], typer.Option(help="a new building of this name for the footprint (no floors yet)")] = None,
+    again: Annotated[bool, typer.Option("--again", help="place anew the buildings that stand on their footprints")] = False,
+    match: Annotated[bool, typer.Option("--match", help="match the buildings to the footprints again first")] = False,
+    sure: Annotated[float, typer.Option(help="without --footprint: place the matches at least this sure (0 to 1)")] = 0.35,
+):
+    """The location's buildings placed on the footprints of its layout (format 0.12): each
+    match (or, with --footprint, the one said), its ground floor on its footprint. The
+    other buildings stay where they are on the site; nothing in a building changes."""
+    from .layout import match_buildings, new_building, place, place_all
+
+    ws = _load(workspace)
+    try:
+        if match:
+            match_buildings(ws, location_id)
+        if footprint is not None:
+            if new is not None:
+                b_id = new_building(ws, footprint, name=new)
+                typer.echo(f"{footprint}: the new building {b_id}")
+            else:
+                if not skip and not building:
+                    _fail("say which building the footprint is (--building), or --skip, or --new <name>")
+                place(ws, footprint, None if skip else building)
+                typer.echo(f"{footprint}: {'no building' if skip else building}")
+        else:
+            placed = place_all(ws, location_id, again=again, sure=sure, confirm=True)
+            for f, b in placed:
+                typer.echo(f"{f}: {b} placed on it")
+            if not placed:
+                typer.echo("nothing to place")
+    except (KeyError, ValueError) as e:
+        _fail(str(e).strip("'"))
+    ws.save(workspace)
+
+
+@app.command()
+def north(
+    workspace: WorkspaceArg,
+    location_id: str,
+    bearing: Annotated[Optional[float], typer.Option(help="the compass bearing the site plan's up faces, degrees "
+                                                          "clockwise from north")] = None,
+    from_drawing: Annotated[bool, typer.Option("--from-drawing", help="as its layout's north arrow says")] = False,
+):
+    """Which way north is on a location's site plan (format 0.12): every building's
+    compass, and the site on the map, turn with it."""
+    from .workspace import North
+
+    ws = _load(workspace)
+    try:
+        loc = ws.location(location_id)
+    except (KeyError, ValueError) as e:
+        _fail(str(e).strip("'"))
+    if from_drawing:
+        read = ws.layout_of(location_id).north if ws.layout_of(location_id) is not None else None
+        if read is None:
+            _fail("no north arrow was read on its site plan: give --bearing")
+        loc.north = North(bearing=read.bearing % 360, source="drawing", sure=read.sure)
+    elif bearing is not None:
+        loc.north = North(bearing=bearing % 360, source="person")
+    else:
+        typer.echo(f"north: up faces {loc.north.bearing:g}° ({loc.north.source})" if loc.north else "north: not known")
+        return
+    if loc.placement is not None:
+        loc.placement = loc.placement.model_copy(update={"bearing": loc.north.bearing})
+    ws.save(workspace)
+    typer.echo(f"north: up faces {loc.north.bearing:g}°")
 
 
 def _units(drawing: Path, use_model: bool):
@@ -482,7 +627,7 @@ def convert(
         typer.echo(f"looking at the rooms with {vision.name}")
     elif vision is not None and vision.url:
         typer.secho(f"  warning: {vision.failed}", fg="yellow")
-    floors = [fid for *_, fid in ws.iter_floors() if (floor is None or fid == floor)]
+    floors = [fid for *_, fid in ws.iter_floors(layouts=True) if (floor is None or fid == floor)]
     if not floors:
         _fail("no floors to convert" if floor is None else f"no floor {floor}")
     failed = False
@@ -491,9 +636,15 @@ def convert(
             if ws.floor(fid).source is None:
                 continue
             try:
-                report = convert_floor(ws, fid, workspace.parent, model, symbols,
-                                       vision if vision is not None and vision.available() else None,
-                                       say=lambda m: typer.echo(f"  {m}"), force=force)
+                if ws.floor(fid).layout:  # a location's layout (format 0.12): its site plan
+                    from .layout import convert_layout
+
+                    report = convert_layout(ws, fid, workspace.parent, model, say=lambda m: typer.echo(f"  {m}"),
+                                            force=force)
+                else:
+                    report = convert_floor(ws, fid, workspace.parent, model, symbols,
+                                           vision if vision is not None and vision.available() else None,
+                                           say=lambda m: typer.echo(f"  {m}"), force=force)
             except Exception as e:  # this floor is not converted; the others are
                 why = str(e) if isinstance(e, DrawingError) else f"{type(e).__name__}: {e}"
                 typer.secho(f"{fid}: not converted: {why}", fg="red", err=True)
@@ -1180,6 +1331,9 @@ def export(
     building: Annotated[Optional[str], typer.Option(
         help="the building to export, by its ID or code (a package holds one building; "
              "may be left out when the project has one)")] = None,
+    layout: Annotated[Optional[str], typer.Option(
+        help="a location's layout to export instead, by its ID or its location's code: a package of its own "
+             "(format 0.12)")] = None,
     item_types: Annotated[str, typer.Option(
         "--item-types", help="its catalogue: 'used' (the item types its items use, each once) or 'all' "
                              "(the whole catalogue, for another system to choose which to take)")] = "used",
@@ -1196,7 +1350,12 @@ def export(
     from .server import write_valid_package
 
     ws = _load(workspace)
-    if building is not None and building.count("-") < 2:  # a code: its ID
+    if layout is not None:  # its land's ID: the package holds it alone
+        found = [f_id for loc, _, _, f_id in ws.iter_layouts() if layout in (f_id, loc.code, make_id(ws.id, loc.code))]
+        if len(found) != 1:
+            _fail(f"no layout {layout} in this project (`storeypath add-layout` reads one)")
+        building = found[0].rsplit("-", 1)[0]
+    elif building is not None and building.count("-") < 2:  # a code: its ID
         found = [make_id(ws.id, loc.code, b.code) for loc in ws.locations for b in loc.buildings
                  if b.code == building.upper()]
         if len(found) != 1:

@@ -21,6 +21,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from .ids import (
+    LAND_CODE,
+    LAYOUT_CODE,
     child_id,
     default_floor_code,
     default_mezzanine_code,
@@ -40,6 +42,9 @@ WORKSPACE_VERSION = 1
 DEFAULT_FLOOR_HEIGHT = 3.5
 MEZZANINE_NAME = "Mezzanine"
 ROOF_NAME = "Roof"
+LAND_NAME = "Land"  # a location's land (format 0.12), and its one level, its layout
+LAYOUT_NAME = "Layout"
+BOUNDARY_WALL_HEIGHT = 2.4  # metres: a layout's boundary walls, when nothing says
 MIN_ABOVE_HOST = 2.4  # metres: a mezzanine's default level above its host floor, at least
 
 
@@ -109,6 +114,16 @@ class FloorEdits(BaseModel):
     spaces: list[list[list[float]]] = Field(default_factory=list)
 
 
+class NorthRead(BaseModel):
+    """What a site plan's north arrow was read as (a layout's level, format 0.12): the
+    bearing the plan's up faces, degrees clockwise from north; how sure, 0 to 1; what it
+    was read from, in words."""
+
+    bearing: float
+    sure: float = 0.5
+    how: str = ""
+
+
 class Floor(BaseModel):
     code: str
     name: str
@@ -139,6 +154,9 @@ class Floor(BaseModel):
     symbols: list[dict[str, Any]] | None = None
     symbols_key: str | None = None
     edits: FloorEdits = Field(default_factory=FloorEdits)  # drawn by a person in review
+    # a layout's level (format 0.12): what its site plan's north arrow was read as; None:
+    # none found (or a floor of a building)
+    north: NorthRead | None = None
 
     @property
     def mezzanine(self) -> bool:
@@ -147,6 +165,11 @@ class Floor(BaseModel):
     @property
     def roof(self) -> bool:
         return self.type == FloorType.ROOF
+
+    @property
+    def layout(self) -> bool:
+        """A location's layout (its land's level), not a floor of a building."""
+        return self.type == FloorType.LAYOUT
 
 
 def floor_order(f: Floor) -> tuple:
@@ -172,6 +195,9 @@ class SitePosition(BaseModel):
     y: float = 0.0
     rotation: float = 0.0
     pivot: tuple[float, float] = (0.0, 0.0)
+    # the footprint of its location's layout it was put on (format 0.12: its ID), as a person
+    # applied it; None: placed by hand, or as drawn. A layout read again keeps it.
+    footprint: str | None = None
 
 
 class Building(BaseModel):
@@ -181,6 +207,17 @@ class Building(BaseModel):
     site: SitePosition | None = None  # on its location's site plan (None: as its drawing places it)
     floors: list[Floor] = Field(default_factory=list)
     next_object_seq: int = 1
+
+
+class North(BaseModel):
+    """Which way north is on a location's site plan (format 0.12): the bearing its up
+    faces, degrees clockwise from north, as its layout's north arrow says (``drawing``)
+    or a person set it (``person``), and how sure a reading was (0 to 1). On the map the
+    site's placement has the same bearing: setting one sets both (site_bearing)."""
+
+    bearing: float
+    source: Literal["drawing", "person"] = "person"
+    sure: float | None = None
 
 
 class Location(BaseModel):
@@ -193,13 +230,29 @@ class Location(BaseModel):
     # set when buildings are first given positions, so the others stay where they are
     site_origin: tuple[float, float] | None = None
     buildings: list[Building] = Field(default_factory=list)
+    # its land (format 0.12): kept as a building is, code LAND, apart from its buildings
+    # (never one of them), its one level its layout (G00): the plot, its boundary walls and
+    # gates, its areas, the footprints of its buildings, what is placed on it; in the site's
+    # frame. None: no site plan read as its layout yet
+    layout: Building | None = None
+    # which way north is on its site plan (see North); None: not known (up is north)
+    north: North | None = None
+
+
+def site_bearing(loc: Location) -> float:
+    """The compass bearing of a location's site plan's up: its placement's on the map,
+    else its north's (read from its layout's north arrow, or set by a person), else 0."""
+    if loc.placement is not None:
+        return loc.placement.bearing
+    return loc.north.bearing if loc.north is not None else 0.0
 
 
 class ObjectRecord(BaseModel):
     """One registered object. Retired records are kept so IDs are never reused."""
 
     id: str
-    kind: Literal["space", "zone", "opening"]
+    # a footprint (format 0.12): a building's outline standing on a location's layout
+    kind: Literal["space", "zone", "opening", "footprint"]
     type: str  # detected type; a correction in Workspace.overrides wins over it
     type_source: str = "default"  # which rule produced the type
     name: str | None = None
@@ -219,6 +272,10 @@ class ObjectRecord(BaseModel):
     tag: str | None = None  # openings: the drawing's door or window tag (D4, W12)
     issues: list[str] = Field(default_factory=list)  # found on conversion, for review
     detected_ignored: bool = False  # judged not a room on conversion (vision); a correction wins
+    # footprints: the building of the location it was matched to when the layout was read
+    # (layout.py): {building, confidence, by, label, shape, site: {x, y, rotation, pivot}};
+    # None: none. A person's choice (Override.building) wins over it
+    match: dict[str, Any] | None = None
     status: Literal["active", "retired"] = "active"
     created_at: datetime = Field(default_factory=utcnow)
     retired_at: datetime | None = None
@@ -263,6 +320,9 @@ class Override(BaseModel):
     wall_finish: str | None = Field(None, max_length=40)
     # (a space's) walls finished otherwise than the rest, one by one (format 0.9.3); None: none
     wall_finishes: list[WallPaint] | None = Field(None, max_length=200)
+    # (a footprint's, format 0.12) the building of its location it is, chosen by a person: its
+    # ID, or "" for none (no building of the location: skipped); None: as matched
+    building: str | None = Field(None, max_length=100)
 
 
 class Reading(BaseModel):
@@ -408,8 +468,12 @@ class Workspace(BaseModel):
         raise KeyError(f"no location {location_id}")
 
     def building(self, building_id: str) -> Building:
+        """A building by its ID; the land of a location (its layout's, format 0.12) by its
+        ID too (PROJECT-LOCATION-LAND), kept as a building is but none of them."""
         p = parse_id(building_id)
         loc = self.location(p.prefix("location"))
+        if len(p.segments) == 3 and p.segments[2] == LAND_CODE and loc.layout is not None:
+            return loc.layout
         for b in loc.buildings:
             if b.code == p.segments[2] and len(p.segments) == 3:
                 return b
@@ -423,12 +487,50 @@ class Workspace(BaseModel):
                 return f
         raise KeyError(f"no floor {floor_id}")
 
-    def iter_floors(self):
-        """Yield (location, building, floor, floor_id) for every floor."""
+    def iter_floors(self, layouts: bool = False):
+        """Yield (location, building, floor, floor_id) for every floor of every building;
+        with ``layouts``, each location's layout after its buildings' floors (its land as
+        the building, its level as the floor)."""
         for loc in self.locations:
             for b in loc.buildings:
                 for f in sorted(b.floors, key=floor_order):
                     yield loc, b, f, make_id(self.id, loc.code, b.code, f.code)
+            if layouts:
+                yield from self._layout_of(loc)
+
+    def iter_layouts(self):
+        """Yield (location, its land, its layout's level, the layout's ID) for every
+        location that has a layout (format 0.12)."""
+        for loc in self.locations:
+            yield from self._layout_of(loc)
+
+    def _layout_of(self, loc: Location):
+        if loc.layout is not None:
+            for f in loc.layout.floors:
+                yield loc, loc.layout, f, make_id(self.id, loc.code, LAND_CODE, f.code)
+
+    def layout_of(self, location_id: str) -> Floor | None:
+        """A location's layout (its land's level), or None."""
+        loc = self.location(location_id)
+        return loc.layout.floors[0] if loc.layout is not None and loc.layout.floors else None
+
+    def add_layout(self, location_id: str, source: SourceDrawing | None = None, *, name: str | None = None,
+                   wall_height: float = BOUNDARY_WALL_HEIGHT) -> str:
+        """A location's layout (format 0.12), read from ``source`` (a site plan): its land
+        (code LAND) and the land's one level (G00). The ID of the layout. One a location
+        has already is given the new source instead (its objects keep their IDs)."""
+        loc = self.location(location_id)
+        if loc.layout is None:
+            loc.layout = Building(code=LAND_CODE, name=LAND_NAME)
+        if not loc.layout.floors:
+            loc.layout.floors.append(Floor(code=LAYOUT_CODE, name=name or LAYOUT_NAME, ordinal=0, elevation=0.0,
+                                           height=wall_height, type=FloorType.LAYOUT, source=source))
+        else:
+            f = loc.layout.floors[0]
+            f.source = source if source is not None else f.source
+            if name:
+                f.name = name
+        return make_id(self.id, loc.code, LAND_CODE, loc.layout.floors[0].code)
 
     def add_location(self, code: str, name: str, address: str | None = None) -> str:
         validate_segment(code)
@@ -439,6 +541,8 @@ class Workspace(BaseModel):
 
     def add_building(self, location_id: str, code: str, name: str) -> str:
         validate_segment(code)
+        if code == LAND_CODE:
+            raise ValueError(f"{LAND_CODE} is a location's land (its layout): choose another building code")
         loc = self.location(location_id)
         if any(b.code == code for b in loc.buildings):
             raise ValueError(f"building code {code} already used in {location_id}")
@@ -474,6 +578,8 @@ class Workspace(BaseModel):
         floor added at or above it puts the roofs above it (ordinals are no part of IDs)."""
         b = self.building(building_id)
         level = FloorType(type)
+        if level == FloorType.LAYOUT or b.code == LAND_CODE:
+            raise ValueError("a location's layout is added as its layout (add_layout), not as a floor")
         taken = {f.code for f in b.floors}
         if level != FloorType.MEZZANINE and above_host is not None:
             raise ValueError("above_host is a mezzanine's")
@@ -613,7 +719,8 @@ class Workspace(BaseModel):
             # room seats says nothing of what it is; nor a lift's link alone, nor finishes.
             "corrected": o is not None and (o.type is not None or o.name is not None or o.number is not None
                                             or (o.capacity is None and o.stack is None and o.floor_finish is None
-                                                and o.wall_finish is None and not o.wall_finishes)
+                                                and o.wall_finish is None and not o.wall_finishes
+                                                and o.building is None)
                                             or o.hidden is False),
             "hidden": bool(o and o.hidden),
             "ignored": o.ignored if o is not None and o.ignored is not None else record.detected_ignored,
@@ -624,6 +731,8 @@ class Workspace(BaseModel):
             # its walls finished otherwise one by one (format 0.9.3): [{line, finish}]; [] none
             "wall_finishes": [w.model_dump() for w in o.wall_finishes or []]
             if o is not None and record.kind == "space" else [],
+            # a footprint's building, as a person chose it (format 0.12): its ID, "" none; None as matched
+            "building": o.building if o is not None and record.kind == "footprint" else None,
         }
 
     def review_reasons(self, record: ObjectRecord) -> list[str]:

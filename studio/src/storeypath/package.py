@@ -11,13 +11,13 @@ import re
 from datetime import datetime
 from typing import Annotated, Generic, Literal, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 from .catalogue import OLD_CATEGORIES, Category
-from .types import FloorType, OpeningType, SpaceType
+from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.11.0"
+FORMAT_VERSION = "0.12.0"
 FILE_EXTENSION = ".storeypath"
 # one building per package from 0.7 (before: a whole project, or a part of it)
 ONE_BUILDING_FROM = (0, 7)
@@ -27,6 +27,8 @@ ASSET_IDS_FROM = (0, 8)
 FINISHES_FROM = (0, 9)
 # each floor's drawing, when the export was asked to carry them (0.11): drawings/<floor-id>.view
 DRAWINGS = "drawings/"
+# a location's layout, its land, in a package of its own (0.12): scope.layout
+LAYOUTS_FROM = (0, 12)
 
 FILES = {
     "location": "location.geojson",
@@ -40,6 +42,8 @@ FILES = {
     "items": "items.geojson",
     "catalogue": "catalogue.json",
     "navigation": "navigation.json",
+    "layout": "layout.geojson",
+    "footprints": "footprints.geojson",
 }
 OBJECTS_CSV_COLUMNS = [
     "id", "kind", "type", "name", "number", "project_id", "location_id",
@@ -110,7 +114,7 @@ class FloorProps(_Props):
     elevation: float = Field(description="meters above the building's ground floor")
     height: float = Field(description="floor-to-floor height in meters (a mezzanine's: its own; a roof's: the "
                                       "rooms' standing on it)")
-    type: FloorType = Field(FloorType.FLOOR, description=(
+    type: Literal["floor", "mezzanine", "roof"] = Field("floor", description=(
         "what level of its building it is (format 0.11): floor (a storey), mezzanine (a floor standing in another "
         "floor of its building, over part of it: its host_floor_id, its level above_host_m above that floor's) or "
         "roof (the building's roof as a level, at its top: its open deck a space of type roof, the rooms standing "
@@ -219,6 +223,62 @@ class OpeningProps(_Props):
     ignored: bool = Field(False, description="judged not worth anything by a person; leave it out")
 
 
+class North(_Model):
+    bearing: float = Field(description="the compass bearing the site plan's up faces, degrees clockwise from north")
+    from_: Literal["map", "drawing", "person"] | None = Field(alias="from", description=(
+        "how it is known: map (the site is placed on the map), drawing (its site plan's north arrow), person (set "
+        "in Studio); null: not known, up taken as north"))
+    model_config = ConfigDict(populate_by_name=True, allow_inf_nan=False)
+
+
+class LayoutProps(_Props):
+    """A location's layout (format 0.12): its land, a level of the location."""
+
+    kind: Literal["layout"]
+    code: str = Field(description="its level's code: G00")
+    name: str
+    location_id: str
+    area_m2: float | None = Field(None, description="the plot's area")
+    display_point: LonLat | None = None
+    walls: Polygonal | None = Field(None, description=(
+        "the boundary walls and fences, and walls standing on the land, as drawn, with their gates' gaps; "
+        "wall_height_m high"))
+    wall_thickness_m: float | None = Field(None, description="the boundary walls' typical thickness")
+    wall_height_m: float | None = Field(None, description="how high the walls stand above the ground")
+    north: North | None = Field(None, description="which way north is on the site plan: the site's bearing")
+
+
+class FootprintProps(_Props):
+    """A building standing on a location's land (format 0.12): its outline on the layout."""
+
+    kind: Literal["footprint"]
+    layout_id: str
+    building_id: str | None = Field(None, description=(
+        "the building of the location standing on it (in a package of its own); null: none (not a building of the "
+        "project, or not matched yet)"))
+    name: str | None = Field(None, description="what the site plan names it, as read")
+    drawing_label: str | None = Field(None, description=DRAWING_LABEL)
+    area_m2: float
+    display_point: LonLat
+    site: "SiteFrame | None" = Field(None, description=(
+        "where the building's own frame lies on the site (its placements' site): null when it has none"))
+    hidden: bool = False
+    ignored: bool = False
+
+
+class SiteFrame(_Model):
+    """Where a building's own frame lies on its location's site (format 0.12)."""
+
+    x_m: float = Field(description="its frame's origin in the site's frame, metres")
+    y_m: float
+    rotation_deg: float = Field(description=(
+        "how far it is turned, degrees clockwise: a point (x, y) of its frame is at (x_m + x cos r + y sin r, "
+        "y_m - x sin r + y cos r) in the site's"))
+
+
+FootprintProps.model_rebuild()
+
+
 class ItemLocal(_Model):
     """Where an item stands in its building's own frame: what it is placed by. The
     building's position on the map never changes it."""
@@ -234,14 +294,15 @@ class ItemProps(_Props):
     type: str = Field(description="the item's type: a code of catalogue.json (DESK-MANAGER, COPIER, …)")
     category: Category = Field(description="its type's category (format 0.10): what it is for, of the catalogue's")
     name: str = Field(description="its type's English name, for readers that do not read the catalogue")
-    floor_id: str
-    building_id: str
+    floor_id: str = Field(description="the floor it stands on, or (format 0.12) the layout of the land it stands on")
+    building_id: str | None = Field(description=(
+        "the building it stands in; null for one on a location's land (format 0.12: its floor_id is the layout)"))
     space_id: str | None = Field(None, description="the space it stands in (null: in none of them)")
     zone_id: str | None = Field(None, description="the zone it stands in, when its space is divided")
     local: ItemLocal | None = Field(None, description=(
         "where it stands in its building (format 0.7): its middle and turn in the building's own frame, "
         "unchanged when the building moves on the map; the footprint, display_point and heading follow "
-        "from it and the building's placement"))
+        "from it and the building's placement. On a location's land (format 0.12): in the site's frame"))
     display_point: LonLat = Field(description="its middle, on the map")
     heading: float = Field(description="the way its front faces: degrees clockwise from north")
     width_m: float
@@ -307,6 +368,14 @@ class OpeningFeature(Feature[OpeningProps]):
     geometry: PointGeometry = Field(description="a point in the wall")
 
 
+class LayoutFeature(Feature[LayoutProps]):
+    geometry: Polygonal | None = Field(description="its boundary: the plot (null: none found)")
+
+
+class FootprintFeature(Feature[FootprintProps]):
+    geometry: Polygonal = Field(description="the building's outline, as the site plan draws it")
+
+
 class ItemFeature(Feature[ItemProps]):
     id: str = Field(description=(
         "its asset ID (format 0.8): ten random symbols of Crockford's base32 and a check symbol, 4-4-3 "
@@ -365,14 +434,27 @@ class PlacementInfo(_Model):
     placed: bool = Field(True, description=(
         "false: the building is not placed on the map yet; it is exported around 0°N 0°E with its true "
         "shape and size, but its position on earth is not known"))
+    site: SiteFrame | None = Field(None, description=(
+        "(format 0.12) where the building's own frame lies on its location's site, the frame its layout is drawn "
+        "in; null: placed on the map by itself. A layout's own placement has none: it is the site's"))
 
 
 class Scope(_Model):
     """The building a package holds (from format 0.7, exactly one; before, the part of
-    the project it held when not all of it)."""
+    the project it held when not all of it), or (0.12) the location's layout it holds."""
 
-    buildings: list[str] = Field(description="IDs of the buildings in the package (from 0.7: one); the rest of "
-                                             "the project is not in it, and its absence says nothing about it")
+    buildings: list[str] = Field(description="IDs of the buildings in the package (from 0.7: one; a layout's "
+                                             "package: none); the rest of the project is not in it, and its "
+                                             "absence says nothing about it")
+    layout: str | None = Field(None, description=(
+        "(format 0.12) the ID of the location's layout the package holds, in place of a building"))
+
+    @model_serializer(mode="wrap")
+    def _written(self, handler):
+        out = handler(self)
+        if out.get("layout") is None:  # (a building's package: no layout to name)
+            out.pop("layout", None)
+        return out
 
 
 class Manifest(BaseModel):
@@ -394,7 +476,8 @@ class Manifest(BaseModel):
 
 class MovedAway(_Model):
     id: str = Field(description="an item's ID")
-    building_id: str = Field(description="the building of the project it is in now")
+    building_id: str = Field(description=(
+        "the building of the project it is in now, or (format 0.12) the layout of the land it stands on"))
 
 
 class Changes(_Model):
@@ -523,6 +606,8 @@ COLLECTIONS: dict[str, type[Feature]] = {  # a package's collections of places, 
     "spaces": SpaceFeature,
     "zones": ZoneFeature,
     "openings": OpeningFeature,
+    "layout": LayoutFeature,
+    "footprints": FootprintFeature,
 }
 
 

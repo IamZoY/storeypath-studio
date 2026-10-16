@@ -234,10 +234,14 @@ log).
 | `POST …/convert` | edit on the project; with `floor`, edit on that floor |
 | `POST …/buildings/<id>/site`, `…/placement` | edit on the building |
 | `POST …/locations/<id>/arrange`, `…/placement` | edit on the project |
+| `POST …/layouts {drawing, units, plan: {region, title}, location_id \| location}` | edit on the project: a site plan of one of its drawings used as a location's layout ([format 0.12](../storeypath-viewer/spec/FORMAT.md), Location layouts; a location of the project, or a new one by name): a job that reads it (its plot, boundary walls, gates, areas, the footprints of its buildings, north) and matches the location's buildings to the footprints; nothing moves. A location that has a layout is given this plan in its place, what is on it keeping its IDs ([Location layouts](#location-layouts)) |
+| `POST …/footprints/<id> {building}`, `{building: ""}`, `{new: true, name?}` | edit on the location's layout (its land: `PROJECT-LOCATION-LAND`, granted as a building is), and on the building placed (a new one: on the project): the footprint is that building, which is placed on it (its `SitePosition`, so its ground floor lies on the footprint); of no building (skipped); or a new building of the location for it, without floors. Recorded in the history |
+| `POST …/locations/<id>/layout/place {sure?, again?}`, `…/layout/match` | edit on the project: every match placed (*Apply all*: each building on its footprint, at least `sure` sure; those placed already left as they are unless `again`); the buildings matched again (a job; the language model asked where words cannot say) |
+| `POST …/locations/<id>/north {bearing}` or `{from: "drawing"}` | edit on the project: which way north is on the site plan, a person's bearing or as its layout's north arrow was read; on the map the site's placement turns with it |
 | `GET …/buildings/<id>/navigation[?from&to&accessible]` | view on the whole building: its walking network, or the way between two places ([Navigation](#navigation)) |
-| `POST …/export {building, item_types?, drawings?}` | edit on that building; with `drawings: true`, edit on the project too (as a drawing seen whole, or its words: 403 without it). `drawings: true` (off unless sent): each floor's drawing goes in the package too, as drawn, every layer and text of its part of its drawing (format 0.11, `drawings/<floor-id>.view`; its texts as the privacy rules leave them); each is drawn once and kept in Studio's cache, in a read worker when there are any, before the export takes the project; the job says each, and the export's history entry says it carried them |
+| `POST …/export {building \| layout, item_types?, drawings?}` | `layout` (a location's layout's ID, format 0.12): its own package, as a building's, with edit on its land; edit on that building; with `drawings: true`, edit on the project too (as a drawing seen whole, or its words: 403 without it). `drawings: true` (off unless sent): each floor's drawing goes in the package too, as drawn, every layer and text of its part of its drawing (format 0.11, `drawings/<floor-id>.view`; its texts as the privacy rules leave them); each is drawn once and kept in Studio's cache, in a read worker when there are any, before the export takes the project; the job says each, and the export's history entry says it carried them |
 | `GET …/exports/<file>`; `POST …/exports/<file>` `{password}` (the package encrypted with it: [SEALED-FILES.md](../docs/SEALED-FILES.md)) | view on the building it holds (on the project, for one no export entered) |
-| `GET …/preview.storeypath[?building]` | any access: built with their floors alone. It comes with an `ETag`, and asked again with it (`If-None-Match`) while nothing it holds changed, it is answered 304 and nothing is sent; Studio keeps the packages it made the same way |
+| `GET …/preview.storeypath[?building]` | any access: built with their floors alone (`building` a land's ID, `PROJECT-LOCATION-LAND`: the location's layout's package, for the 3D view of the land). It comes with an `ETag`, and asked again with it (`If-None-Match`) while nothing it holds changed, it is answered 304 and nothing is sent; Studio keeps the packages it made the same way |
 | `GET …/project.storeypath-project`; `POST …/project.storeypath-project` `{password}` (encrypted) | view on the project |
 | `GET …/floors/<id>[?since=<version>]`, `…/drawing`, `…/print`, `…/print.png` | view on the floor; its drawing and print as above. A floor comes with the project's `version` it is of; asked for `since` one, only what changed after it (`"since"` then says so): the spaces, zones, openings and items changed, the IDs of those gone, what the items say each space seats when one of them changed, and the floor's own fields with all its openings when it changed itself; the whole floor where Studio cannot say (a change made by another Studio on the database, or before it started) |
 | `POST …/floors/<id>/sample/preview {area, keep?, remove?}`, `POST …/floors/<id>/sample {area, note?, keep?, remove?}` | view on the floor, as its drawing: an area sample's preview, and the sample itself (`<id>.spsample`, recorded in the audit log) ([area samples](../docs/AREA-SAMPLES.md)) |
@@ -335,9 +339,12 @@ what they may see.
 | `place FILE BUILDING-ID --lat --lon` | put a building on the map: a drawing point (`--x`, `--y`, `--units`), where it is on earth, and the bearing of the drawing's up (`--bearing`) |
 | `views DRAWING` | list the plans in a drawing, their titles and floors, and the units it is read in; `--all` also elevations, sections and details; `--units` |
 | `add-floor FILE BUILDING-ID DRAWING --ordinal N` | add a floor and its drawing; `--view` (a plan's number or part of its title), or `--region x0,y0,x1,y1`; `--units`, `--height`, `--parapet`, `--profile`, `--code`, `--name`; `--type mezzanine` (and `--above` metres): a mezzanine standing in floor N (M00 over the ground floor); `--type roof`: the building's roof (RF), `--ordinal` by default the next above its floors |
+| `add-layout FILE LOCATION-ID DRAWING` | a site plan read as the location's layout (format 0.12): `--view` (a plan's number or part of its title) or `--region`, `--units`, `--no-model`; prints each footprint with the building it is matched to and how sure. Read again with `convert` |
+| `place-buildings FILE LOCATION-ID` | the location's buildings placed on their footprints as matched (`--sure`, `--again`, `--match` to match again first); or one footprint said to be a building: `--footprint ID --building ID`, `--skip` (of none), `--new NAME` (a new building, no floors yet) |
+| `north FILE LOCATION-ID` | which way north is on the site plan: `--bearing` (the bearing its up faces), `--from-drawing` (as its north arrow was read); without either, says it |
 | `align FILE BUILDING-ID` | line up floors drawn side by side; floors converted already stay where they are; `--reference` |
 | `levels FILE BUILDING-ID` | floor heights and the roof's parapet from the level labels on sections and plans |
-| `convert FILE` | read the drawings, keeping existing IDs; `--floor`, `--no-model`, `--no-vision`, `--no-symbols`; `--force` applies a reading held back because it would retire most of a floor, or rooms people corrected |
+| `convert FILE` | read the drawings (the locations' site plans too), keeping existing IDs; `--floor`, `--no-model`, `--no-vision`, `--no-symbols`; `--force` applies a reading held back because it would retire most of a floor, or rooms people corrected |
 | `list FILE` | objects with their IDs, types and labels; `--review` only the spaces that need a look, and why; `--floor`, `--retired` |
 | `fix FILE ID` | correct a space: `--type`, `--name`, `--number` (`""` removes a wrong one); no options accepts it as it is; `--clear` removes the corrections |
 | `review FILE` | open the review editor on this project (on this machine, port 8766, plain HTTP, no accounts), in a database of its own made for the while on the PostgreSQL `STOREYPATH_DATABASE_URL` names; the file is written again after every change |
@@ -348,7 +355,7 @@ what they may see.
 | `restore FILE` | put a backup into an empty database (an older Studio's `.tar.gz`: its data folder brought in); an encrypted one asks for its password |
 | `seal FILE`, `unseal FILE.enc` | encrypt any file with a password, or open one ([SEALED-FILES.md](../docs/SEALED-FILES.md)) |
 | `db url` · `db migrate` · `db import --data DIR` | where Studio's database is; bring its schema up to date; bring an older Studio's data folder in (projects, drawings, packages, item types, studio.db), once |
-| `export FILE -o OUT` | write one building's package (`--building`, by its ID or code; may be left out when the project has one), entered as an export only when valid; `--item-types used\|all`; `--drawings`: each floor's drawing in it too (format 0.11), from the drawings beside the project's file |
+| `export FILE -o OUT` | write one building's package (`--building`, by its ID or code; may be left out when the project has one), or a location's layout's (`--layout`, its ID or its location's code: format 0.12), entered as an export only when valid; `--item-types used\|all`; `--drawings`: each floor's drawing in it too (format 0.11), from the drawings beside the project's file |
 | `validate PACKAGE…` | check a package against the format; several, together too (the same item ID in packages of two projects is refused) |
 | `item-id TEXT…` | an item's ID as a person typed it (`7k2q xm9f 4dp`), as it is written (`7K2Q-XM9F-4DP`); fails when it is not one |
 | `private DRAWING OUT.dxf` | copy a drawing without its private information (see below) |
@@ -850,6 +857,47 @@ its space's).
 - Calls: `POST /api/projects/<code>/objects/<id>` `{"floor_finish": code or null,
   "wall_finish": …}`; `POST …/floors/<id>/finishes` `{"type": "office"}` or `{"ids":
   […]}` with `floor_finish` and/or `wall_finish`: many rooms at once, one change.
+
+## Location layouts
+
+A location's **layout** is its land: the plot its buildings stand on, read from a site
+plan ([the design](../docs/DESIGN-LOCATION-LAYOUTS.md); [format
+0.12](../storeypath-viewer/spec/FORMAT.md), Location layouts). It is a level of the
+location as a floor is of a building: `PROJECT-LOCATION-LAND-G00`, what is on it
+`…-LAND-G00-0004` (`LAND` is no building's code), its objects keeping their IDs when the
+site plan is read again, as rooms do. It holds:
+
+- its **plot** (the property limits: its outline), its **boundary walls** and fences, and
+  its **gates** (openings of type `gate`, the gaps in the walls a gate's width);
+- its **areas**: outdoor spaces, typed `yard` (the open ground round the buildings),
+  `parking`, `driveway`, `garden`, `courtyard`, `path`, `gate_area`, `road` (beyond the
+  boundary), `pool`, `terrace`;
+- the **footprint** of each building standing on it, with the building it is;
+- the **items** placed on it in Review as on a floor: a camera on a pole (`CCTV-POLE`) or on
+  a facade (`CCTV-BULLET`), its view drawn; a card reader or a vehicle barrier (`BARRIER`)
+  at a gate, serving it; a light pole (`LIGHT-POLE`);
+- **north**: the site plan's north arrow read, and how sure; the site's bearing.
+
+It is drawn in the site's frame: its source's offset is chosen at its first read so that
+the middle of its plot is the site's centre, the origin the site plan page and the site's
+placement on the map share. [How Studio reads a site
+plan](../docs/HOW-STUDIO-READS-A-DRAWING.md#reading-a-site-plan) says how each is found.
+
+**Placing the buildings.** Each footprint is matched to the location's buildings by its
+texts (against a building's name, its code and its plans' titles; the language model
+where the words cannot say) and by fitting the building's ground floor outline onto it
+(turned, moved, never mirrored or scaled: both are metres), each match with a confidence;
+one building to one footprint. Nothing moves until a person applies a match (the project
+page, or `storeypath place-buildings`): the building's site position is then set so its
+ground floor lies on its footprint, its floors with it, no room's ID or position in the
+building changed. A footprint no building matches can be made a building of the location,
+with no floors yet (a building without drawings may exist: it stands on its footprint, and
+its floors, when added, are matched to it). Read again, a site plan keeps its IDs and every
+placement a person applied, unless they place again.
+
+**Its package** is one of its own, exported as a building's is (`POST …/export
+{layout}`, `storeypath export --layout`): the layout, its footprints, areas, gates and
+items, and its location; a building's package says where the building stands on the site.
 
 ## Navigation
 

@@ -296,6 +296,11 @@ def default_catalogue() -> Catalogue:
         _t("PANIC-BUTTON", "Panic button", "زر الطوارئ", "security", (0.08, 0.04, 0.08), "#c62828", mount="wall",
            elevation=0.8),
         _t("TURNSTILE", "Turnstile", "بوابة دوّارة", "security", (1.2, 0.3, 1.0), "#5f6b7a"),
+        # outdoors, on a location's land (format 0.12): a camera high on a pole or a facade; a
+        # vehicle barrier at a gate, serving it as a card reader serves a door
+        _t("CCTV-POLE", "CCTV camera on a pole", "كاميرا مراقبة على عمود", "security", (0.12, 0.3, 0.12), SECURITY,
+           mount="wall", elevation=4.5, shape="camera", fields=_camera_fields(), view=(70, 30)),
+        _t("BARRIER", "Vehicle barrier", "حاجز مركبات", "security", (3.5, 0.35, 1.1), "#e0b000", serves_door=True),
         # ---- fire and life safety
         _t("SMOKE-DETECTOR", "Smoke detector", "كاشف دخان", "fire_safety", (0.12, 0.12, 0.05), FIRE, mount="ceiling"),
         _t("HEAT-DETECTOR", "Heat detector", "كاشف حرارة", "fire_safety", (0.12, 0.12, 0.05), "#e57373", mount="ceiling"),
@@ -364,6 +369,8 @@ def default_catalogue() -> Catalogue:
            elevation=1.6),
         _t("HAND-DRYER", "Hand dryer", "مجفف الأيدي", "building_services", (0.3, 0.2, 0.3), SERVICES, mount="wall",
            elevation=1.0),
+        # outdoors (format 0.12): a light on a pole, on a location's land
+        _t("LIGHT-POLE", "Outdoor light pole", "عمود إنارة خارجي", "building_services", (0.25, 0.25, 5.0), "#90a4ae"),
         # ---- appliances
         _t("FRIDGE", "Fridge", "ثلاجة", "appliances", (0.7, 0.7, 1.8), APPLIANCE),
         _t("MICROWAVE", "Microwave", "ميكروويف", "appliances", (0.5, 0.4, 0.3), APPLIANCE, elevation=0.9),

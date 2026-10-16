@@ -12,7 +12,7 @@ import { keysOf, keyText, MAC } from "./keys.js";
 import { closeMenu, menuItem, placeMenu } from "./menu.js";
 import { toast } from "./notify.js";
 import { downloadSealed } from "../seal.js";
-import { BASE, buildingOf, CODE, state, view3d } from "./state.js";
+import { BASE, buildingOf, CODE, floorTitle, state, view3d } from "./state.js";
 
 const floorOf = (id) => state.project?.floors.find((f) => f.id === id) || null;
 
@@ -25,13 +25,13 @@ function renderCrumbs() {
   $("crumb-project").href = `/#/p/${encodeURIComponent(CODE)}`;
   const f = state.floor ? floorOf(state.floor.id) : null;
   $("crumb-building").textContent = f ? f.building : "";
-  $("crumb-building").dataset.tip = f ? `${f.location} · ${f.building}` : "";
+  $("crumb-building").dataset.tip = f ? (f.layout ? `${f.location}: its land, read from its site plan` : `${f.location} · ${f.building}`) : "";
   $("crumb-floor-name").textContent = f ? f.name : p.floors.length ? "Choose a floor" : "No floors yet";
   const n = f?.review || 0;
   $("crumb-floor-review").hidden = !n;
   $("crumb-floor-review").textContent = String(n);
   $("crumb-floor-review").dataset.tip = `${n} to review`;
-  document.title = f ? `${f.name} · ${p.project.name} · StoreyPath Review` : `${p.project.name} · StoreyPath Review`;
+  document.title = f ? `${floorTitle(f)} · ${p.project.name} · StoreyPath Review` : `${p.project.name} · StoreyPath Review`;
   $("view-only").hidden = !state.floor || editableByAccess();
   for (const b of document.querySelectorAll("#view-mode button")) {
     const off = b.dataset.view !== "2d" && !state.floor?.converted_at;
@@ -47,14 +47,14 @@ function floorMenu() {
   const items = [];
   const groups = new Map();
   for (const f of state.project.floors) {
-    const key = `${f.location} · ${f.building}`;
+    const key = f.layout ? f.location : `${f.location} · ${f.building}`; // (a location's layout: under its location)
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(f);
   }
   for (const [name, floors] of groups) {
     items.push(el("div", { class: "menu-section" }, name));
     for (const f of [...floors].sort((a, b) => b.ordinal - a.ordinal || b.elevation - a.elevation)) { // (a mezzanine above its floor)
-      const b = menuItem(f.name, () => openFloorById(f.id), { ico: f.id === state.floor?.id ? "check" : null,
+      const b = menuItem(floorTitle(f), () => openFloorById(f.id), { ico: f.id === state.floor?.id ? "check" : f.layout ? "map" : null,
         hint: f.converted ? "" : "not converted" });
       if (f.review) b.append(el("span", { class: "badge warn", "data-tip": `${f.review} to review` }, String(f.review)));
       if (f.id === state.floor?.id) b.setAttribute("aria-current", "true");
@@ -84,14 +84,14 @@ function shareMenu() {
   const f = state.floor ? floorOf(state.floor.id) : null;
   $("menu").replaceChildren(
     el("div", { class: "menu-section" }, "Send"),
-    item("share.export", `Export a package of ${f ? f.building : "the building"}`, "package"),
+    item("share.export", f?.layout ? `Export a package of ${f.location}'s layout` : `Export a package of ${f ? f.building : "the building"}`, "package"),
     item("share.project", "Download the project file", "download"),
     item("share.project_sealed", "Download the project file, encrypted…", "lock"),
     item("tool.share", "Share an area of this floor…", "square-dashed-mouse-pointer"),
     el("hr"),
     el("div", { class: "menu-section" }, "Open"),
     item("share.print", "The print, full size", "printer"),
-    item("share.window", "The building in 3D, on its own page", "app-window"),
+    item("share.window", f?.layout ? "The land in 3D, on its own page" : "The building in 3D, on its own page", "app-window"),
     item("tool.route", "Find the way in this building", "route"),
   );
   const r = button.getBoundingClientRect();
@@ -106,8 +106,9 @@ async function exportBuilding(request, followJob, say) {
   const building = buildingOf(state.floor.id);
   const f = floorOf(state.floor.id);
   try {
-    say(`Exporting ${f?.building || "the building"}…`);
-    const job = await followJob(await request(`${BASE}/export`, { building }), `Exporting ${f?.building || "the building"}…`);
+    const what = f?.layout ? `${f.location}'s layout` : f?.building || "the building"; // (a layout's: its land's package)
+    say(`Exporting ${what}…`);
+    const job = await followJob(await request(`${BASE}/export`, { building }), `Exporting ${what}…`);
     const file = job.result.file;
     const a = el("a", { href: `/api/${BASE}/exports/${encodeURIComponent(file)}`, download: file });
     document.body.append(a);

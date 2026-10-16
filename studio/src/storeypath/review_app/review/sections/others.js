@@ -19,7 +19,7 @@ import { kbd, keysOf, keyText } from "../keys.js";
 import { toast } from "../notify.js";
 import { accept, correct, forEach, setFlag } from "../rooms.js";
 import { select, selectAsset, selectItem } from "../selection.js";
-import { color, readable, state, title, typeName, typeOf, units, view3d, within } from "../state.js";
+import { color, floorTitle, readable, state, title, typeName, typeOf, typeOptions, units, view3d, within } from "../state.js";
 import { roomHistory } from "./history.js";
 
 const key = (id) => {
@@ -47,7 +47,7 @@ function bulkType({ spaces, editable: may }) {
   const types = new Set(spaces.map((s) => s.type));
   const pick = el("select", { "aria-label": "Type of the rooms chosen", disabled: !may || null },
     types.size > 1 ? el("option", { value: "" }, `Mixed (${types.size} types)`) : null,
-    ...state.project.types.map((t) => el("option", { value: t }, typeName(t))));
+    ...typeOptions()); // (on a layout, the land's types first)
   pick.value = types.size === 1 ? [...types][0] : "";
   pick.addEventListener("change", async () => {
     const type = pick.value;
@@ -116,7 +116,7 @@ function itemMain({ asset: a, editable: may }) {
   };
   const floor = el("select", { id: "as-floor", "aria-label": "Floor", disabled: !may || null },
     ...state.project.floors.filter((f) => f.id === state.floor.id || editable(f.id))
-      .map((f) => el("option", { value: f.id }, `${f.building} · ${f.name}`)));
+      .map((f) => el("option", { value: f.id }, f.layout ? floorTitle(f) : `${f.building} · ${f.name}`)));
   floor.value = state.floor.id;
   floor.addEventListener("change", () => { if (floor.value !== state.floor.id) changeAsset(a, { floor_id: floor.value }); });
   const about = [t && `${t.width} × ${t.depth} m`, t?.mount === "ceiling" ? "on the ceiling" : t?.mount === "wall" ? "on a wall" : ""].filter(Boolean).join(" · ");
@@ -278,7 +278,8 @@ function openingHeader({ opening: d }) {
   const ico = d.type === "window" ? "app-window" : "door-open";
   return [el("div", { class: "ih-top" }, icon(ico, { size: 18, cls: "ih-icon" }), el("h2", { class: "ih-title" }, openingName(d)),
     d.ignored ? el("div", { class: "ih-flags" }, el("span", { class: "badge danger" }, "Deleted")) : null),
-  el("div", { class: "ih-sub" }, openingMeta(d) || (d.type === "window" ? "Window" : d.type === "door" ? "Door" : "An opening: a way through, no door")),
+  el("div", { class: "ih-sub" }, openingMeta(d) || (d.type === "window" ? "Window" : d.type === "door" ? "Door"
+    : d.type === "gate" ? "A gate: a way through the boundary walls" : "An opening: a way through, no door")),
   el("div", { class: "ih-id" }, el("code", {}, d.id))];
 }
 

@@ -257,11 +257,45 @@ def place_site(code: str, location_id: str, request: Request, may: May, studio: 
     return answer(request, studio.place_site(code, location_id, body, by=may.user))
 
 
+# ---- a location's layout (format 0.12) ---------------------------------------------------
+
+@calls.post(P + "/layouts")
+def add_layout(code: str, request: Request, may: May, studio: TheStudio, body: Body):
+    """A site plan of one of the project's drawings used as a location's layout: a job."""
+    may.add_layout(code, body)
+    return answer(request, studio.add_layout(code, body, by=may.uid))
+
+
+@calls.post(P + "/footprints/{footprint_id}")
+def footprint(code: str, footprint_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    """A footprint said to be one of the location's buildings (placed on it), of none, or a new one's."""
+    may.footprint(code, footprint_id, body)
+    return answer(request, studio.footprint(code, footprint_id, body, by=may.user))
+
+
+@calls.post(P + "/locations/{location_id}/layout/place")
+def place_layout(code: str, location_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    may.project(code, "edit")
+    return answer(request, studio.place_layout(code, location_id, body, by=may.user))
+
+
+@calls.post(P + "/locations/{location_id}/layout/match")
+def match_layout(code: str, location_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    may.project(code, "edit")
+    return answer(request, studio.match_layout(code, location_id, by=may.uid))
+
+
+@calls.post(P + "/locations/{location_id}/north")
+def north(code: str, location_id: str, request: Request, may: May, studio: TheStudio, body: Body):
+    may.project(code, "edit")
+    return answer(request, studio.set_north(code, location_id, body, by=may.user))
+
+
 # ---- packages ----------------------------------------------------------------------------
 
 @calls.post(P + "/export")
 def export(code: str, request: Request, may: May, studio: TheStudio, body: Body):
-    building = may.export(code, body)
+    building = may.export(code, body)  # (a location's layout: its land's ID, 0.12)
     job = studio.export(code, {"building": building, "item_types": body.get("item_types"),
                                "drawings": body.get("drawings", False)}, by=may.uid)
     may.audit("export", building)

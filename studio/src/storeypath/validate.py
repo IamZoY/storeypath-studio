@@ -14,13 +14,16 @@ from pydantic import BaseModel, ValidationError
 
 from .catalogue import Catalogue
 from .models import model_problem
-from .ids import LEVELS, MAX_ID_LENGTH, is_item_id, is_legacy_item_id, parse_id
-from .package import (ASSET_IDS_FROM, COLLECTIONS, DRAWINGS, FILES, FORMAT_NAME, FORMAT_VERSION, ONE_BUILDING_FROM,
-                      Changes, FeatureCollection, ItemFeature, Manifest, Navigation, version_problem, version_tuple)
+from .ids import LAND_CODE, LEVELS, MAX_ID_LENGTH, is_item_id, is_legacy_item_id, parse_id
+from .package import (ASSET_IDS_FROM, COLLECTIONS, DRAWINGS, FILES, FORMAT_NAME, FORMAT_VERSION, LAYOUTS_FROM,
+                      ONE_BUILDING_FROM, Changes, FeatureCollection, ItemFeature, Manifest, Navigation, version_problem,
+                      version_tuple)
 from .types import FloorType
 
 KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
-              "space": "object", "zone": "object", "opening": "object"}
+              "space": "object", "zone": "object", "opening": "object",
+              "layout": "floor", "footprint": "object"}  # (a location's layout, 0.12: a level of the location)
+LAYOUT_ROLES = ("layout", "footprints")  # a layout's package's own files (0.12)
 # the kinds of objects.csv rows this reader knows; rows of others (a later format's) are
 # left alone, as a reader leaves unknown files and properties
 KNOWN_KINDS = {"project", *KIND_LEVEL, "item"}
@@ -95,7 +98,14 @@ def validate_package(path: str | Path) -> list[str]:
 
         ids: dict[str, str] = {}  # id -> kind
         collections: dict[str, list] = {}
+        layout_scope = manifest.scope.layout if manifest.scope is not None else None
+        if layout_scope is not None and version < LAYOUTS_FROM:
+            errors.append(f"scope names a layout, which a package of {manifest.format_version} cannot hold (0.12)")
         for role, feature in COLLECTIONS.items():  # each kind's geometry checked by its model
+            if role in LAYOUT_ROLES and role not in manifest.files:
+                if layout_scope is not None:
+                    errors.append(f"a layout's package lists its {role} in its manifest's files")
+                continue  # (a building's package, or one before 0.12, holds none)
             fc = load(file_of(role), FeatureCollection[feature])
             if fc is None:
                 continue
@@ -117,6 +127,11 @@ def validate_package(path: str | Path) -> list[str]:
                     errors.append(f"{f.id}: project segment is not the package's project {project}")
                 if pid.level != KIND_LEVEL[kind]:
                     errors.append(f"{f.id}: a {kind} ID needs {LEVELS.index(KIND_LEVEL[kind]) + 1} segments")
+                land = len(pid.segments) >= 3 and pid.segments[2] == LAND_CODE
+                if kind == "building" and land:
+                    errors.append(f"{f.id}: {LAND_CODE} is a location's land (its layout): no building has it")
+                elif kind in ("layout", "footprint") and not land:
+                    errors.append(f"{f.id}: a {kind}'s ID is of its location's land (…-{LAND_CODE}-…)")
 
         def expect_parent(child: str, parent: str | None, kind: str) -> None:
             if parent is None or ids.get(parent) != kind:
@@ -124,7 +139,25 @@ def validate_package(path: str | Path) -> list[str]:
             elif not child.startswith(parent + "-"):
                 errors.append(f"{child}: ID does not start with its parent {parent}")
 
-        if one_building:  # from 0.7, a package holds one building, and names it
+        if layout_scope is not None:  # (0.12) a location's layout, in place of a building
+            layouts = [f.id for f in collections.get("layout", [])]
+            if layouts != [layout_scope]:
+                errors.append(f"scope names layout {layout_scope}; the package holds {', '.join(layouts) or 'none'}")
+            if manifest.scope.buildings or collections.get("buildings"):
+                errors.append("a layout's package holds no building")
+            if collections.get("floors") or collections.get("zones"):
+                errors.append("a layout's package holds no floors and no zones")
+            if "navigation" in manifest.files:
+                errors.append("a layout's package has no walking network")
+            if set(manifest.placements) != {layout_scope}:
+                errors.append(f"a layout's package has one placement, its site's, by the layout's ID {layout_scope}")
+            for f in collections.get("layout", []):
+                expect_parent(f.id, f.properties.location_id, "location")
+                if f.id.rsplit("-", 1)[-1] != f.properties.code:
+                    errors.append(f"{f.id}: its code is {f.properties.code}, not its ID's")
+        elif any(role in manifest.files for role in LAYOUT_ROLES):  # (0.12) a building's package holds no layout
+            errors.append("a building's package holds no layout: its manifest lists layout or footprints")
+        if layout_scope is None and one_building:  # from 0.7, a package holds one building, and names it
             if manifest.scope is None or len(manifest.scope.buildings) != 1:
                 errors.append("a package of this format holds one building: its manifest's scope names it")
             if len(collections.get("buildings", [])) != 1:
@@ -136,7 +169,7 @@ def validate_package(path: str | Path) -> list[str]:
                 errors.append(f"scope lists building {b}, which is not in the package")
             for b in sorted(held - set(manifest.scope.buildings)):
                 errors.append(f"building {b} is in the package but not in its scope")
-        if "buildings" in collections:  # the manifest places every building of the package, and no other
+        if "buildings" in collections and layout_scope is None:  # the manifest places every building, no other
             held = {f.id for f in collections["buildings"]}
             for b in sorted(held - set(manifest.placements)):
                 errors.append(f"building {b} has no placement in the manifest")
@@ -151,8 +184,11 @@ def validate_package(path: str | Path) -> list[str]:
             q = f.properties
             if (q.capacity is None) != (q.capacity_from is None):  # (0.7) a capacity says what says so
                 errors.append(f"{f.id}: capacity {q.capacity} from {q.capacity_from}: both are set, or neither")
+        def level_of(f) -> str:  # a space's or opening's level: a floor, or (0.12) a layout
+            return "layout" if ids.get(f.properties.floor_id) == "layout" else "floor"
+
         for f in collections.get("spaces", []):
-            expect_parent(f.id, f.properties.floor_id, "floor")
+            expect_parent(f.id, f.properties.floor_id, level_of(f))
         zones_of = {f.id: set(f.properties.zones) for f in collections.get("spaces", [])}
         for f in collections.get("zones", []):
             expect_parent(f.id, f.properties.floor_id, "floor")
@@ -169,12 +205,29 @@ def validate_package(path: str | Path) -> list[str]:
                 elif space_of.get(zone) != space:  # a zone is part of one space: the one it names
                     errors.append(f"{space}: lists zone {zone}, which is part of {space_of.get(zone)}")
         for f in collections.get("openings", []):
-            expect_parent(f.id, f.properties.floor_id, "floor")
+            expect_parent(f.id, f.properties.floor_id, level_of(f))
             for s in f.properties.connects:
                 if ids.get(s) != "space":
                     errors.append(f"{f.id}: connects to unknown space {s}")
                 elif not s.startswith(f.properties.floor_id + "-"):
                     errors.append(f"{f.id}: connects to {s} on another floor")
+
+        # Footprints (format 0.12): the buildings standing on a layout, each of the layout's
+        # location (a building's own package holds it), or of none
+        for f in collections.get("footprints", []):
+            q = f.properties
+            expect_parent(f.id, q.layout_id, "layout")
+            if q.building_id is not None:
+                try:
+                    b = parse_id(q.building_id)
+                except ValueError as e:
+                    errors.append(f"{f.id}: building {e}")
+                    continue
+                if b.level != "building" or b.segments[2] == LAND_CODE or \
+                        not q.building_id.startswith(q.layout_id.split("-" + LAND_CODE + "-")[0] + "-"):
+                    errors.append(f"{f.id}: building {q.building_id} is not a building of its layout's location")
+            elif q.site is not None:
+                errors.append(f"{f.id}: a footprint of no building, with a building's place on the site")
 
         # Items (format 0.6): furniture and equipment, when the package has them. Their
         # IDs are assets' tags (0.8; before, the project's and their own number); where
@@ -203,7 +256,11 @@ def validate_package(path: str | Path) -> list[str]:
                     if f.id in ids:
                         errors.append(f"duplicate ID {f.id}")
                     ids[f.id] = "item"
-                    if ids.get(q.building_id) != "building":
+                    on_land = ids.get(q.floor_id) == "layout"  # (0.12) on a location's land: of no building
+                    if on_land:
+                        if q.building_id is not None:
+                            errors.append(f"{f.id}: on layout {q.floor_id}, in building {q.building_id}")
+                    elif q.building_id is None or ids.get(q.building_id) != "building":
                         errors.append(f"{f.id}: in unknown building {q.building_id}")
                     elif ids.get(q.floor_id) != "floor" or not q.floor_id.startswith(q.building_id + "-"):
                         errors.append(f"{f.id}: on unknown floor {q.floor_id} (or not of building {q.building_id})")
@@ -218,7 +275,8 @@ def validate_package(path: str | Path) -> list[str]:
                     if one_building and q.local is None:
                         errors.append(f"{f.id}: no position in its building (local)")
                     # (a building without a placement, or not in the package, is a problem of its own above)
-                    elif q.local is not None and (p := manifest.placements.get(q.building_id)) is not None:
+                    elif q.local is not None and (p := manifest.placements.get(
+                            q.floor_id if on_land else q.building_id)) is not None:
                         lon, lat = _lonlat(p, q.local.x_m, q.local.y_m)
                         off = math.hypot((lon - q.display_point[0]) * 111_320 * math.cos(math.radians(lat)),
                                          (lat - q.display_point[1]) * 110_574)
@@ -278,7 +336,7 @@ def validate_package(path: str | Path) -> list[str]:
         for view, floor in sorted(views.items()):
             if view != f"{DRAWINGS}{floor}.view":
                 errors.append(f"{view}: floor {floor}'s drawing is {DRAWINGS}{floor}.view")
-            if ids.get(floor) != "floor":
+            if ids.get(floor) not in ("floor", "layout"):
                 errors.append(f"{view}: the drawing of floor {floor}, which is not in the package")
             if view not in names:
                 errors.append(f"missing file {view}")
@@ -350,7 +408,7 @@ def _check_floors(floors, errors: list[str]) -> None:
         if q.type == FloorType.MEZZANINE:
             continue
         if q.host_floor_id is not None or q.above_host_m is not None:
-            errors.append(f"{f.id}: a {q.type.value}, not a mezzanine, but with a host floor or a height above one")
+            errors.append(f"{f.id}: a {q.type}, not a mezzanine, but with a host floor or a height above one")
         if (q.building_id, q.ordinal) in plain:
             errors.append(f"{f.id}: {plain[q.building_id, q.ordinal]} is floor {q.ordinal} of its building already "
                           "(only a mezzanine shares a floor's ordinal)")
@@ -368,7 +426,7 @@ def _check_floors(floors, errors: list[str]) -> None:
         if host is None or host.building_id != q.building_id:
             errors.append(f"{f.id}: a mezzanine of floor {q.host_floor_id}, which is not a floor of its building")
         elif host.type != FloorType.FLOOR:
-            errors.append(f"{f.id}: a mezzanine of {q.host_floor_id}, a {host.type.value} (a mezzanine stands in a floor)")
+            errors.append(f"{f.id}: a mezzanine of {q.host_floor_id}, a {host.type} (a mezzanine stands in a floor)")
         elif host.ordinal != q.ordinal:
             errors.append(f"{f.id}: a mezzanine of floor {host.ordinal} ({q.host_floor_id}), its ordinal {q.ordinal}")
         if q.above_host_m is None:

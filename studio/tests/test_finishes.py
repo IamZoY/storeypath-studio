@@ -16,7 +16,7 @@ from storeypath import accounts as acc
 from storeypath import finishes
 from storeypath.assets import asset_dir
 from storeypath.package import FORMAT_VERSION
-from storeypath.types import SpaceType
+from storeypath.types import LAND_ONLY, SpaceType
 
 
 @pytest.fixture
@@ -76,8 +76,8 @@ def test_the_list_is_whole_and_its_copies_are_it():
         assert f["name"] and f["name_ar"] and re.fullmatch(r"#[0-9a-f]{6}", f["tone"]), f
         assert 0 < f["roughness"] <= 1 and f["size_m"] > 0 and f["paint"]["kind"], f
     assert counts["floor"] >= 25 and counts["wall"] >= 15
-    for applies in finishes.APPLIES:  # every type has a default of its own kind
-        for t in SpaceType:
+    for applies in finishes.APPLIES:  # every type has a default of its own kind (the land's areas: none, 0.12)
+        for t in (t for t in SpaceType if t not in LAND_ONLY):
             assert finishes.finish(cat["defaults"][applies][t.value])["applies"] == applies, (applies, t)
     assert finishes.finish(cat["exterior"])["applies"] == "wall"
     assert finishes.default("floor", "a type of later") == finishes.default("floor", "unspecified")

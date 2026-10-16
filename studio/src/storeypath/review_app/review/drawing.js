@@ -9,7 +9,7 @@
 
 import { roomTaken, viewOnly } from "./access.js";
 import { followJob, request } from "./api.js";
-import { emit } from "./bus.js";
+import { emit, on } from "./bus.js";
 import { $, el, svg } from "./dom.js";
 import { refreshProject } from "./floor.js";
 import { refreshFloor } from "./live.js";
@@ -21,9 +21,16 @@ import { setTool, tool } from "./tools.js";
 import { dirty3d } from "./view3d.js";
 import * as vertical from "./vertical.js";
 
-export const WIDTHS = { door: 0.9, window: 1.2, opening: 1.0 }; // what is added, until given another size
+export const WIDTHS = { door: 0.9, window: 1.2, opening: 1.0, gate: 4.0 }; // what is added, until given another size
 export const LINES = { wall: "wall", divide: "divider" }; // the tools that draw a line, and what it is
 const OPENING_NAMES = { door: "Door", window: "Window", opening: "Opening" };
+// on a location's layout (format 0.12): a gate in its boundary walls (up to 12 m: one for cars); every
+// opening drawn on a layout is read as a gate (siteplan.py)
+const LAYOUT_OPENINGS = { gate: "Gate" };
+/** What the opening tool adds here, by kind: its name. */
+const openingKinds = () => (state.floor?.layout ? LAYOUT_OPENINGS : OPENING_NAMES);
+/** How wide an opening added here may be, in metres. */
+export const widestOpening = () => (state.floor?.layout ? 12 : 6);
 
 state.openingKind = "door"; // what the opening tool adds
 state.openingWidth = null; // its width (null: its kind's)
@@ -94,7 +101,7 @@ const widthOf = (kind = state.openingKind) => state.openingWidth ?? WIDTHS[kind]
 
 /** A door or window placed on the wall nearest the point: along it, in its middle. */
 export function openingAt(p, wide = widthOf()) {
-  const width = Math.min(Math.max(Number(wide) || 0.9, 0.3), 6);
+  const width = Math.min(Math.max(Number(wide) || 0.9, 0.3), widestOpening());
   const near = nearestOnWalls(p, Math.max(1.0, 12 / state.view.k));
   if (!near) return null;
   const [a, b] = near.seg;
@@ -295,7 +302,7 @@ function drawnOpeningOf(d) {
 }
 
 export function openingName(d) {
-  const name = d.type === "window" ? "Window" : d.type === "door" ? "Door" : "Opening";
+  const name = d.type === "window" ? "Window" : d.type === "door" ? "Door" : d.type === "gate" ? "Gate" : "Opening";
   return d.tag ? `${name} ${d.tag}` : name;
 }
 
@@ -433,6 +440,17 @@ const giveUp = () => {
 const drawingPlan = { hover: preview, click: toolClick, dblclick: () => { if (shaping() && state.corners.length >= 3) closeSpace(); } };
 
 export function setupDrawing() {
+  // what the opening tool adds follows the floor: on a location's layout a gate, else a door
+  let wasLayout = false;
+  on("floor", () => {
+    const layout = Boolean(state.floor?.layout);
+    if (layout !== wasLayout || !(state.openingKind in openingKinds())) {
+      state.openingKind = layout ? "gate" : "door";
+      state.openingWidth = null;
+      emit("tool-options");
+    }
+    wasLayout = layout;
+  });
   tool({ id: "wall", label: "Wall", icon: "brick-wall", key: "w", group: "draw", edits: true, drawing: true,
     wrongView: ON_PLAN("A wall"), hint: lineHint("Wall", "wall"), escape: giveUp, plan: drawingPlan, stop: clearPreview });
   tool({ id: "space", label: "Space", icon: "vector-square", key: "r", group: "draw", edits: true, drawing: true,
@@ -448,12 +466,12 @@ export function setupDrawing() {
   tool({ id: "opening", label: "Door, window, opening", icon: "door-open", key: "o", group: "draw", edits: true, drawing: true,
     words: "door window opening doorway",
     wrongView: ON_PLAN("A door, window or opening"), plan: drawingPlan, stop: clearPreview,
-    hint: () => `Click on a wall where the ${state.openingKind} goes · ${(widthOf()).toFixed(2)} m wide`,
+    hint: () => `Click on a ${state.floor?.layout ? "boundary wall" : "wall"} where the ${state.openingKind} goes · ${(widthOf()).toFixed(2)} m wide`,
     options: () => {
       const kinds = el("div", { class: "segmented", role: "radiogroup", "aria-label": "What to add" },
-        ...Object.entries(OPENING_NAMES).map(([kind, name]) => {
+        ...Object.entries(openingKinds()).map(([kind, name]) => {
           const b = el("button", { type: "button", role: "radio", "aria-checked": String(state.openingKind === kind),
-            "data-tip": kind === "opening" ? "A way through, no door" : `A ${kind}` }, name);
+            "data-tip": kind === "opening" ? "A way through, no door" : kind === "gate" ? "A gate in the boundary walls, for people or cars (up to 12 m)" : `A ${kind}` }, name);
           b.addEventListener("click", () => {
             state.openingKind = kind;
             state.openingWidth = null;
@@ -462,11 +480,11 @@ export function setupDrawing() {
           });
           return b;
         }));
-      const width = el("input", { type: "number", min: "0.3", max: "6", step: "0.05", "aria-label": "Width in metres",
+      const width = el("input", { type: "number", min: "0.3", max: String(widestOpening()), step: "0.05", "aria-label": "Width in metres",
         value: widthOf().toFixed(2) });
       width.addEventListener("change", () => {
         const v = Number(width.value);
-        state.openingWidth = Number.isFinite(v) && v >= 0.3 && v <= 6 ? v : null;
+        state.openingWidth = Number.isFinite(v) && v >= 0.3 && v <= widestOpening() ? v : null;
         width.value = widthOf().toFixed(2);
         emit("tool-progress");
       });

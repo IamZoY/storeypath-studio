@@ -18,6 +18,7 @@ named in its heading.
 - [8. Keeping the IDs](#8-keeping-the-ids-convertpy)
 - [9. Review](#9-review-a-person)
 - [10. Export](#10-export-exportpy)
+- [Reading a site plan](#reading-a-site-plan) (a location's layout)
 - [With a GPU and without](#with-a-gpu-and-without)
 
 ## Who decides what
@@ -49,7 +50,8 @@ drawing (DWG or DXF)
  1  open it ................ DWG to DXF with dwg2dxf; broken entities repaired     rules
  2  take out private ....... title blocks, names, contacts, hidden file data       rules + model; a person chooses
  3  units .................. door swings, dimensions, text sizes, notes            rules + language model (notes)
- 4  find the plans ......... wall groups with doors or room names, their titles    rules + language model (titles)
+ 4  find the plans ......... wall groups with doors or room names (or titled as    rules + language model (titles)
+                            a site plan), their titles
       floors and heights ... ground 0, basement -1, roof on top; levels            rules + language model
  5  choose the floors ...... which plan is which floor of which building           a person
  6  line the floors up ..... each plan moved onto the walls of the floor below     rules
@@ -148,7 +150,10 @@ site plan and title blocks, sometimes each pasted in as a block.
 
 - **The plans.** Walls are looked for on every layer: pairs of parallel lines a
   wall's thickness apart, grouped by nearness. A group with door swings or room
-  names inside it is a plan; tables, frames and elevations have neither. A sheet
+  names inside it is a plan; tables, frames and elevations have neither. So is a group
+  with a site plan's title under it (SITE, LOCATION, DEVELOPMENT or KEY PLAN), with no
+  door drawn in it: its buildings drawn as outlines ([Reading a site
+  plan](#reading-a-site-plan)). A sheet
   frame drawn close round a plan is dropped from it. A sheet pasted in as one block
   (or a bound reference holding several plans) is taken apart, so each plan in it is
   read on its own.
@@ -444,6 +449,103 @@ their IDs, and its location ([spec/FORMAT.md](https://github.com/StoreyPath/stor
   building on the map lists the building as changed, nothing in it.
 - With Node.js at hand (it is in the Studio image), each floor is also built in 3D ahead
   of time (`world/<floor-id>.glb`), so a slow machine shows it without building it.
+
+## Reading a site plan
+
+A site plan shows a location's land: its plot, the walls and gates round it, the
+buildings standing on it, the open ground between them and the road outside. Find plans
+tells one by its title (SITE, LOCATION, DEVELOPMENT or KEY PLAN: a walled group so titled
+is a plan even when no door is drawn in it), and its card offers *Use as ⟨location⟩'s
+layout*. It is read as the location's **layout** ([format
+0.12](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md), Location
+layouts), in `siteplan.py` and `layout.py`:
+
+```
+site plan (a plan of a drawing)
+ │
+ a  what is drawn ......... lines (solid, dashed), arcs, hatches, texts, blocks;     rules
+                            10 m beyond its plan too (its north arrow, the road's name)
+ b  the plot .............. the property limits: their layer's name, or a text       rules
+                            along them; each piece read as the line it lies on, the
+                            plot what those lines close round; else the outline of
+                            the walls drawn
+ c  walls and gates ....... the faces the lines make in the plot; thin ones along    rules
+                            its edge its walls; gaps 0.7 to 12 m wide its gates
+ d  texts ................. a building's name or a floor's level (FFL, SSL, TOP);     rules + language model
+                            a ground level (FGL); PARKING, GARDEN, ROAD …
+ e  land and buildings .... the ground flooded from what the texts say, the widest   rules
+                            places first: floods meet at the gaps in a building's
+                            walls; buildings are the holes in the land
+ f  areas ................. the land's faces by their texts; the rest the yard;      rules
+                            the road beyond the boundary, from its name
+ g  north ................. the north arrow beside the plan, by its turn             rules
+ h  IDs ................... areas and footprints by overlap, gates by position      rules
+ i  the buildings ......... each footprint matched to a building of the location    rules + language model;
+                            (its texts, its outline fitted): a confidence            a person applies
+```
+
+- **What is drawn.** Every entity of the plan's region and 10 m round it (a plan's north
+  arrow, its title and the road's name are often just outside its walls), in metres:
+  lines, solid and dashed apart, arcs (a gate's leaves), hatches' outlines, texts with
+  where they stand and which way they read, blocks with their names and turns.
+- **The plot.** Property limits are drawn dashed, often only past the plot's corners,
+  and marked by a text along them (PROPERTY LINE, PROPERTY LIMITS, PLOT LIMIT,
+  BOUNDARY) or by their layer's name. Each piece is read as the infinite line it lies on;
+  pieces on one line are one edge; the plot is the face those edges close that holds
+  most of what is drawn. Without them, it is the outline round the largest body of lines
+  (lines within 3 m of each other are one: the arrow and the notes beside it are not of
+  it): the boundary walls' outer face, its gates closed across.
+- **Walls and gates.** The solid lines inside the plot, the plot's edge among them, make
+  faces (lines drawn a hair short of meeting meet: each is taken 5 cm wide). A face no
+  wider than 0.7 m is a wall's; one along the plot's edge is a boundary wall. Where no
+  wall or building stands on the plot's edge for 0.7 to 12 m there is a gate; a leaf
+  drawn swinging in it says so most surely.
+- **Texts.** A building's name (VILLA, HOUSE, ANNEX, GUEST HOUSE, a room's name) or a
+  floor's level (+0.45 FFL, SSL, TOP) is a building's; a ground level (±0.00 FGL, NGL) is
+  the land's; PARKING, GARDEN, DRIVEWAY, PATH, POOL name areas; ROAD or STREET beyond the
+  plot the road; NEIGHBOUR what is beside it. Letters spaced out for show are read
+  joined (R O A D); a zero typed for an O between letters is read as the O. Texts the
+  rules do not know go to the language model, one question each, its answers kept.
+- **Land and buildings.** Outlines on site plans are often left open: a building's walls
+  drawn short of meeting, its round corners on another layer. So the free ground between
+  the lines (a grid of 10 cm cells or more) is flooded from what the texts say (each
+  ground level and area's name, the inside of each gate, for the land; each building's
+  name and level, for the buildings), the widest places first: two floods meet at the
+  narrowest place between them, a gap in a building's walls. Each face is what most of it
+  was flooded as; one flooded much by both is cut where they met, when that is a gap in
+  walls and not a wide front (a building's name written out in the yard floods a stretch
+  of it). The buildings' faces, with their walls, are its **footprints**, each its outline
+  without holes: buildings are holes in the land, kept as footprints, not areas. Ground no
+  flood reaches, closed round by walls with no text in it, is a courtyard.
+- **Areas.** The land's faces by the area names in them: a face naming one kind is of that
+  kind (neighbours of one kind are one area); the faces with none are the **yard**,
+  together. Where a road's name is written beyond the plot and its far side is not drawn,
+  the road is a strip along the plot's nearest side, twice as deep as the name is far
+  (with a note for a person to check).
+- **North.** A block named for north (NORTH, N-ARROW, COMPASS, شمال) beside the plan, the
+  nearest to the plot when there are several: its turn is the bearing the plan's up faces
+  (its N, when it has one, confirming it). How sure: 0.7 by the block's name, 0.9 with its
+  N that way, less when another arrow nearby points elsewhere (a location plan's beside
+  the site plan). When no person set north and the site is not on the map, it is the
+  location's north; a person changes it on the site plan.
+- **IDs.** As a floor's (step 8): areas and footprints keep their IDs by overlap, gates
+  by where they are; what is gone is retired. The layout's frame is the site's: its first
+  read takes the plot's middle as the site's centre, and every read after keeps that
+  offset.
+- **The buildings.** For each footprint and each building of the location: its texts
+  against the building's name, code and its plans' titles, by their words (PROPOSED, NEW,
+  G+1 left out; one letter as an abbreviation of a word), the language model asked when
+  words cannot say (GH for Guest house); and the building's ground floor outline (or all
+  its floors') fitted onto the footprint: the turns the two outlines' main directions give,
+  their right angles and no turn, middles put together, then nudged and turned a little for
+  the most overlap. Never mirrored, never scaled. Two turns as good (a rectangle) cannot be
+  told apart: the one nearest no turn is taken, and the match says so. A confidence from
+  both; one building to one footprint, the surest first. Nothing moves until a person
+  applies a match on the project page.
+
+Read again (*Read again*, or `storeypath convert`), a site plan keeps its IDs and every
+placement a person applied. What people draw on the layout in Review is read with it:
+walls and dividing lines part areas, openings are gates, spaces are areas.
 
 ## With a GPU and without
 

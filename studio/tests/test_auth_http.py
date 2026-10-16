@@ -115,7 +115,7 @@ def site(tmp_path_factory):
         srv = make_server(studio, port=0, accounts=accounts)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         ids = {"code": code, "hq": hq, "annex": annex, "hq0": hq0, "hq1": hq1, "an0": an0, "item": item.id,
-               "space": space, "lift": lift, "loc": f"{code}-NOPE", "spare": users["spare"].id,
+               "space": space, "lift": lift, "loc": f"{code}-NOPE", "footprint": f"{code}-DEMO-LAND-G00-0001", "spare": users["spare"].id,
                "resettable": users["resettable"].id, "hq_pkg": packages[0].name, "annex_pkg": packages[1].name,
                "drawing": "hq-level-0.dxf", "token": "abc", "type": "SOFA", "notes": "notes.txt", "missing": "missing.dxf"}
         s = Site(srv.server_port, studio, accounts, ids, tokens, users, None, srv.app)
@@ -226,6 +226,18 @@ ROWS = [
         hidden=OUTSIDE | {"floor_viewer"}),
     Row("POST", C + "/locations/{loc}/arrange", {}, ok=400, passes={"admin", "owner"}, hidden=OUTSIDE),
     Row("POST", C + "/locations/{loc}/placement", {}, ok=400, passes={"admin", "owner"}, hidden=OUTSIDE),
+    # a location's layout (0.12): a site plan used as one, as floors added (edit on the whole project); a
+    # footprint said to be a building: edit on the land (none here: who sees the project is told so)
+    Row("POST", C + "/layouts", {"drawing": "hq-level-0.dxf"}, ok=(400, "the site plan to read"),
+        passes={"admin", "owner"}, hidden=OUTSIDE),
+    Row("POST", C + "/footprints/{footprint}", {}, ok=(404, "no footprint"), passes=PROJECT,
+        hidden=OUTSIDE),
+    Row("POST", C + "/locations/{loc}/layout/place", {}, ok=(404, "no location"), passes={"admin", "owner"},
+        hidden=OUTSIDE),
+    Row("POST", C + "/locations/{loc}/layout/match", {}, ok=(404, "no location"), passes={"admin", "owner"},
+        hidden=OUTSIDE),
+    Row("POST", C + "/locations/{loc}/north", {}, ok=(404, "no location"), passes={"admin", "owner"},
+        hidden=OUTSIDE),
     Row("POST", C + "/export", {"building": "{annex}"}, ok=200, passes={"admin", "owner", "building_editor"},
         hidden=OUTSIDE | {"floor_viewer"}, settle=True),
     # with its drawings (every layer and text of them): edit on the project too, as a drawing seen whole

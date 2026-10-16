@@ -14,7 +14,7 @@ import { findAsset, showAsset } from "./items.js";
 import { kbd, keyNow } from "./keys.js";
 import { toast } from "./notify.js";
 import { select, selectAsset } from "./selection.js";
-import { code, color, state, title, typeLabel, typeOf, units, visible } from "./state.js";
+import { code, color, floorTitle, state, title, typeLabel, typeOf, units, visible } from "./state.js";
 import { normalizeItemId } from "/viewer/src/ids.js";
 import { CATEGORIES, SIDES, categoryOf, categoryName } from "../categories.js";
 
@@ -169,8 +169,9 @@ function sources(q) {
   }
   // floors
   for (const f of state.project?.floors || []) {
-    const sc = score(q, `${f.name} ${f.building} ${f.location} floor`);
-    if (sc > 0 && q) out.push({ group: "Floors", score: sc / 1.5, icon: "layers", title: f.name, sub: `${f.location} · ${f.building}${f.review ? ` · ${f.review} to review` : ""}`,
+    const sc = score(q, `${f.name} ${f.building} ${f.location} ${f.layout ? "layout land site plan" : "floor"}`);
+    if (sc > 0 && q) out.push({ group: "Floors", score: sc / 1.5, icon: f.layout ? "map" : "layers", title: floorTitle(f),
+      sub: `${f.layout ? `${f.location} · its land` : `${f.location} · ${f.building}`}${f.review ? ` · ${f.review} to review` : ""}`,
       current: f.id === state.floor?.id, run: () => openFloor(f.id) });
   }
   // commands

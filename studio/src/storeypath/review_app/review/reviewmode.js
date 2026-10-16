@@ -15,7 +15,7 @@ import { toast } from "./notify.js";
 import { flyToSpace } from "./plan.js";
 import { accept, correct } from "./rooms.js";
 import { clearSelection, select } from "./selection.js";
-import { reviewSpaces, state, title, tucked, units, view3d } from "./state.js";
+import { onLayout, reviewSpaces, state, title, tucked, typesHere, units, view3d } from "./state.js";
 import { setTool } from "./tools.js";
 import { pick3d } from "./view3d.js";
 
@@ -24,7 +24,7 @@ const review = { on: false, index: 0 };
 export const reviewing = () => review.on;
 
 /** The likely types of a room (the shortlist: 1–9). */
-export const likelyTypes = (s) => likely(s, units().filter((u) => !tucked(u)), state.project.types);
+export const likelyTypes = (s) => likely(s, units().filter((u) => !tucked(u)), typesHere(), 9, { land: onLayout() });
 
 function show(id) {
   const queue = reviewSpaces();
