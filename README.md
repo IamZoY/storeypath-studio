@@ -126,6 +126,10 @@ title, is taken out once more.
   for good, are repaired or left out; a room whose outline comes out invalid is kept as
   what it encloses. The floor's warnings say what was repaired.
 - **Cancel** puts the plans found away, adding no floor.
+- **The same file sent again** is recognised, whatever was kept or taken out for privacy,
+  and not kept twice: Studio points to the drawing it already has. **A drawing no floor
+  reads from** can be deleted; one a floor still reads from cannot, until that floor is
+  given another.
 
 <br clear="right">
 
