@@ -1,6 +1,6 @@
 [project]
 name = "storeypath"
-version = "0.2.0"
+version = "0.3.0"
 description = "StoreyPath Studio: convert DWG/DXF floor plans into portable indoor map packages with stable object IDs"
 readme = "README.md"
 authors = [
