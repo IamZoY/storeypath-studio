@@ -412,11 +412,16 @@ def test_the_whole_workflow_in_the_browser(studio, tmp_path):
     words = words.decode()
     assert status == 200 and "OFFICE" in words and "someone" not in words  # what is left, and only that
     assert "When it was added: removed" in words
-    assert call(f"{base}/api/projects/{code}")[1]["drawings"] == ["drawing-1.dxf"]
+    assert [d["name"] for d in call(f"{base}/api/projects/{code}")[1]["drawings"]] == ["drawing-1.dxf"]
+    # the same file sent again: not kept again, the answer naming the drawing it is
+    _, again = call(f"{base}/api/projects/{code}/drawings/sheet.dxf?private=0", raw=sheet.read_bytes())
+    assert again["drawing"] == "drawing-1.dxf" and again["already"]
     # as sent, when asked
+    doc.header["$LASTSAVEDBY"] = "someone else"
+    doc.saveas(sheet)
     _, kept = call(f"{base}/api/projects/{code}/drawings/sheet.dxf?private=0", raw=sheet.read_bytes())
     assert kept["drawing"] == "sheet.dxf"
-    app.store.remove_drawing(code, "sheet.dxf")
+    assert call(f"{base}/api/projects/{code}/drawings/sheet.dxf/delete", {}) == (200, {"deleted": "sheet.dxf"})
 
     _, job = call(f"{base}/api/projects/{code}/drawings/drawing-1.dxf/plans", {})
     found = wait(base, job)

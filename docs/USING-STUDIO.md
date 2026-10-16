@@ -35,6 +35,23 @@ project and everything in it, once you type its name.
   keep, then only the cleaned copy is kept, as `drawing-1.dxf`; the file you sent,
   and its name, are not. **Words**, beside each drawing, lists every word left in
   it.
+- **The same file sent again** is not kept twice: Studio knows it by its content (the
+  file as you sent it, whatever you chose to keep of it then, or a DWG before it was
+  converted; or a drawing sent as Studio kept it), whatever its name, and says
+  *Already here: drawing-9.dxf, added on 14 Oct. Its plans are below.*, then finds the
+  plans in that drawing as it does for one just added. Another project may hold the
+  same file: each project's drawings are its own. Two drawings kept the same before
+  Studio knew files again are marked *same as drawing-X* in the list: delete the spare
+  one.
+- **Delete**, beside each drawing, takes it out of the project once you confirm, with
+  everything made of it (its words, its view, its prints); the project's history says
+  who deleted it. A drawing a floor reads from is not deleted (its button is greyed,
+  and pointing at it names the floors): the floor keeps what was read, but could not be
+  read again or printed without its drawing. Give that floor another drawing first
+  (*Find plans* in the other drawing, then *Replace its drawing*), then delete it. The
+  name of a deleted drawing is not given to another: the next one added is a new
+  `drawing-N.dxf`. A file sent and still waiting for you to choose what to keep is
+  cancelled with *Don't add it*; one left waiting goes when Studio starts again.
 - **View**, beside each drawing, shows it whole, as it is drawn: every line, hatch,
   fill, text, block and dimension, on every layer, in its own colours on dark (*CAD*)
   or black on white (*Print*), with the parts read as floors outlined and named. Drag
@@ -107,8 +124,8 @@ project and everything in it, once you type its name.
   say), once you type its name, for whoever may edit the building and while nobody
   else is editing a room of it: its rooms, doors and items are retired, never erased
   (their IDs are never used again; a floor added in its place gets new ones), its
-  drawing stays, the building's next package lists them as retired, and no undo goes
-  back over it.
+  drawing stays (*Delete* it under Drawings once no floor reads from it), the
+  building's next package lists them as retired, and no undo goes back over it.
 
 ### The site plan
 

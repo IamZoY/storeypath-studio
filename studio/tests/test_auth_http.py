@@ -205,6 +205,9 @@ ROWS = [
         hidden=OUTSIDE),
     Row("POST", C + "/drawings/{missing}/plans", {}, ok=(404, "no drawing"), passes={"admin", "owner"},
         hidden=OUTSIDE),
+    # a drawing deleted: as one added (a floor reads from this one: refused, naming it)
+    Row("POST", C + "/drawings/{drawing}/delete", {}, ok=(409, "is the drawing of Headquarters' Ground floor"),
+        passes={"admin", "owner"}, hidden=OUTSIDE),
     # a drawing drawn whole for the drawing viewer, and the view made: as its words
     Row("POST", C + "/drawings/{missing}/view", {}, ok=(404, "no drawing"), passes={"admin", "owner"}, hidden=OUTSIDE),
     Row("GET", C + "/drawings/{drawing}/view", ok=(404, "not drawn whole yet"), passes={"admin", "owner"},

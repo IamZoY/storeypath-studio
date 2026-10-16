@@ -51,7 +51,7 @@ it), and a PostGIS geometry is made from it beside it (generated, GiST-indexed).
 | `overrides` | a person's corrections by object: type, name, number, hidden, ignored, capacity, a lift's stack, its floor and wall finish (codes of spec/finishes.json: migration 0004); who and when; `version` |
 | `items` | id (PK: an asset's tag, one project's in the whole Studio; migration 0003), project, type, floor, x, y (and a point geometry), rotation, values (JSONB), status, created/retired, who and when, `version` |
 | `readings`, `vision` | the text model's and the vision model's answers, kept by text and by room shape |
-| `drawings` | project, name, the bytes, size, sha256, the words left in it, who sent it and when; `incoming` for one waiting for a person |
+| `drawings` | project, name, the bytes, size, sha256, the sha256 of the file as it was sent (`sent_sha256`, to know it sent again: migration 0013), the words left in it, who sent it and when; `incoming` for one waiting for a person |
 | `exports` | each export record (JSONB) in order, with the package's bytes as sent; a package kept from before records, on its own |
 | `catalogue`, `settings` | the organization's item types; what else is the whole Studio's |
 | `item_models` | item types' 3D models (format 0.9.2): each as it came (in any format read: model_files.py) and as packages carry it, and how it was read (turn, units, up) |

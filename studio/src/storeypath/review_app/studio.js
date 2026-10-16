@@ -315,7 +315,9 @@ async function resume(code, p, plansArea) {
   showWaiting(code, incoming);
   // the person's latest plans found (no floors added from that drawing since), shown again
   const ours = (j) => !j.by || !me || j.by.id === me.id;
-  const plans = jobs.find((j) => j.kind === "plans" && j.state === "done" && ours(j));
+  // (of a drawing still here: one deleted since is forgotten with its plans)
+  const plans = jobs.find((j) => j.kind === "plans" && j.state === "done" && ours(j)
+    && p.drawings.some((d) => d.name === j.about));
   const addedSince = plans && jobs.some((j) => j.kind === "floors" && j.about === plans.about && j.submitted > plans.submitted);
   if (plans && !addedSince && !plansClosed().includes(plans.id) && findingPlans === null && !plansArea.childElementCount) {
     showPlans(code, plans.about, plansArea, plans.result, plans.ended, plans.id);
@@ -368,8 +370,7 @@ async function decide(code, w, keep = undefined) {
       await api(`projects/${code}/incoming/${w.pending}/cancel`, {});
       toast(`${w.name}: not added`);
     } else {
-      const result = await runJob(api(`projects/${code}/incoming/${w.pending}`, { keep }));
-      toast(`${w.name} → ${result.drawing}: ${result.privacy.summary}. Its Words list shows everything left in it.`, false, 12000);
+      sayKept(w.name, await runJob(api(`projects/${code}/incoming/${w.pending}`, { keep })));
     }
   } catch (e) {
     toast(`${w.name}: ${e.message}`, true);
@@ -431,10 +432,11 @@ function drawingsCard(code, p, plansArea) {
     for (const file of files) {
       try {
         toast(`Uploading ${file.name}…`);
-        const sent = sending(api(`projects/${code}/drawings/${encodeURIComponent(file.name)}${cleaned ? "" : "?private=0"}`,
+        const answer = await sending(api(`projects/${code}/drawings/${encodeURIComponent(file.name)}${cleaned ? "" : "?private=0"}`,
           undefined, { raw: file }));
-        if (cleaned) {
-          let result = await runJob(sent);
+        let result = answer;
+        if (!answer.already && cleaned) { // (a file here already is not looked through again)
+          result = await runJob(answer);
           if (result.pending) { // a person says what of it to keep
             const keep = await choosePrivate(file.name, result);
             if (keep === null) {
@@ -444,11 +446,9 @@ function drawingsCard(code, p, plansArea) {
             }
             result = await runJob(api(`projects/${code}/incoming/${result.pending}`, { keep }));
           }
-          added.push(result.drawing);
-          toast(`${file.name} → ${result.drawing}: ${result.privacy.summary}. Its Words list shows everything left in it.`, false, 12000);
-        } else {
-          added.push((await sent).drawing);
         }
+        added.push(result.drawing);
+        if (cleaned || result.already) sayKept(file.name, result, files.length === 1);
       } catch (e) {
         toast(`${file.name}: ${e.message}`, true);
         break;
@@ -468,15 +468,56 @@ function drawingsCard(code, p, plansArea) {
     privacy,
     el("div", { id: "waiting" }), // (resume: the drawings sent that wait for the person to choose what to keep)
     p.drawings.length ? el("ul", { class: "drawings" }, p.drawings.map((d) =>
-      el("li", {}, el("code", { class: "grow" }, d),
+      el("li", {}, el("span", { class: "grow" }, el("code", {}, d.name),
+        d.same_as.length ? el("span", { class: "muted small", "data-testid": "drawing-same",
+          title: "The same file, kept twice: delete the one no floor reads from" },
+        ` · same as ${d.same_as.join(", ")}`) : null),
         el("button", { type: "button", title: "The whole drawing as it is drawn, every layer, with the parts read as floors outlined",
-          onclick: () => viewDrawing(code, d, floorMarks(p, d)) }, "View"),
-        el("a", { class: "button", href: `/api/projects/${encodeURIComponent(code)}/drawings/${encodeURIComponent(d)}/words`,
+          onclick: () => viewDrawing(code, d.name, floorMarks(p, d.name)) }, "View"),
+        el("a", { class: "button", href: `/api/projects/${encodeURIComponent(code)}/drawings/${encodeURIComponent(d.name)}/words`,
           target: "_blank", title: "Every word and string left in this drawing, to look through for anything private left behind" },
           "Words"),
-        el("button", { type: "button", "data-drawing": d, disabled: findingPlans !== null,
-          onclick: () => findPlans(code, d, plansArea) }, findingPlans === d ? "Finding plans…" : "Find plans")))) : null,
+        el("button", { type: "button", "data-drawing": d.name, disabled: findingPlans !== null,
+          onclick: () => findPlans(code, d.name, plansArea) }, findingPlans === d.name ? "Finding plans…" : "Find plans"),
+        deleteDrawing(code, d)))) : null,
   );
+}
+
+/** A file sent, said once it is in: kept as drawing-N.dxf (without what was private), or
+ * the drawing here already that it is (``plansBelow``: Find plans opens on it). */
+function sayKept(fileName, result, plansBelow = false) {
+  if (result.already) {
+    toast(`Already here: ${result.drawing}${result.added ? `, added on ${dayMonth(result.added)}` : ""}.`
+      + (plansBelow ? " Its plans are below." : ""), false, 8000);
+  } else if (result.privacy) {
+    toast(`${fileName} → ${result.drawing}: ${result.privacy.summary}. Its Words list shows everything left in it.`, false, 12000);
+  }
+}
+
+/** A day as "14 Oct". */
+function dayMonth(iso) {
+  const d = new Date(iso);
+  return `${d.getDate()} ${d.toLocaleString("en", { month: "short" })}`;
+}
+
+/** Deleting a drawing, once confirmed: not while a floor reads from it (held, saying which,
+ * as the server would refuse it). Plans found in it are not shown again (resume). */
+function deleteDrawing(code, d) {
+  const button = el("button", { type: "button", class: "danger", "data-testid": "drawing-delete",
+    disabled: Boolean(d.in_use), title: d.in_use || `Take ${d.name} out of the project` }, "Delete");
+  button.addEventListener("click", async () => {
+    if (!confirm(`Delete ${d.name}? It cannot be undone.`)) return;
+    button.disabled = true;
+    try {
+      await api(`projects/${code}/drawings/${encodeURIComponent(d.name)}/delete`, {});
+      toast(`${d.name} deleted`);
+      await projectPage(code);
+    } catch (e) {
+      toast(e.message, true);
+      button.disabled = false;
+    }
+  });
+  return button;
 }
 
 // ---- the drawing viewer (drawview.js) --------------------------------------------------------

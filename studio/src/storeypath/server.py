@@ -29,10 +29,14 @@ each call needs is checked first in route() (the table is in studio/README.md):
     PUT  /api/projects/<code>/drawings/<name>[?private=0]  (the file as the body)
                                                → job: what it holds that is private
                                                (privacy.py), {pending, found}; with
-                                               private=0 kept as sent
+                                               private=0 kept as sent. A file the
+                                               project has already: {drawing, already,
+                                               added}, nothing kept
     POST /api/projects/<code>/incoming/<id> {keep: [found ids]}  → job: kept without the
                                                rest of it, as drawing-N.dxf
     POST /api/projects/<code>/incoming/<id>/cancel   not added; the file as sent is gone
+    POST /api/projects/<code>/drawings/<name>/delete  the drawing gone, with what was made of
+                                               it; refused (409) while a floor reads from it
     GET  /api/projects/<code>/incoming         drawings one sent that wait for one to choose what
                                                of them to keep (a page opened again asks again)
     GET  /api/projects/<code>/jobs             its jobs one may see: to run, running, or ended in
@@ -119,7 +123,7 @@ from .reading import NOT_A_ROOM, read_units
 from .symbols import SymbolSpotter
 from .vision import VisionModel
 from .privacy import words
-from .errors import Busy
+from .errors import Busy, Conflict
 from .review import File, NotFound, Review
 from .sealed import sealed_name
 from .types import FloorType, SpaceType
@@ -636,13 +640,18 @@ class Studio:
                 })
             tree.append({"id": f"{ws.id}-{loc.code}", "code": loc.code, "name": loc.name, "buildings": buildings,
                          "placement": loc.placement.model_dump() if loc.placement else None})
-        drawings = [d["name"] for d in self.store.drawings(code) if Path(d["name"]).suffix.lower() in DRAWING_TYPES]
+        kept = [d for d in self.store.drawings(code) if Path(d["name"]).suffix.lower() in DRAWING_TYPES]
         exports = self.store.export_files(code)
         if sight is not None and not sight.whole:
             used = {Path(f.source.path).name for *_, f, _ in ws.iter_floors() if f.source}
-            drawings = [d for d in drawings if d in used]
+            kept = [d for d in kept if d["name"] in used]
             exports = [e for e in exports if (held := package_buildings(full, e))
                        and all(rank(sight.building(b)) >= rank("view") for b in held)]
+        # each drawing: when it was added, the others that are the same file (one of them is
+        # spare: delete it), and why it may not be deleted (the floors that read from it)
+        drawings = [{"name": d["name"], "added": d["uploaded_at"].isoformat() if d["uploaded_at"] else None,
+                     "same_as": [o["name"] for o in kept if o["sha256"] == d["sha256"] and o["name"] != d["name"]],
+                     "in_use": _in_use(ws, d["name"])[0]} for d in kept]
         return {**info, "locations": tree, "drawings": drawings, "exports": exports,
                 "exported": len(full.exports) if sight is None or sight.whole else len(exports),
                 **({"can": sight.can()} if sight is not None else {})}
@@ -673,14 +682,20 @@ class Studio:
         data, what the language model reads as private (privacy.py) — and a person
         chooses what of it to keep (keep_private); only that copy is kept, as
         drawing-N.dxf: the file as sent, and its name, are not. Otherwise it is kept
-        as sent."""
+        as sent. A file the project has already (sent before, whatever was kept of it,
+        or kept as it is) is not kept again: the answer names the drawing it is
+        (already)."""
         self._known(code)
         name = Path(name).name
         suffix = Path(name).suffix.lower()
         if suffix not in DRAWING_TYPES:
             raise ValueError("drawings are .dwg or .dxf files")
+        sent = hashlib.sha256(body).hexdigest()  # (the file as sent: before it is cleaned or converted)
+        same = self.store.same_drawing(code, sent)
+        if same is not None:
+            return _already(same)
         if not private:
-            self.store.put_drawing(code, name, body, by=by)
+            self.store.put_drawing(code, name, body, sent=sent, by=by)
             return {"drawing": name, "bytes": len(body)}
         token = uuid.uuid4().hex[:12]
         incoming = f"{INCOMING}{token}{suffix}"
@@ -772,19 +787,27 @@ class Studio:
         return {"cancelled": p["name"]}
 
     def _keep_private(self, code: str, incoming: str, doc, report, job: Job, by=None) -> dict:
-        """The cleaned drawing kept as drawing-N.dxf, with its words; the file as sent gone."""
+        """The cleaned drawing kept as drawing-N.dxf (a number no drawing of the project
+        had: one deleted is not named again), with its words and the sha256 of the file
+        as sent; the file as sent gone. The same file kept meanwhile (sent twice, both
+        waiting): not kept again, the answer naming it (already)."""
         import tempfile
 
         try:
+            sent = (self.store.drawing(code, incoming, incoming=True) or {}).get("sha256")
+            same = self.store.same_drawing(code, sent) if sent else None
+            if same is not None:
+                job.say(f"already here: {same['name']}")
+                return _already(same)
             job.say(report.summary())
-            taken = [int(m.group(1)) for d in self.store.drawings(code) if (m := DRAWING_NAME.fullmatch(d["name"]))]
+            taken = [int(m.group(1)) for n in self.store.drawing_names_had(code) if (m := DRAWING_NAME.fullmatch(n))]
             name = f"drawing-{max(taken, default=0) + 1}.dxf"
             self.work.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryDirectory(prefix="storeypath-", dir=self.work) as folder:
                 out = Path(folder) / name
                 doc.saveas(out)
                 data = out.read_bytes()
-            self.store.put_drawing(code, name, data, words=words(doc, name, report.summary()), by=by)
+            self.store.put_drawing(code, name, data, words=words(doc, name, report.summary()), sent=sent, by=by)
             job.say(f"kept as {name}")
             job.say(f"every word left in it: Words, beside {name}")
         finally:
@@ -803,6 +826,44 @@ class Studio:
                 kept = words(read_drawing(folder / "drawings" / name), name)
             self.store.set_words(code, name, kept)
         return File(kept.encode("utf-8"), "text/plain; charset=utf-8")
+
+    def delete_drawing(self, code: str, name: str, by=None) -> dict:
+        """A drawing taken out of the project (a change in its history), with what was made
+        of it: its words, its views for the drawing viewer and the packages (unless another
+        drawing of the project is the same file: they are its too) and the prints drawn
+        from it. Refused (Conflict, 409) while a floor reads from it, naming those floors:
+        a floor keeps what was read, but without its drawing it could not be read again or
+        printed; give it another drawing first. Waits a moment for a job changing the
+        project, else Busy (one adding floors from it would give it a floor)."""
+        from .review import BUSY_MESSAGE, BUSY_WAIT_S
+
+        name = self._drawing(code, name)
+
+        def check(ws: Workspace) -> None:  # (the project as it is in the change itself)
+            said, floors = _in_use(ws, name)
+            if said:
+                raise Conflict(said, floors=floors)
+
+        lock = self._changing(code)
+        if not lock.acquire(timeout=BUSY_WAIT_S):
+            raise Busy(BUSY_MESSAGE)
+        try:
+            sha = (self.store.drawing(code, name) or {}).get("sha256")
+            self.store.remove_drawing(code, name, by=by, check=check)
+        finally:
+            lock.release()
+        if sha and not any(d["sha256"] == sha for d in self.store.drawings(code)):
+            for view in (self.cache / VIEWS / code).glob(f"{sha[:32]}-*.view"):
+                view.unlink(missing_ok=True)
+        for info in (self.cache / "prints" / code).glob("*.json"):  # (each says the drawing it was drawn from)
+            try:
+                drawn_from = json.loads(info.read_text()).get("drawing")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if drawn_from == name:
+                info.with_suffix(".png").unlink(missing_ok=True)
+                info.unlink(missing_ok=True)
+        return {"deleted": name}
 
     def delete(self, code: str, body: dict, by=None) -> dict:
         """A project and everything in it (drawings, floors, corrections, packages, its
@@ -1027,6 +1088,8 @@ class Studio:
             from .analyse import analyse
 
             with self._changing(code):
+                if self.store.drawing(code, drawing) is None:  # (deleted since the floors were asked for)
+                    raise NotFound(f"no drawing {drawing}: it was deleted")
                 ws = self.store.load(code, floors=[])
                 places = _floors_to_add(ws, plans)
                 added: dict[str, list[str]] = {}  # building -> floors added or given this drawing
@@ -1995,6 +2058,41 @@ class Studio:
             return {"ok": False, "error": str(e), "model": one.model, "tls": tls()}
         took = (datetime.now(timezone.utc) - started).total_seconds()
         return {"ok": True, "model": one.model, "answer": answer, "seconds": round(took, 2), "tls": tls()}
+
+
+def _already(same: dict) -> dict:
+    """The answer to a file sent that the project has already: the drawing it is, and when
+    that was added (nothing is kept again)."""
+    added = same.get("uploaded_at")
+    return {"drawing": same["name"], "already": True, "added": added.isoformat() if added else None}
+
+
+def _and(words: list[str], last: str = " and ") -> str:
+    """Words listed as a sentence does: "a", "a and b", "a, b and c"."""
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + last + words[-1]
+
+
+def _owning(name: str) -> str:
+    """A name as what owns something: HQ's, Offices'."""
+    return f"{name}'" if name.endswith("s") else f"{name}'s"
+
+
+def _in_use(ws: Workspace, name: str) -> tuple[str | None, list[str]]:
+    """Why a drawing may not be deleted, in words: the floors that read from it, by their
+    buildings' names and their own ("drawing-9.dxf is the drawing of Offices' Ground floor
+    and First floor: …"); and their IDs. (None, []) when no floor does."""
+    buildings: dict[tuple[str, str], tuple[str, list[str]]] = {}
+    ids = []
+    for loc, b, f, f_id in ws.iter_floors():
+        if f.source is not None and drawing_name(f.source.path) == name:
+            buildings.setdefault((loc.code, b.code), (b.name or b.code, []))[1].append(f.name or f.code)
+            ids.append(f_id)
+    if not ids:
+        return None, []
+    floors = _and([f"{_owning(b)} {_and(names)}" for b, names in buildings.values()], last=", and ")
+    them = "that floor" if len(ids) == 1 else "those floors"
+    return (f"{name} is the drawing of {floors}: give {them} another drawing first (Find plans in that "
+            "drawing, then Replace its drawing), then delete this one"), ids
 
 
 def _uid(by) -> str | None:

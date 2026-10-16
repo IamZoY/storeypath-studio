@@ -271,10 +271,12 @@ def _describe(e: dict) -> str:
             return f"took over editing {what} from {e.get('from_name') or 'someone'}"
         held = " (held back: it would have retired most of the rooms)" if e.get("held") else ""
         return f"read the floor's drawing again{held}"
+    drawing = (e.get("targets") or [None])[0] if kind in ("drawing", "drawing removed") else None
     lines = {
         "create": "created the project", "import": "brought the project in from a folder",
         "floors": f"added floors from {e.get('drawing') or 'a drawing'}", "align": "lined up the floors",
-        "drawing": "added a drawing", "drawing removed": "took a drawing away",
+        "drawing": f"added the drawing {drawing}" if drawing else "added a drawing",
+        "drawing removed": f"deleted the drawing {drawing}" if drawing else "took a drawing away",
         "floor deleted": f"deleted the floor {e.get('floor_name') or 'a floor'}",
         "export": f"exported {e.get('file') or 'a package'}" + (", with its drawings" if e.get("drawings") else ""),
         "arrange": "set the buildings side by side",

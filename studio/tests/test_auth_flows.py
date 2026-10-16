@@ -110,7 +110,7 @@ def test_a_floor_viewer_sees_that_floor_alone(campus):
     buildings = [b for loc in project["locations"] for b in loc["buildings"]]
     assert [b["id"] for b in buildings] == [ids["hq"]]
     assert [f["id"] for f in buildings[0]["floors"]] == [ids["hq0"]]
-    assert project["drawings"] == ["hq-level-0.dxf"] and project["exports"] == []
+    assert [d["name"] for d in project["drawings"]] == ["hq-level-0.dxf"] and project["exports"] == []
     assert [f["id"] for f in project["floors"]] == [ids["hq0"]] and project["floors"][0]["can"] == "view"
     assert project["can"]["floors"] == {ids["hq0"]: "view"}
     # the building stands where everyone sees it, though drawn from one floor

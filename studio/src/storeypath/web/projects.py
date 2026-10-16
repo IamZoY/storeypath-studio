@@ -185,6 +185,16 @@ def upload(code: str, name: str, request: Request, may: May, studio: TheStudio, 
                                          by=may.uid))
 
 
+@calls.post(P + "/drawings/{name}/delete")
+def delete_drawing(code: str, name: str, request: Request, may: May, studio: TheStudio, body: Body):
+    """A drawing taken out of the project, by whoever may add one: refused (409, naming
+    them) while a floor reads from it. Recorded in the audit log."""
+    may.project(code, "edit")
+    done = studio.delete_drawing(code, name, by=may.user)
+    may.audit("drawing deleted", done["deleted"], project=code)
+    return answer(request, done)
+
+
 @calls.post(P + "/drawings/{name}/plans")
 def plans(code: str, name: str, request: Request, may: May, studio: TheStudio, body: Body):
     may.project(code, "edit")

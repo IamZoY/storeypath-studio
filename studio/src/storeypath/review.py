@@ -1442,7 +1442,8 @@ def _print_of(review: "Review", floor_id: str, text: bool = True) -> tuple[Path,
         part.write_bytes(print_png(doc, drawing_box, width, height, text=text))
         part.replace(png)
         info.write_text(json.dumps({"bounds": _round_box(local), "width": width, "height": height,
-                                    "px_per_m": round(per_m, 2), "key": key}))
+                                    "px_per_m": round(per_m, 2), "key": key,
+                                    "drawing": drawing_name(src.path)}))  # (its prints go with it: deleted)
     return png, info
 
 

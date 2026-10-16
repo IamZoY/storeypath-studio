@@ -350,6 +350,7 @@ class Changes:
     export_bytes: dict[str, bytes] = field(default_factory=dict)  # file -> the package as sent
     drawings: dict[str, bytes | None] = field(default_factory=dict)  # name -> its bytes (kept), or None (gone)
     words: dict[str, str] = field(default_factory=dict)  # name -> the words of a drawing put now
+    sent: dict[str, str] = field(default_factory=dict)  # name -> the sha256 of a drawing put now, as it was sent
     floors: set[str] = field(default_factory=set)  # the floors it touched (their version raised)
     # history
     part: str = "project"  # object, item, edit, floor, building, project
@@ -923,11 +924,13 @@ class ProjectStore:
                     cur.execute("DELETE FROM drawings WHERE project = %s AND name = %s AND NOT incoming", (code, name))
                 else:
                     cur.execute(
-                        "INSERT INTO drawings (project, name, bytes, size, sha256, words, uploaded_by) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (project, name) DO UPDATE SET "
+                        "INSERT INTO drawings (project, name, bytes, size, sha256, sent_sha256, words, uploaded_by) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (project, name) DO UPDATE SET "
                         "incoming = false, bytes = EXCLUDED.bytes, size = EXCLUDED.size, sha256 = EXCLUDED.sha256, "
-                        "words = EXCLUDED.words, uploaded_by = EXCLUDED.uploaded_by, uploaded_at = now()",
-                        (code, name, data, len(data), hashlib.sha256(data).hexdigest(), ch.words.get(name), uid))
+                        "sent_sha256 = EXCLUDED.sent_sha256, words = EXCLUDED.words, "
+                        "uploaded_by = EXCLUDED.uploaded_by, uploaded_at = now()",
+                        (code, name, data, len(data), hashlib.sha256(data).hexdigest(), ch.sent.get(name),
+                         ch.words.get(name), uid))
         if ch.floors:
             conn.execute("UPDATE floors SET version = version + 1 WHERE project = %s AND id = ANY(%s)",
                          (code, sorted(ch.floors)))
@@ -1169,11 +1172,30 @@ class ProjectStore:
     # ---- drawings -----------------------------------------------------------------
 
     def drawings(self, code: str, incoming: bool = False) -> list[dict]:
-        """The project's drawings (name, size, sha256, uploaded_at), by name; ``incoming``:
-        those sent and waiting for a person instead."""
+        """The project's drawings (name, size, sha256, sent_sha256, uploaded_at), by name;
+        ``incoming``: those sent and waiting for a person instead."""
         with self.db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-            return cur.execute("SELECT name, size, sha256, uploaded_at, uploaded_by FROM drawings "
+            return cur.execute("SELECT name, size, sha256, sent_sha256, uploaded_at, uploaded_by FROM drawings "
                                "WHERE project = %s AND incoming = %s ORDER BY name", (code, incoming)).fetchall()
+
+    def same_drawing(self, code: str, sha256: str) -> dict | None:
+        """The project's drawing a file of this sha256 is (name, uploaded_at): one kept from
+        a file sent with these bytes (sent_sha256), or kept as these bytes; the first kept
+        when there are several. None when it has none: another project's do not count."""
+        with self.db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            return cur.execute("SELECT name, uploaded_at FROM drawings WHERE project = %s AND NOT incoming "
+                               "AND (sent_sha256 = %s OR sha256 = %s) ORDER BY uploaded_at, name LIMIT 1",
+                               (code, sha256, sha256)).fetchone()
+
+    def drawing_names_had(self, code: str) -> set[str]:
+        """Every name a drawing of the project has had: those kept, and those taken away
+        (its history says), so that a new one is never given the name of one gone."""
+        with self.db.connection() as conn:
+            kept = {n for (n,) in conn.execute("SELECT name FROM drawings WHERE project = %s AND NOT incoming",
+                                               (code,))}
+            gone = {n for (n,) in conn.execute("SELECT DISTINCT unnest(targets) FROM history "
+                                               "WHERE project = %s AND kind = 'drawing removed'", (code,))}
+        return kept | gone
 
     def drawing(self, code: str, name: str, incoming: bool = False) -> dict | None:
         """A drawing's name, size and sha256 (not its bytes); None when there is none."""
@@ -1190,24 +1212,35 @@ class ProjectStore:
             raise NotFound(f"no drawing {name}")
         return bytes(row[0])
 
-    def put_drawing(self, code: str, name: str, data: bytes, *, words: str | None = None, by=None) -> None:
-        """A drawing kept in the project (in place of one of that name)."""
+    def put_drawing(self, code: str, name: str, data: bytes, *, words: str | None = None, sent: str | None = None,
+                    by=None) -> None:
+        """A drawing kept in the project (in place of one of that name); ``sent``: the
+        sha256 of the file it was kept from, as it was sent."""
 
         def fn(base):
             ch = Changes(part="project", kind="drawing", targets=[name], drawings={name: data},
                          more={"size": len(data)})
             if words is not None:
                 ch.words[name] = words
+            if sent is not None:
+                ch.sent[name] = sent
             return ch, None
 
         self.change(code, fn, by=by)
 
-    def remove_drawing(self, code: str, name: str, by=None) -> None:
-        """A drawing of the project taken away (a floor read from it keeps what was read)."""
+    def remove_drawing(self, code: str, name: str, by=None, check: Callable[[Workspace], None] | None = None) -> None:
+        """A drawing of the project taken away, its words with it. ``check``: given the
+        project as it is in the change, raises when the drawing may not go (a floor reads
+        from it): nothing is changed then."""
         if self.drawing(code, name) is None:
             raise NotFound(f"no drawing {name}")
-        self.change(code, lambda base: (Changes(part="project", kind="drawing removed", targets=[name],
-                                                drawings={name: None}), None), by=by)
+
+        def fn(base):
+            if check is not None:
+                check(base)
+            return Changes(part="project", kind="drawing removed", targets=[name], drawings={name: None}), None
+
+        self.change(code, fn, by=by)
 
     def put_incoming(self, code: str, name: str, data: bytes, by=None) -> None:
         """A drawing sent, kept until a person says what of it to keep (not yet the
