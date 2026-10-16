@@ -325,6 +325,7 @@ class Studio:
 
             self.readers = ReadWorkers(read_workers)
         self.jobs = Jobs(self.data, drawn=max(1, read_workers))
+        self._closing = threading.Event()  # (close: what runs in the background stops)
         if warm and self.model.available():
             # Load the model now, in the background, so the first drawing does not
             # wait for 2–3 GB of weights to come off the disk.
@@ -1419,7 +1420,9 @@ class Studio:
         threading.Thread(target=run, name=f"warming {floor_id}", daemon=True).start()
 
     def close(self) -> None:
-        """What Studio started stopped: the language model's server, the read workers."""
+        """What Studio started stopped: the language model's server, the read workers,
+        the prints being drawn ahead."""
+        self._closing.set()
         if self.readers is not None:
             self.readers.close()
         self.model.close()
@@ -1438,14 +1441,22 @@ class Studio:
         texts (the one Review shows) and with them. A big floor opened in Review then
         waits for none (minutes, for a floor of a thousand rooms). One that fails is
         drawn when the floor is opened, saying why."""
+        from psycopg_pool import PoolClosed
+
         from .review import floor_print
 
         def run():
             for fid in floor_ids:
                 for text in (False, True):
+                    if self._closing.is_set():
+                        return
                     try:
                         floor_print(self.review(code), fid, text)
+                    except PoolClosed:
+                        return  # (Studio closed meanwhile, its database with it: nothing to say)
                     except Exception:
+                        if self._closing.is_set():
+                            return
                         traceback.print_exc()
 
         threading.Thread(target=run, name=f"prints of {code}", daemon=True).start()
