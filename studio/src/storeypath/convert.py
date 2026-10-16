@@ -275,7 +275,7 @@ def _keep_read(floor_id: str, read: "_Read", folder: Path | str | None = None) -
         _reads.move_to_end(floor_id)
         _trim_reads()
     if folder is not None:
-        threading.Thread(target=_write_read, args=(Path(folder) / _read_file(floor_id), read), daemon=True,
+        threading.Thread(target=_write_read, args=(Path(folder) / _read_file(floor_id), read, READ_CODE), daemon=True,
                          name=f"keeping {floor_id}'s read").start()
 
 
@@ -288,12 +288,13 @@ def _read_file(floor_id: str) -> str:
     return f"{floor_id}.read"
 
 
-def _write_read(path: Path, read: "_Read") -> None:
-    """A read written whole or not at all (a file of its own, put in place)."""
+def _write_read(path: Path, read: "_Read", code: str) -> None:
+    """A read written whole or not at all (a file of its own, put in place), with the
+    ``code`` that read it (as it was then: written in the background, later)."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         part = path.with_name(f"{path.name}.{threading.get_ident()}.part")
-        part.write_bytes(pickle.dumps((READ_CODE, read), protocol=pickle.HIGHEST_PROTOCOL))
+        part.write_bytes(pickle.dumps((code, read), protocol=pickle.HIGHEST_PROTOCOL))
         part.replace(path)
     except OSError:
         pass  # (not kept on disk: read whole the first time again)

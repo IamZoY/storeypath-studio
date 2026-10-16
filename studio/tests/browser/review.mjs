@@ -760,7 +760,10 @@ test("3D and walking: built without an error, the floor stack offers All, 2 is b
     const r = document.getElementById("compass").getBoundingClientRect();
     return [r.left + r.width / 2, r.top + r.height / 2];
   }));
-  await sleep(900);
+  await until(() => { // (turned there: as long as the frames take, on a slow machine longer)
+    const w = window.storeypathReview.view3d.world;
+    return w.top && Math.abs(((w.viewBearing + 540) % 360) - 180) < 0.5;
+  }, "the compass: facing north", 5000);
   v = await view();
   truly(v.top && turned(v.facing, 0) < 0.5 && Math.abs(v.needle) < 0.5, `facing north, still straight down: ${JSON.stringify(v)}`);
   await R(() => document.getElementById("top-view").click());
