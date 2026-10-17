@@ -939,39 +939,43 @@ def _serve(data: Path, host: str, port: int, page: str, open_browser: bool, note
     logging.getLogger("storeypath").setLevel(logging.INFO)
     from .workers import default_count
 
-    studio = Studio(data, db=db, read_workers=default_count())
-    if store is not None:
-        studio.store = store
-    try:
-        server = make_server(studio, host, port, allowed=allowed or [], accounts=accounts, tls=tls,
-                             secure_cookies=secure_cookies, trusted_proxies=trusted_proxies)
-    except OSError as e:
-        _fail(f"cannot listen on {host}:{port}: {e.strerror} (pick another with --port)")
-    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
-    scheme = "https" if tls is not None else "http"
-    url = f"{scheme}://{shown}:{server.server_port}{page}"
-    status = studio.status()
-    typer.echo(f"StoreyPath Studio {status['version']} at {url} (Ctrl+C to stop)")
-    typer.echo(f"data folder (certificate, cache) {studio.data.resolve()}; language model: {status['model'] or 'none'}; "
-               f"DWG: {'yes' if status['dwg'] else 'no (DXF only)'}"
-               + (f"; symbols: {status['symbols']} (research use only)" if status["symbols"] else "")
-               + (f"; vision: {status['vision']}" if status["vision"] else ""))
-    for line in studio.vision.describe():  # the GPU helpers, and how each is
-        typer.echo(line)
-    if note:
-        typer.echo(note)
-    if open_browser:
-        threading.Timer(0.5, webbrowser.open, args=(url,)).start()
     # `kill` and `docker stop` send SIGTERM: stop as for Ctrl+C, so llama-server stops too.
+    # Taken so before Studio is made: it starts llama-server in the background at once, and
+    # SIGTERM's default (gone there and then) would leave it running with the model in memory.
     # (uvicorn stops on either, letting the requests being answered finish, then gives
     # the signal back: KeyboardInterrupt here.)
     signal.signal(signal.SIGTERM, signal.default_int_handler)
+    studio = Studio(data, db=db, read_workers=default_count())
     try:
-        server.serve_forever()
+        if store is not None:
+            studio.store = store
+        try:
+            server = make_server(studio, host, port, allowed=allowed or [], accounts=accounts, tls=tls,
+                                 secure_cookies=secure_cookies, trusted_proxies=trusted_proxies)
+        except OSError as e:
+            _fail(f"cannot listen on {host}:{port}: {e.strerror} (pick another with --port)")
+        shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+        scheme = "https" if tls is not None else "http"
+        url = f"{scheme}://{shown}:{server.server_port}{page}"
+        status = studio.status()
+        typer.echo(f"StoreyPath Studio {status['version']} at {url} (Ctrl+C to stop)")
+        typer.echo(f"data folder (certificate, cache) {studio.data.resolve()}; language model: {status['model'] or 'none'}; "
+                   f"DWG: {'yes' if status['dwg'] else 'no (DXF only)'}"
+                   + (f"; symbols: {status['symbols']} (research use only)" if status["symbols"] else "")
+                   + (f"; vision: {status['vision']}" if status["vision"] else ""))
+        for line in studio.vision.describe():  # the GPU helpers, and how each is
+            typer.echo(line)
+        if note:
+            typer.echo(note)
+        if open_browser:
+            threading.Timer(0.5, webbrowser.open, args=(url,)).start()
+        try:
+            server.serve_forever()
+        finally:
+            server.server_close()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
         studio.close()
 
 
