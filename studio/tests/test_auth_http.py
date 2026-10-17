@@ -224,6 +224,8 @@ ROWS = [
     # the way in a building: view on the whole of it
     Row("GET", C + "/buildings/{annex}/navigation", ok=200, passes={"admin", "owner", "building_editor"},
         hidden=OUTSIDE | {"floor_viewer"}),
+    # the way across a site (0.13): view on its land (none here: who sees the project is told so)
+    Row("GET", C + "/locations/{loc}/navigation", ok=(404, "with a layout"), passes=PROJECT, hidden=OUTSIDE),
     Row("POST", C + "/locations/{loc}/arrange", {}, ok=400, passes={"admin", "owner"}, hidden=OUTSIDE),
     Row("POST", C + "/locations/{loc}/placement", {}, ok=400, passes={"admin", "owner"}, hidden=OUTSIDE),
     # a location's layout (0.12): a site plan used as one, as floors added (edit on the whole project); a

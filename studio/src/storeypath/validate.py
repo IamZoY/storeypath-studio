@@ -16,8 +16,8 @@ from .catalogue import Catalogue
 from .models import model_problem
 from .ids import LAND_CODE, LEVELS, MAX_ID_LENGTH, is_item_id, is_legacy_item_id, parse_id
 from .package import (ASSET_IDS_FROM, COLLECTIONS, DRAWINGS, FILES, FORMAT_NAME, FORMAT_VERSION, LAYOUTS_FROM,
-                      ONE_BUILDING_FROM, Changes, FeatureCollection, ItemFeature, Manifest, Navigation, version_problem,
-                      version_tuple)
+                      ONE_BUILDING_FROM, SITE_ROUTES_FROM, Changes, FeatureCollection, ItemFeature, Manifest,
+                      Navigation, version_problem, version_tuple)
 from .types import FloorType
 
 KIND_LEVEL = {"location": "location", "building": "building", "floor": "floor",
@@ -147,8 +147,8 @@ def validate_package(path: str | Path) -> list[str]:
                 errors.append("a layout's package holds no building")
             if collections.get("floors") or collections.get("zones"):
                 errors.append("a layout's package holds no floors and no zones")
-            if "navigation" in manifest.files:
-                errors.append("a layout's package has no walking network")
+            if "navigation" in manifest.files and version < SITE_ROUTES_FROM:
+                errors.append(f"a layout's package of {manifest.format_version} has no walking network (0.13)")
             if set(manifest.placements) != {layout_scope}:
                 errors.append(f"a layout's package has one placement, its site's, by the layout's ID {layout_scope}")
             for f in collections.get("layout", []):
@@ -290,36 +290,55 @@ def validate_package(path: str | Path) -> list[str]:
                                           f"building ({want:.2f}° on the map)")
 
         # Navigation (format 0.8): the walking network, when the package has it. Its nodes
-        # are on the package's floors, in its spaces and zones; its edges join its nodes.
+        # are on the package's floors, in its spaces and zones; its edges join its nodes. A
+        # layout's (0.13) is on the layout; its links join its entrances to their buildings'
+        # doors, in the buildings' packages.
         if "navigation" in manifest.files:
             name = manifest.files["navigation"]
             nav = load(name, Navigation)
             if nav is not None:
+                level = "layout" if layout_scope is not None else "floor"
                 held = {f.id for f in collections.get("buildings", [])}
                 for b in nav.buildings:
                     if b not in held:
                         errors.append(f"{name}: building {b} is not in the package")
-                nodes: set[str] = set()
+                if nav.layout != layout_scope:
+                    errors.append(f"{name}: its layout is {nav.layout}, not the package's {layout_scope}")
+                prints = {f.id: f.properties.building_id for f in collections.get("footprints", [])}
+                nodes: dict[str, object] = {}
                 for n in nav.nodes:
                     if n.id in nodes:
                         errors.append(f"{name}: node {n.id} is there twice")
-                    nodes.add(n.id)
-                    if ids.get(n.floor_id) != "floor":
-                        errors.append(f"{name}: node {n.id} is on unknown floor {n.floor_id}")
+                    nodes[n.id] = n
+                    if ids.get(n.floor_id) != level:
+                        errors.append(f"{name}: node {n.id} is on unknown {level} {n.floor_id}")
                     for key, kind in ((n.space_id, "space"), (n.zone_id, "zone")):
                         if key is not None and ids.get(key) != kind:
                             errors.append(f"{name}: node {n.id} is in unknown {kind} {key}")
+                    if n.footprint_id is not None and (n.footprint_id not in prints
+                                                       or prints[n.footprint_id] != n.building_id):
+                        errors.append(f"{name}: entrance {n.id} is into {n.building_id}, which does not stand on "
+                                      f"footprint {n.footprint_id}")
                 pairs: set[tuple[str, str]] = set()
                 for e in nav.edges:
-                    for end in (e.from_, e.to):
-                        if end not in nodes:
-                            errors.append(f"{name}: an edge joins unknown node {end}")
+                    if e.kind == "link":  # one end on the land, the other its building's door, in its own package
+                        land = nodes.get(e.to) or nodes.get(e.from_)
+                        far = e.from_ if land is nodes.get(e.to) else e.to
+                        if layout_scope is None or land is None or land.footprint_id is None \
+                                or far != f"door:{land.opening_id}" or far in nodes \
+                                or not (land.opening_id or "").startswith(f"{land.building_id}-"):
+                            errors.append(f"{name}: the link from {e.from_} to {e.to} does not join an entrance on "
+                                          "the land to its building's door")
+                    else:
+                        for end in (e.from_, e.to):
+                            if end not in nodes:
+                                errors.append(f"{name}: an edge joins unknown node {end}")
+                        if len(e.path) < 2:
+                            errors.append(f"{name}: the edge from {e.from_} to {e.to} has no line")
                     pair = tuple(sorted((e.from_, e.to)))
                     if pair in pairs:
                         errors.append(f"{name}: two edges join {pair[0]} and {pair[1]}")
                     pairs.add(pair)
-                    if len(e.path) < 2:
-                        errors.append(f"{name}: the edge from {e.from_} to {e.to} has no line")
 
         # Drawings (format 0.11): each floor's drawing as drawn, when the export carried
         # them: named by its floor's source, in the folder the manifest lists, a view of a

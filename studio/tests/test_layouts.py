@@ -300,7 +300,7 @@ def test_the_layouts_package_validates_and_opens_back(tmp_path):
     m = export_layout_package(ws, out, layout)
     assert validate_package(out) == []
     assert m.scope.buildings == [] and m.scope.layout == layout and list(m.placements) == [layout]
-    assert m.files["layout"] == "layout.geojson" and "navigation" not in m.files
+    assert m.files["layout"] == "layout.geojson" and m.files["navigation"] == "navigation.json"  # (0.13) its land's
     with zipfile.ZipFile(out) as z:
         lay = json.loads(z.read("layout.geojson"))["features"][0]
         prints = {f["properties"]["name"]: f for f in json.loads(z.read("footprints.geojson"))["features"]}

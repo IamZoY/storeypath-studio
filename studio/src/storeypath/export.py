@@ -41,7 +41,7 @@ from .package import (
     json_schemas,
 )
 from .levels import DEFAULT_PARAPET_M
-from .navigation import NAVIGATION_FILE, navigation_file
+from .navigation import NAVIGATION_FILE, build_site_network, navigation_file
 from . import finishes
 from .stacks import stack_of
 from .types import BUILDING_LEVELS, OpeningType, SpaceType
@@ -942,11 +942,16 @@ def _package(ws: Workspace, out_path, buildings: list[str], *, record: bool, bak
     if model_files:
         manifest.files["models"] = MODELS
 
-    # the walking network of its building (format 0.8); a layout has none yet
-    navigation = None
-    if not lands:
+    # the walking network of its building (format 0.8); a layout's, its land's, linked to its
+    # buildings' at their entrances (0.13): a building with no way in from the land is said
+    if lands:
+        notes: list[dict] = []
+        navigation = build_site_network(ws, layout_id, cat, notes)
+        for n in notes:
+            (say or log.info)(f"no way in from the land: {n['why']}")
+    else:
         navigation = navigation_file(ws, buildings, cat, placed)
-        manifest.files["navigation"] = NAVIGATION_FILE
+    manifest.files["navigation"] = NAVIGATION_FILE
 
     world: dict[str, bytes] = {}
     if bake and not lands:  # the package as it is so far, for the baker to read

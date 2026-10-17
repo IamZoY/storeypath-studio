@@ -239,6 +239,7 @@ log).
 | `POST …/locations/<id>/layout/place {sure?, again?}`, `…/layout/match` | edit on the project: every match placed (*Apply all*: each building on its footprint, at least `sure` sure; those placed already left as they are unless `again`); the buildings matched again (a job; the language model asked where words cannot say) |
 | `POST …/locations/<id>/north {bearing}` or `{from: "drawing"}` | edit on the project: which way north is on the site plan, a person's bearing or as its layout's north arrow was read; on the map the site's placement turns with it |
 | `GET …/buildings/<id>/navigation[?from&to&accessible]` | view on the whole building: its walking network, or the way between two places ([Navigation](#navigation)) |
+| `GET …/locations/<id>/navigation[?from&to&accessible]` | view on the location's land (its layout's): its site's walking network (the land's, format 0.13, with each of its buildings' the person may see whole, and `notes`: why a building has no way in from the land), or the way across it; `from` and `to` a gate's, a kiosk's, an area's, a room's or an item's ID, or a point on the land, `x,y` in metres of the site's frame ([Ways across a site](#ways-across-a-site)) |
 | `POST …/export {building \| layout, item_types?, drawings?}` | `layout` (a location's layout's ID, format 0.12): its own package, as a building's, with edit on its land; edit on that building; with `drawings: true`, edit on the project too (as a drawing seen whole, or its words: 403 without it). `drawings: true` (off unless sent): each floor's drawing goes in the package too, as drawn, every layer and text of its part of its drawing (format 0.11, `drawings/<floor-id>.view`; its texts as the privacy rules leave them); each is drawn once and kept in Studio's cache, in a read worker when there are any, before the export takes the project; the job says each, and the export's history entry says it carried them |
 | `GET …/exports/<file>`; `POST …/exports/<file>` `{password}` (the package encrypted with it: [SEALED-FILES.md](../docs/SEALED-FILES.md)) | view on the building it holds (on the project, for one no export entered) |
 | `GET …/preview.storeypath[?building]` | any access: built with their floors alone (`building` a land's ID, `PROJECT-LOCATION-LAND`: the location's layout's package, for the 3D view of the land). It comes with an `ETag`, and asked again with it (`If-None-Match`) while nothing it holds changed, it is answered 304 and nothing is sent; Studio keeps the packages it made the same way |
@@ -355,7 +356,7 @@ what they may see.
 | `restore FILE` | put a backup into an empty database (an older Studio's `.tar.gz`: its data folder brought in); an encrypted one asks for its password |
 | `seal FILE`, `unseal FILE.enc` | encrypt any file with a password, or open one ([SEALED-FILES.md](../docs/SEALED-FILES.md)) |
 | `db url` · `db migrate` · `db import --data DIR` | where Studio's database is; bring its schema up to date; bring an older Studio's data folder in (projects, drawings, packages, item types, studio.db), once |
-| `export FILE -o OUT` | write one building's package (`--building`, by its ID or code; may be left out when the project has one), or a location's layout's (`--layout`, its ID or its location's code: format 0.12), entered as an export only when valid; `--item-types used\|all`; `--drawings`: each floor's drawing in it too (format 0.11), from the drawings beside the project's file |
+| `export FILE -o OUT` | write one building's package (`--building`, by its ID or code; may be left out when the project has one), or a location's layout's (`--layout`, its ID or its location's code: format 0.12; with its land's walking network, 0.13, and a line for each building with no way in from the land), entered as an export only when valid; `--item-types used\|all`; `--drawings`: each floor's drawing in it too (format 0.11), from the drawings beside the project's file |
 | `validate PACKAGE…` | check a package against the format; several, together too (the same item ID in packages of two projects is refused) |
 | `item-id TEXT…` | an item's ID as a person typed it (`7k2q xm9f 4dp`), as it is written (`7K2Q-XM9F-4DP`); fails when it is not one |
 | `private DRAWING OUT.dxf` | copy a drawing without its private information (see below) |
@@ -934,6 +935,39 @@ locks as any change does. Packages carry the result as each space's `stack`
 ([stacks.py](src/storeypath/stacks.py)), and the way rides those lifts and stairs.
 Calls: `POST …/floors/<id>/vertical`, `GET …/objects/<id>/stack`,
 `POST …/objects/<id>/copy`, and `{"stack": …}` on a space's correction.
+
+### Ways across a site
+
+A location's layout's package carries its land's walking network too (format 0.13:
+[navigation.py](src/storeypath/navigation.py) `build_site_network`, spec/FORMAT.md "Routes
+across a site"). Its areas are walked as one ground inside the plot and one outside it (the
+road), round the buildings' footprints and the walls; each gate has a node, with an approach
+on each side; a kiosk placed on the land is one as indoors; and each building's doors to the
+outside on its ground floor whose middle, on the site, is within 2 m of its footprint's edge
+are its **entrances**: a node at the door on the site, its approach on the land in front of
+the footprint's edge, and a `link` to the same door's node in the building's own package
+(`door:<opening ID>`). Where the site plan writes the building's floor level (FFL, in its
+footprint) and the ground's beside it (FGL, NGL), the step between them is known: 2 cm or
+more is a step, and a way without stairs does not take it, unless an area typed *ramp* lies
+at the entrance (the levels are read with the site plan: a layout read before this has
+none until it is read again, its IDs and placements kept). A building whose footprint has no entrance (no door to the outside on its
+ground floor, or none at its footprint's edge: is it placed there?) is said so, by name, when
+the layout's package is made and on Navigate. `site_route(layout_nav, building_navs, from,
+to, accessible=…, items=…)` finds the way on the networks together; `site_graph` puts them
+together (`Graph.nearest(x, y)`: a point on the land, its nearest node). Go's `NewSite`
+(`Site.Route`, `Site.RouteFrom`, `SiteRoute`) and the viewers' `siteRoute(layout, buildings,
+from, to)` find the same (`spec/conformance/routes.json → site_routes`).
+
+**Navigate across a site** (`navigate.html?p=<code>&site=<location id>`, reached from the
+layout's row on the project page, or from Review on a layout, G): choose *⟨location⟩ (site)*
+in its list; start at a gate, a kiosk, an area of the land or a point on it (double-click the
+land on the plan), or in a room of any of its buildings, and end at any room, item, area or
+gate. The steps say each way in and out ("Walk 28 m through the yard to the entrance", "Go
+into Main house"), the plan draws the way on the land and then on each floor it crosses
+(each floor's tab after the site's), and *Play* walks it from the gate to the door. The 3D
+view shows one building: choose it to see its part of the way in 3D. Its call, `GET
+/api/projects/<code>/locations/<id>/navigation`, needs view on the land; each building the
+person may not see whole is left out (no way into it).
 
 ## Other settings
 

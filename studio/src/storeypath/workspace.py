@@ -276,6 +276,10 @@ class ObjectRecord(BaseModel):
     # (layout.py): {building, confidence, by, label, shape, site: {x, y, rotation, pivot}};
     # None: none. A person's choice (Override.building) wins over it
     match: dict[str, Any] | None = None
+    # footprints: the levels its site plan writes (format 0.13): its floor's (FFL, in it) and
+    # the ground's nearest it (FGL, NGL), metres, either None when not written; None: neither.
+    # How far its floor stands above the ground at its doors: a step into it, where both are known
+    levels: dict[str, float | None] | None = None
     status: Literal["active", "retired"] = "active"
     created_at: datetime = Field(default_factory=utcnow)
     retired_at: datetime | None = None

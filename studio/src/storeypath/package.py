@@ -17,7 +17,7 @@ from .catalogue import OLD_CATEGORIES, Category
 from .types import OpeningType, SpaceType
 
 FORMAT_NAME = "storeypath-package"
-FORMAT_VERSION = "0.12.0"
+FORMAT_VERSION = "0.13.0"
 FILE_EXTENSION = ".storeypath"
 # one building per package from 0.7 (before: a whole project, or a part of it)
 ONE_BUILDING_FROM = (0, 7)
@@ -29,6 +29,8 @@ FINISHES_FROM = (0, 9)
 DRAWINGS = "drawings/"
 # a location's layout, its land, in a package of its own (0.12): scope.layout
 LAYOUTS_FROM = (0, 12)
+# a layout's own walking network, linked to its buildings' at their entrances (0.13)
+SITE_ROUTES_FROM = (0, 13)
 
 FILES = {
     "location": "location.geojson",
@@ -497,27 +499,28 @@ class Changes(_Model):
         "project (format 0.7): not retired, they keep their IDs"))
 
 
-NodeKind = Literal["door", "entrance", "approach", "room", "kiosk", "lift", "stairs", "escalator", "ramp"]
-EdgeKind = Literal["walk", "door", "lift", "stairs", "escalator", "ramp"]
+NodeKind = Literal["door", "entrance", "approach", "room", "kiosk", "lift", "stairs", "escalator", "ramp", "gate"]
+EdgeKind = Literal["walk", "door", "lift", "stairs", "escalator", "ramp", "link"]
 
 
 class NavFloor(_Model):
     id: str
-    building_id: str
+    building_id: str | None = Field(description="its building's; null for a layout (0.13): the land")
     name: str
     ordinal: int
     elevation: float
 
 
 class NavPlace(_Model):
-    """A space or zone a way goes through or to, and what a step calls it."""
+    """A space or zone a way goes through or to, and what a step calls it; on a layout
+    (0.13), an area, a gate (kind opening) or a building standing on it (kind footprint)."""
 
     id: str
-    kind: Literal["space", "zone"]
+    kind: Literal["space", "zone", "opening", "footprint"]
     space_id: str | None = Field(None, description="a zone's space")
     floor_id: str
-    type: str
-    label: str = Field(description='what a step calls it: "OFFICE 112", "Room 114", "the corridor"')
+    type: str = Field(description="its type; a gate's: gate; a footprint's: building")
+    label: str = Field(description='what a step calls it: "OFFICE 112", "Room 114", "the corridor", "the vehicle gate"')
 
 
 class NavLocal(_Model):
@@ -536,11 +539,21 @@ class NavNode(_Model):
     zone_id: str | None = Field(None, description="the zone it is in, in a space divided into zones")
     local: NavLocal = Field(description="where it is in its building's own frame, metres")
     lonlat: LonLat
-    opening_id: str | None = Field(None, description="a door's, entrance's or approach's opening (null for the way "
-                                                     "into a lift or stairs no opening is drawn for)")
-    spaces: list[str] | None = Field(None, description="a door's: the spaces it joins (one, for an entrance)")
+    opening_id: str | None = Field(None, description="a door's, entrance's, gate's or approach's opening (null for "
+                                                     "the way into a lift or stairs no opening is drawn for); a "
+                                                     "layout's entrance's: its building's door")
+    spaces: list[str] | None = Field(None, description="a door's: the spaces it joins (one, for an entrance); a "
+                                                       "gate's: the areas it joins, inside first; a layout's "
+                                                       "entrance's: its footprint")
     item_id: str | None = Field(None, description="a kiosk's item")
     stack: str | None = Field(None, description="a lift's, stairs', escalator's or ramp's stack")
+    footprint_id: str | None = Field(None, description="(0.13) a layout's entrance's: the footprint its building "
+                                                       "stands on")
+    building_id: str | None = Field(None, description="(0.13) a layout's entrance's: the building it leads into")
+    steps: bool | None = Field(None, description="(0.13) a layout's entrance's: a step into the building there (true), "
+                                                 "none (false: level, or a ramp), or not known (null)")
+    rise_m: float | None = Field(None, description="(0.13) a layout's entrance's: how far the building's floor stands "
+                                                   "above the ground there, as the site plan writes their levels")
 
 
 class NavEdge(_Model):
@@ -551,16 +564,19 @@ class NavEdge(_Model):
     seconds: float = Field(ge=0, description="walking at speed_m_s; lifts and stairs as FORMAT.md says")
     cost: float = Field(ge=0, description="what routing takes the fewest of: seconds, and more for a way into a room "
                                           "not for passing through")
-    accessible: bool = Field(description="false for stairs and escalators")
+    accessible: bool = Field(description="false for stairs and escalators, and for a link where a step is known")
     space_id: str | None = None
     zone_id: str | None = None
-    path: list[tuple[float, float]] = Field(description="its line, from `from` to `to`, in the building's frame")
+    path: list[tuple[float, float]] = Field(description="its line, from `from` to `to`, in the building's frame (a "
+                                                        "layout's: the site's); a link's is empty")
 
 
 class Navigation(_Model):
-    """navigation.json (format 0.8): the walking network of the package's building."""
+    """navigation.json (format 0.8): the walking network of the package's building; of a
+    layout's package (0.13), its land's, linked to its buildings' at their entrances."""
 
     speed_m_s: float
+    layout: str | None = Field(None, description="(0.13) a layout's package's: the layout's ID, the floor of its land")
     buildings: list[str]
     floors: list[NavFloor]
     places: list[NavPlace]

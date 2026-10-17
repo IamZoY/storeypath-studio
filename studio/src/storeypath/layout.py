@@ -179,6 +179,8 @@ def apply_layout(ws: Workspace, lr: LayoutRead, force: bool = False) -> Conversi
                 record.name, record.number = building_name(f.texts), None
                 record.label = "\n".join(f.texts) or None
                 record.issues = [] if f.named else ["no building's name in it: matched by its shape alone"]
+                record.levels = {"floor": f.floor_level, "ground": f.ground_level} \
+                    if f.floor_level is not None or f.ground_level is not None else None
         kept = {id(pairs[i]) for i in pairs}
         for r in before:
             if id(r) not in kept:

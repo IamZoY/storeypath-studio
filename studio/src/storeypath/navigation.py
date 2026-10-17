@@ -27,6 +27,18 @@ LIFT_WAIT_S, LIFT_FLOOR_S and STAIRS_FLOOR_S say, and ROOM_PENALTY_S for each wa
 a room that is not for passing through), in whole tenths of a second, nodes taken in
 order of how far they are and, at the same distance, of their IDs: so every reader
 takes the same way where two are as short.
+
+**A location's site** (format 0.13, FORMAT.md "Routes across a site"). A layout's package
+has a network of its own (build_site_network): its land's areas walked as one ground
+inside its boundary and one outside it (the road), as the zones of one room are (their
+edges are lines on the ground, not walls; the boundary walls, other walls on the land and
+the buildings' footprints are not walked), a gate's node in each gate with an approach
+on each side, kiosks standing on the land, and an entrance where each building's door to
+the outside on its ground floor meets its footprint's edge (site_entrances): the
+building's door, in the site's frame, joined by a ``link`` to the same door's node in the
+building's own package. A way across a site (site_route) is found on the layout's network
+and its buildings' together, the same way as in a building: each link a change between
+the land and a building (``enter``, ``leave``).
 """
 
 from __future__ import annotations
@@ -46,6 +58,7 @@ from shapely.geometry import LineString, MultiPolygon, Point, Polygon, shape
 from shapely.ops import nearest_points, polylabel, unary_union
 
 from .geometry import as_polygons
+from .georef import Georeferencer
 from .stacks import stacks as find_stacks
 
 NAVIGATION_FILE = "navigation.json"
@@ -74,7 +87,9 @@ ROOM_TYPES = frozenset({"office", "room", "meeting_room", "restroom", "kitchen",
 WALKABLE = PASS_TYPES | ROOM_TYPES
 VERTICAL = {"elevator": "lift", "stairs": "stairs", "escalator": "escalator", "ramp": "ramp"}  # type -> node kind
 ARRIVALS = frozenset({"room", "lift", "stairs", "escalator", "ramp"})  # the node a place is arrived at
-DOORS = frozenset({"door", "entrance"})
+DOORS = frozenset({"door", "entrance", "gate"})
+LINK = "link"  # (0.13) an edge from a building's entrance on the land to its door in the building's package
+ENTRANCE = "entrance"  # a change through a link: into a building, or out of one
 THROUGH = frozenset({"corridor", "ramp"})  # "along" it; anything else, "through" it
 TYPE_WORDS = {"elevator": "lift", "unspecified": "room", "open_area": "open area", "meeting_room": "meeting room",
               "living_room": "living room", "dining_room": "dining room", "dressing_room": "dressing room",
@@ -547,11 +562,7 @@ def _floor(ws, f_id: str, cat, net: _Network, stack_key: dict) -> None:
     for it in sorted(ws.floor_items(f_id), key=lambda i: i.id):
         if not _is_kiosk(it):
             continue
-        t = cat.get(it.type)
-        depth = t.depth if t else 0.45
-        r = math.radians(it.rotation)
-        fx, fy = math.sin(r), -math.cos(r)
-        front = (it.x + fx * (depth / 2 + KIOSK_STAND_M), it.y + fy * (depth / 2 + KIOSK_STAND_M))
+        front = _kiosk_front(it, cat)
         u = next((u for u in units.values() if u.area.covers(Point(front))), None) or \
             next((u for u in units.values() if u.area.covers(Point(it.x, it.y))), None)
         if u is None:
@@ -679,6 +690,327 @@ def navigation_file(ws, buildings: list[str], catalogue=None, placed=None) -> di
     return out
 
 
+# ---- a location's site (format 0.13) ----------------------------------------------------
+
+# what a person walks on a location's land: its areas but pools (and a ramp, an open area,
+# an area a person drew with no type); the edges between areas are lines on the ground
+LAND_WALKED = frozenset({"yard", "parking", "driveway", "garden", "courtyard", "path", "gate_area", "road", "terrace",
+                         "ramp", "open_area", "unspecified"})
+CLOSE_M = 0.06  # areas side by side are one ground: the hairline between them closed
+ENTRANCE_REACH_M = 2.0  # a door to the outside this near its footprint's edge is a way in from the land
+STEP_M = 0.02  # a floor this much or more above the ground at its door: a step into it
+RISE_MAX_M = 3.0  # a floor further from the ground than this: levels of two datums, not a step
+RAMP_REACH_M = 1.5  # a ramp on the land this near an entrance takes its step
+VEHICLE_GATE_M = 2.5  # a gate this wide or wider is a vehicle gate (as a step calls it)
+LAND_NODES = frozenset({"room", "approach", "kiosk", "gate", "entrance"})  # what a point on the land starts at
+
+
+@dataclass
+class Entrance:
+    """Where a building is entered from its location's land: a door to the outside on its
+    ground floor, at its footprint's edge."""
+
+    building_id: str
+    footprint_id: str
+    opening_id: str  # the door, in its building
+    floor_id: str  # its floor (the building's ground floor)
+    door: tuple[float, float]  # its middle, in the site's frame
+    edge: tuple[float, float]  # where the way to it crosses the footprint's edge, in the site's frame
+    along: tuple[float, float]  # the footprint's edge there
+    rise: float | None  # how far the floor stands above the ground there, metres; None: not known
+
+
+@dataclass
+class _Ground:
+    """The land a person walks on one side of its boundary (inside the plot, or the road
+    outside it): its areas together, as the zones of one room."""
+
+    area: object
+    areas: list  # (record, shape, type) of its areas
+    region: object = None
+    terminals: list = field(default_factory=list)  # (node id, point)
+
+    def area_at(self, p) -> tuple:
+        """The area a point is in (the nearest, when it is in none; of those as near, the
+        first by ID)."""
+        point = Point(p)
+        hit = [a for a in self.areas if a[1].covers(point)]
+        if not hit:
+            hit = sorted(self.areas, key=lambda a: (a[1].distance(point), a[0].id))[:1]
+        return min(hit, key=lambda a: a[0].id)
+
+
+def to_site(ws, building_id: str):
+    """A function from a point of a building's own frame to its location's site's frame
+    (where its layout is drawn); None when the building is on the map by itself and its
+    location is not."""
+    from .export import on_site, site_placement, site_positions
+
+    loc = ws.location(building_id.rsplit("-", 1)[0])
+    b = ws.building(building_id)
+    if b.placement is None:
+        pos = site_positions(loc)[b.code]
+        return lambda x, y: on_site(pos, x, y)
+    if loc.placement is None:
+        return None
+    there, site = Georeferencer(b.placement), Georeferencer(site_placement(loc))
+    return lambda x, y: site.local(*there.lonlat(x, y))
+
+
+def _edge_at(poly, p) -> tuple[tuple[float, float], tuple[float, float]]:
+    """The point of a polygon's edge nearest p, and the edge's direction there."""
+    ring = poly.boundary
+    q = nearest_points(ring, Point(p))[0]
+    best = None
+    for line in getattr(ring, "geoms", [ring]):
+        cs = list(line.coords)
+        for a, b in zip(cs, cs[1:]):
+            d = LineString([a, b]).distance(q)
+            if best is None or d < best[0]:
+                best = (d, (b[0] - a[0], b[1] - a[1]))
+    return (q.x, q.y), best[1] if best else (0.0, 0.0)
+
+
+def _rise(r) -> float | None:
+    """How far a footprint's floor stands above the ground at its doors, as its site plan
+    writes their levels; None when it does not write both (or writes levels of two datums)."""
+    levels = r.levels or {}
+    floor, ground = levels.get("floor"), levels.get("ground")
+    if floor is None or ground is None or abs(floor - ground) > RISE_MAX_M:
+        return None
+    return round(floor - ground, 3)
+
+
+def site_entrances(ws, layout_id: str, catalogue=None) -> tuple[list[Entrance], list[dict]]:
+    """Where each building standing on a layout is entered from the land: each of its doors
+    to the outside on its ground floor (its network's entrances: a door or opening joining
+    one of its rooms to nothing) whose middle, on the site, is within ENTRANCE_REACH_M of
+    its footprint's edge. And, for each footprint's building with none, why: notes, each
+    {building_id, footprint_id, why} (why in words, for a person)."""
+    from .catalogue import default_catalogue
+    from .export import footprint_of
+    from .types import FloorType
+
+    cat = catalogue or default_catalogue()
+    out: list[Entrance] = []
+    notes: list[dict] = []
+    linked: set[str] = set()
+    for r in sorted(ws.floor_objects(layout_id), key=lambda r: r.id):
+        if r.kind != "footprint" or not r.geometry or ws.effective(r)["ignored"]:
+            continue
+        b_id = footprint_of(ws, r)
+        if b_id is None:
+            continue
+        try:
+            b = ws.building(b_id)
+        except KeyError:
+            continue
+        name = b.name or r.name or b_id
+
+        def note(why: str) -> None:
+            notes.append({"building_id": b_id, "footprint_id": r.id, "why": f"{name}: {why}"})
+
+        ground = {f"{b_id}-{f.code}" for f in b.floors if f.ordinal == 0 and f.type == FloorType.FLOOR}
+        if not ground or not any(ws.floor_objects(fid) for fid in ground):
+            note("its ground floor is not read yet: no way into it from the land" if ground
+                 else "it has no ground floor yet: no way into it from the land")
+            continue
+        place = to_site(ws, b_id)
+        if place is None:
+            note("it is placed on the map by itself and its location is not: where its doors are on the land "
+                 "is not known")
+            continue
+        net = build_network(ws, b_id, cat)
+        doors = [n for n in net["nodes"] if n["kind"] == "entrance" and n["floor_id"] in ground
+                 and n["opening_id"] not in linked]
+        if not doors:
+            note("no door to the outside on its ground floor (a door joining one of its rooms to the outside, in its "
+                 "outer wall): no way into it from the land. Draw one in Review")
+            continue
+        fp = shape(r.geometry).buffer(0)
+        rise = _rise(r)
+        found, nearest = 0, math.inf
+        for n in doors:
+            p = _pt(place(n["local"]["x_m"], n["local"]["y_m"]))
+            d = fp.boundary.distance(Point(p))
+            nearest = min(nearest, d)
+            if d > ENTRANCE_REACH_M:
+                continue
+            q, along = _edge_at(fp, p)
+            out.append(Entrance(b_id, r.id, n["opening_id"], n["floor_id"], p, _pt(q), along, rise))
+            linked.add(n["opening_id"])
+            found += 1
+        if not found:
+            note(f"none of its doors to the outside is at its footprint's edge (the nearest is {nearest:.1f} m from "
+                 "it): is it placed on its footprint?")
+    return out, notes
+
+
+def _kiosk_front(it, cat) -> tuple[float, float]:
+    """Where people stand before a kiosk's screen: KIOSK_STAND_M in front of it."""
+    t = cat.get(it.type)
+    depth = t.depth if t else 0.45
+    r = math.radians(it.rotation)
+    fx, fy = math.sin(r), -math.cos(r)
+    return it.x + fx * (depth / 2 + KIOSK_STAND_M), it.y + fy * (depth / 2 + KIOSK_STAND_M)
+
+
+def _middle_of(o) -> tuple[tuple[float, float], tuple[float, float]]:
+    """An opening's middle, and its direction along its wall (none known: (0, 0))."""
+    if o.span and len(o.span) == 2:
+        (x0, y0), (x1, y1) = o.span
+        return _pt(((x0 + x1) / 2, (y0 + y1) / 2)), (x1 - x0, y1 - y0)
+    c = o.geometry["coordinates"]
+    return _pt((c[0], c[1])), (0.0, 0.0)
+
+
+def _gate_place(ws, o, layout_id: str) -> dict:
+    """A gate as a step calls it: its name, else "the vehicle gate" or "the pedestrian gate"
+    by its width."""
+    eff = ws.effective(o)
+    kind = "vehicle gate" if (o.width or 0.0) >= VEHICLE_GATE_M else "pedestrian gate"
+    return {"id": o.id, "kind": "opening", "space_id": None, "floor_id": layout_id, "type": "gate",
+            "label": label_of(eff["name"], eff["number"], kind)}
+
+
+def build_site_network(ws, layout_id: str, catalogue=None, notes: list | None = None) -> dict:
+    """A location's layout's walking network (format 0.13), as its package's
+    navigation.json holds it: positions in the site's frame. Its areas walked (LAND_WALKED)
+    as one ground inside the plot and one outside it (the road), the hairlines between them
+    closed, its walls and every footprint left out of them; a ``room`` node in each area, a
+    ``gate`` node in each gate with an ``approach`` on each side, a ``kiosk`` before each
+    kiosk on the land, and an ``entrance`` at each building's door to the outside at its
+    footprint's edge (site_entrances: its node at the door's middle on the site, its
+    approach on the land in front of the footprint's edge), joined to the building's own
+    node of that door (door:<opening>, in the building's package) by a ``link`` of no
+    length, not accessible where a step into it is known (its floor above the ground, as the
+    site plan writes their levels, and no ramp at it). ``notes`` is told why a building has
+    no way in."""
+    from .catalogue import default_catalogue
+    from .export import site_placement
+    from .ids import parse_id
+
+    cat = catalogue or default_catalogue()
+    loc = ws.location(parse_id(layout_id).prefix("location"))
+    f = ws.floor(layout_id)
+    net = _Network(Georeferencer(site_placement(loc)))
+    objects = sorted(ws.floor_objects(layout_id), key=lambda r: r.id)
+    plot = shape(f.outline).buffer(0) if f.outline else None
+    standing = [shape(r.geometry).buffer(0) for r in objects
+                if r.kind == "footprint" and r.geometry and not ws.effective(r)["ignored"]]
+    blocked = unary_union([*standing, *([shape(f.walls).buffer(0)] if f.walls else [])])
+    sides: dict[str, list] = {"in": [], "out": []}
+    walked = []
+    for r in objects:
+        if r.kind != "space" or not r.geometry:
+            continue
+        eff = ws.effective(r)
+        if eff["hidden"] or eff["ignored"] or eff["type"] not in LAND_WALKED:
+            continue
+        g = shape(r.geometry).buffer(0)
+        if g.is_empty:
+            continue
+        outside = plot is not None and plot.intersection(g).area < 0.5 * g.area
+        sides["out" if outside else "in"].append((r, g, eff["type"]))
+        walked.append((r, g, eff["type"]))
+        net.places[r.id] = _place(ws, r, layout_id)
+    grounds: list[_Ground] = []
+    ground_of: dict[str, _Ground] = {}
+    for side in ("in", "out"):
+        if not sides[side]:
+            continue
+        area = unary_union([g.buffer(CLOSE_M, join_style="mitre") for _, g, _ in sides[side]])
+        area = area.buffer(-CLOSE_M, join_style="mitre").difference(blocked).buffer(0)
+        if area.is_empty:
+            continue
+        gr = _Ground(area=area, areas=sides[side], region=walking_region(area))
+        grounds.append(gr)
+        for r, _, _ in sides[side]:
+            ground_of[r.id] = gr
+    # where people arrive in each area
+    for gr in grounds:
+        for r, g, _ in gr.areas:
+            p = _inside(gr.region, label_point(g))
+            gr.terminals.append((net.node(f"room:{r.id}", "room", layout_id, p, r.id, None), p))
+    # kiosks standing on the land: where people stand before the screen
+    for it in sorted(ws.floor_items(layout_id), key=lambda i: i.id):
+        if not _is_kiosk(it):
+            continue
+        front = _kiosk_front(it, cat)
+        gr = next((g for g in grounds if g.area.covers(Point(front))), None) or \
+            next((g for g in grounds if g.area.covers(Point(it.x, it.y))), None)
+        if gr is None:
+            net.node(f"kiosk:{it.id}", "kiosk", layout_id, _pt(front), None, None, item_id=it.id)
+            continue
+        p = _inside(gr.region, front)
+        gr.terminals.append((net.node(f"kiosk:{it.id}", "kiosk", layout_id, p, gr.area_at(p)[0].id, None,
+                                      item_id=it.id), p))
+    # gates: a node in each, and one in front of it in each area it opens onto
+    for o in objects:
+        if o.kind != "opening" or ws.effective(o)["ignored"] or ws.effective(o)["type"] == "window":
+            continue
+        opens_onto = [c for c in dict.fromkeys(o.connects) if c in ground_of]
+        if not opens_onto:
+            continue  # into nothing walked
+        middle, along = _middle_of(o)
+        gate = net.node(f"door:{o.id}", "gate", layout_id, middle, None, None, opening_id=o.id, spaces=opens_onto)
+        net.places[o.id] = _gate_place(ws, o, layout_id)
+        for sid in opens_onto:
+            gr = ground_of[sid]
+            own = next(g for r, g, _ in gr.areas if r.id == sid)
+            p = approach_point(own, gr.region, middle, along)
+            nid = net.node(f"approach:{o.id}@{sid}", "approach", layout_id, p, sid, None, opening_id=o.id)
+            gr.terminals.append((nid, p))
+            net.edge(gate, nid, "door", [middle, p], space_id=sid)
+    # the buildings' entrances: at each building's door, on the site
+    entrances, said = site_entrances(ws, layout_id, cat)
+    for e in entrances:
+        b = ws.building(e.building_id)
+        near = [(gr.area.distance(Point(e.edge)), i) for i, gr in enumerate(grounds)]
+        if not near or min(near)[0] > 0.5:
+            said.append({"building_id": e.building_id, "footprint_id": e.footprint_id,
+                         "why": f"{b.name}: its door {e.opening_id} opens onto no area of the land a person walks"})
+            continue
+        gr = grounds[min(near)[1]]
+        p = approach_point(gr.area, gr.region, e.edge, e.along)
+        area_id = gr.area_at(p)[0].id
+        steps = None if e.rise is None else e.rise >= STEP_M
+        if any(t == "ramp" and g.distance(Point(e.edge)) <= RAMP_REACH_M for _, g, t in walked):
+            steps = False  # a ramp takes its step
+        node = net.node(f"entrance:{e.opening_id}", "entrance", layout_id, e.door, None, None,
+                        opening_id=e.opening_id, spaces=[e.footprint_id], footprint_id=e.footprint_id,
+                        building_id=e.building_id, steps=steps,
+                        rise_m=round(e.rise, 2) if e.rise is not None else None)
+        nid = net.node(f"approach:{e.opening_id}@{area_id}", "approach", layout_id, p, area_id, None,
+                       opening_id=e.opening_id)
+        gr.terminals.append((nid, p))
+        inside = shape(ws.objects[e.footprint_id].geometry).buffer(0).covers(Point(e.door))
+        line = [e.door, e.edge, p] if inside and math.dist(e.door, e.edge) > 0.05 else [e.door, p]
+        net.edge(node, nid, "door", line, space_id=area_id)
+        net.edge(f"door:{e.opening_id}", node, LINK, [], length=0.0, seconds=0.0, accessible=steps is not True)
+        net.places[e.footprint_id] = {"id": e.footprint_id, "kind": "footprint", "space_id": None,
+                                      "floor_id": layout_id, "type": "building",
+                                      "label": label_of(b.name, None, "building")}
+    if notes is not None:
+        notes.extend(said)
+    # across each ground
+    for gr in grounds:
+        for a, b, line in walks(gr.region, gr.terminals):
+            path = LineString(line) if len(line) > 1 and _length(line) > 0 else Point(line[0])
+            area = min(gr.areas, key=lambda x: (-path.intersection(x[1]).length, x[0].id))[0].id
+            net.edge(a, b, "walk", line, space_id=area)
+    return {
+        "speed_m_s": SPEED_M_S,
+        "layout": layout_id,
+        "buildings": [],
+        "floors": [{"id": layout_id, "building_id": None, "name": f.name, "ordinal": f.ordinal,
+                    "elevation": f.elevation}],
+        "places": sorted(net.places.values(), key=lambda p: p["id"]),
+        "nodes": sorted(net.nodes.values(), key=lambda n: n["id"]),
+        "edges": sorted(net.edges.values(), key=lambda e: (e["from"], e["to"])),
+    }
+
+
 # ---- the way ----------------------------------------------------------------------------
 
 def floor_of_id(i: str) -> str:
@@ -686,30 +1018,35 @@ def floor_of_id(i: str) -> str:
 
 
 class Graph:
-    """navigation.json, ready to route on."""
+    """navigation.json, ready to route on: a package's, or a site's (site_graph: a layout's
+    and its buildings' together)."""
 
     def __init__(self, nav: dict):
         self.nav = nav
+        self.layout = nav.get("layout")  # (a layout's, 0.13) its ID: the floor of the land
         self.nodes = {n["id"]: n for n in nav.get("nodes", [])}
         self.places = {p["id"]: p for p in nav.get("places", [])}
         self.floors = {f["id"]: f for f in nav.get("floors", [])}
         self.order = {f["id"]: i for i, f in enumerate(nav.get("floors", []))}
         self.adjacent: dict[str, list[tuple[str, dict]]] = {i: [] for i in self.nodes}
         for e in nav.get("edges", []):
-            if e["from"] in self.nodes and e["to"] in self.nodes:
+            if e["from"] in self.nodes and e["to"] in self.nodes:  # (a link: both packages', or neither)
                 self.adjacent[e["from"]].append((e["to"], e))
                 self.adjacent[e["to"]].append((e["from"], e))
 
     def ends(self, ref: str, items=None) -> list[str]:
         """The nodes a place is: a node's ID; a space's, or a zone's (where it is
-        arrived at: its zones', for a space divided into zones); an item's (a kiosk's
-        own node, else where it stands: ``items``, item ID -> its feature or properties)."""
+        arrived at: its zones', for a space divided into zones); an opening's (its door's
+        or gate's node); an item's (a kiosk's own node, else where it stands: ``items``,
+        item ID -> its feature or properties)."""
         if ref in self.nodes:
             return [ref]
         found = sorted(n["id"] for n in self.nodes.values()
                        if n["kind"] in ARRIVALS and ref in (n["space_id"], n["zone_id"]))
         if found:
             return found
+        if f"door:{ref}" in self.nodes:
+            return [f"door:{ref}"]
         if f"kiosk:{ref}" in self.nodes:
             return [f"kiosk:{ref}"]
         it = (items or {}).get(ref)
@@ -722,10 +1059,28 @@ class Graph:
 
     def place_of(self, nid: str) -> str | None:
         n = self.nodes[nid]
+        if n["kind"] == "gate":  # a gate is a place of its own
+            return n.get("opening_id")
         if n["kind"] in DOORS:
             spaces = n.get("spaces") or []
             return spaces[0] if spaces else None
         return n["zone_id"] or n["space_id"]
+
+    def nearest(self, x: float, y: float) -> str:
+        """The land's node nearest a point of the site (metres of the site's frame): of its
+        rooms, approaches, kiosks, gates and entrances, by straight distance; of those as
+        near, the first by ID. KeyError when the network has no land."""
+        best = None
+        for n in self.nodes.values():
+            if self.layout is None or n["floor_id"] != self.layout or n["kind"] not in LAND_NODES:
+                continue
+            dx, dy = n["local"]["x_m"] - x, n["local"]["y_m"] - y
+            d = dx * dx + dy * dy
+            if best is None or d < best[0] or (d == best[0] and n["id"] < best[1]):
+                best = (d, n["id"])
+        if best is None:
+            raise KeyError("no land in the network: a point on it is not known")
+        return best[1]
 
     def label(self, place: str | None) -> str:
         p = self.places.get(place) if place else None
@@ -816,6 +1171,11 @@ def route(nav: dict | Graph, start: str, end: str, *, accessible: bool = False, 
     for ride in rides:
         a, b = path[ride[0]], path[ride[-1] + 1]
         fa, fb = graph.nodes[a]["floor_id"], graph.nodes[b]["floor_id"]
+        if edges[ride[0]]["kind"] == LINK:  # (0.13) between the land and a building: in from its entrance, or out
+            into = bool(graph.nodes[a].get("footprint_id"))
+            changes.append({"by": ENTRANCE, "from_floor_id": fa, "to_floor_id": fb, "from_node": a, "to_node": b,
+                            "floors": 0, "direction": "in" if into else "out"})
+            continue
         apart = graph.order.get(fb, 0) - graph.order.get(fa, 0)
         changes.append({"by": edges[ride[0]]["kind"], "from_floor_id": fa, "to_floor_id": fb, "from_node": a,
                         "to_node": b, "floors": abs(apart), "direction": "up" if apart > 0 else "down"})
@@ -834,7 +1194,7 @@ def _steps(graph: Graph, path, edges, runs, starts, changes) -> list[dict]:
     first = graph.nodes[path[0]]
     here = graph.place_of(path[0])
     words = {"kiosk": "Start at the kiosk in {}", "entrance": "Start at the entrance into {}", "room": "Start in {}",
-             "approach": "Start in {}", "door": "Start at the door of {}"}
+             "approach": "Start in {}", "door": "Start at the door of {}", "gate": "Start at {}"}
     if first["kind"] in VERTICAL.values():
         text = f"Start at the {first['kind']}"
     else:
@@ -868,6 +1228,15 @@ def _steps(graph: Graph, path, edges, runs, starts, changes) -> list[dict]:
                           "to": to, "place": goal if last else None, "text": text})
         if not last:
             c = changes[n]
+            if c["by"] == ENTRANCE:  # (0.13) into a building from the land, or out of it
+                land = graph.nodes[c["from_node"] if c["direction"] == "in" else c["to_node"]]
+                building = (land.get("spaces") or [None])[0]
+                label = (graph.places.get(building) or {}).get("label") or "the building"
+                into = c["direction"] == "in"
+                steps.append({"kind": "enter" if into else "leave", "building_id": land.get("building_id"),
+                              "place": building, "from_floor_id": c["from_floor_id"], "to_floor_id": c["to_floor_id"],
+                              "text": f"Go into {label}" if into else f"Go out of {label}"})
+                continue
             name = (graph.floors.get(c["to_floor_id"]) or {}).get("name") or c["to_floor_id"]
             steps.append({"kind": "take", "by": c["by"], "from_floor_id": c["from_floor_id"],
                           "to_floor_id": c["to_floor_id"], "floors": c["floors"], "direction": c["direction"],
@@ -916,3 +1285,87 @@ def _side(graph: Graph, path, edges, run, at, goal) -> str:
             return "ahead"
         return "left" if cross > 0 else "right" if cross < 0 else "ahead"
     return "ahead"
+
+
+# ---- a way across a site (format 0.13) --------------------------------------------------
+
+def site_graph(layout_nav: dict, building_navs: list[dict]) -> Graph:
+    """A site's walking network, ready to route on: its layout's network (its package's
+    navigation.json) and its buildings' (theirs), as one. Each link from an entrance on
+    the land to its door in a building joins them where that building's network is given;
+    a building not given is not reached."""
+    navs = sorted(building_navs, key=lambda n: (n.get("buildings") or [""])[0])
+    merged = {"speed_m_s": layout_nav.get("speed_m_s", SPEED_M_S), "layout": layout_nav.get("layout"),
+              "buildings": sorted(b for n in navs for b in n.get("buildings", [])),
+              "floors": [], "places": [], "nodes": [], "edges": []}
+    for nav in [layout_nav, *navs]:  # (the land's floor first, then each building's floors in order)
+        for key in ("floors", "places", "nodes", "edges"):
+            merged[key] += nav.get(key, [])
+    return Graph(merged)
+
+
+def _point(ref) -> tuple[float, float] | None:
+    """A point on the land as given: (x, y), [x, y] or {"x_m", "y_m"}; None for an ID."""
+    if isinstance(ref, dict) and "x_m" in ref and "y_m" in ref:
+        return float(ref["x_m"]), float(ref["y_m"])
+    if isinstance(ref, (tuple, list)) and len(ref) == 2 and all(isinstance(v, (int, float)) for v in ref):
+        return float(ref[0]), float(ref[1])
+    return None
+
+
+def site_route(layout_nav: dict | Graph, building_navs: list[dict] = (), start=None, end=None, *,
+               accessible: bool = False, items=None, notes: list[dict] = ()) -> dict:
+    """The way across a location's site: from a gate, a kiosk, an area or a point on its land
+    (a point: the land's node nearest it, Graph.nearest; ``from`` is that node), or a room or
+    item in one of its buildings, to any of those, on the layout's network and its
+    buildings' together (site_graph; or a Graph already made of them). As route() gives a
+    way in a building, with each way into or out of a building a change ``by`` entrance
+    (``direction`` in or out) and a step ``enter`` or ``leave``: its legs on the land in the
+    site's frame, in a building in the building's. ``items``: item ID -> its feature, of
+    every package. NoRoute when there is none, saying why where it can (``notes``: why a
+    building has no way in, site_entrances'); KeyError for what the networks do not know."""
+    graph = layout_nav if isinstance(layout_nav, Graph) else site_graph(layout_nav, list(building_navs))
+    ends = []
+    for ref in (start, end):
+        p = _point(ref)
+        ends.append(graph.nearest(*p) if p is not None else ref)
+    try:
+        return route(graph, ends[0], ends[1], accessible=accessible, items=items)
+    except NoRoute as e:
+        raise NoRoute(_why_no_way(graph, ends, accessible, items, notes) or str(e)) from None
+
+
+def _why_no_way(graph: Graph, ends: list[str], accessible: bool, items, notes) -> str | None:
+    """Why there is no way across a site, in words: a building at either end with no way in
+    from the land (as notes say, or none of its entrances on the land), or, without stairs,
+    steps known at the entrances the way would take."""
+    for ref in ends:
+        try:
+            nodes = graph.ends(ref, items)
+        except KeyError:
+            continue
+        floor = graph.floors.get(graph.nodes[nodes[0]]["floor_id"]) or {}
+        b_id = floor.get("building_id")
+        if not b_id:
+            continue
+        said = next((n["why"] for n in notes if n.get("building_id") == b_id), None)
+        if said:
+            return f"no way into it from the land: {said}"
+        if not any(n.get("building_id") == b_id and n["kind"] == "entrance" and n.get("footprint_id")
+                   for n in graph.nodes.values()):
+            return f"no way into {b_id} from the land: the site's network has no entrance into it"
+    if accessible:
+        try:
+            way = route(graph, ends[0], ends[1], items=items)
+        except (NoRoute, KeyError):
+            return None
+        for a, b in zip(way["nodes"], way["nodes"][1:]):
+            e = _edge(graph, a, b)
+            if e["kind"] == LINK and not e["accessible"]:
+                land = graph.nodes[a if graph.nodes[a].get("footprint_id") else b]
+                label = graph.label((land.get("spaces") or [None])[0])
+                rise = land.get("rise_m")
+                return (f"no way without stairs or steps: the entrance into {label} has a step"
+                        + (f" (its floor {rise:g} m above the ground, as the site plan writes their levels)"
+                           if rise is not None else ""))
+    return None

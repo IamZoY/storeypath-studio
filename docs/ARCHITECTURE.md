@@ -28,13 +28,14 @@ The decisions behind it: [Studio 2's design](DESIGN-STUDIO-2.md).
 The format and everything that reads it are [StoreyPath Viewer](https://github.com/StoreyPath/storeypath-viewer), a repository
 of its own that Studio pins as a submodule (`storeypath-viewer/`):
 
-- **The package format**: [spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md) (format 0.12) and JSON
+- **The package format**: [spec/FORMAT.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md) (format 0.13) and JSON
   Schemas in [spec/schema](https://github.com/StoreyPath/storeypath-viewer/tree/main/spec/schema): one building per package (a location's
   layout, its land read from a site plan, in a package of its own), plain JSON,
   GeoJSON and CSV in a ZIP, readable without our code. Each export says what was
   added, changed and retired; `objects.csv` lists every ID with its parents;
   `navigation.json` is the building's walking network, with the rule every reader
-  finds the same way by. A package exported with its drawings carries each floor's
+  finds the same way by; a layout's is its land's, linked to its buildings' at their
+  entrances, for ways across a site. A package exported with its drawings carries each floor's
   drawing as drawn ([spec/DRAWING-VIEW.md](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/DRAWING-VIEW.md)).
 - **Go**: [go/](https://github.com/StoreyPath/storeypath-viewer/tree/main/go) (`github.com/storeypath/storeypath-viewer/go`) reads and
   validates packages, and finds the way in a building, standard library only.
@@ -85,4 +86,5 @@ item ID in packages of two projects.
 | 12 | Many people at once: Studio on PostgreSQL, many people a floor (one a room), changes seen live, undo and history | done |
 | 13 | Floor and wall finishes | done (format 0.9) |
 | 14 | Doors that open when walking; Studio's own 3D page | done |
-| 15 | Location layouts: a location's land from its site plan, its buildings placed on their footprints | done (format 0.12): [the design](DESIGN-LOCATION-LAYOUTS.md); outdoor routes next |
+| 15 | Location layouts: a location's land from its site plan, its buildings placed on their footprints | done (format 0.12): [the design](DESIGN-LOCATION-LAYOUTS.md) |
+| 16 | Routes across a site: from a gate across the land into each building, and between buildings | done (format 0.13): the land's network linked to the buildings' at their entrances, the same way in Studio, Go and the viewers |

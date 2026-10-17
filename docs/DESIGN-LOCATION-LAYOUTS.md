@@ -5,8 +5,9 @@ ground between its buildings divided into areas (parking, a driveway, a garden, 
 the things placed on it (cameras on poles, card readers at gates, barriers, lights), and
 the footprint of each building standing on it. It is read from a site plan, and the
 location's buildings are placed on it by their footprints. Part 1 (this): the land, its
-reading, placing the buildings, Review, the package and its readers. Part 2 (later):
-ways outdoors between buildings, and how Vigil uses the land.
+reading, placing the buildings, Review, the package and its readers. Part 2: ways outdoors
+across the land into each building and between buildings (format 0.13, built: FORMAT.md
+"Routes across a site", Ways across a site below); how Vigil uses the land, later.
 
 ## The model
 
@@ -145,3 +146,34 @@ there alone (an item is in one package: the building's it stands in, or the land
   and `footprint`. A card reader's `door_id` may be a gate.
 - A minor version: readers of 0.11 refuse 0.12; readers of 0.12 read 0.11 as before.
   FORMAT.md: "Location layouts (0.12)" and "Changes from 0.11".
+
+## Ways across a site (format 0.13)
+
+- **The land's network**, in the layout's package (`navigation.json`, made at export from
+  the layout: navigation.build_site_network). The areas walked are one ground inside the
+  plot and one outside it (the road), as the zones of a divided space are one room: their
+  edges are kerbs, walked across; the walls and every footprint are not walked. Nodes: a
+  `room` in each area, a `gate` in each gate with an `approach` on each side, a `kiosk` before
+  each kiosk on the land, an `entrance` at each building's door to the outside.
+- **Entrances**: a building's door to the outside is its own network's `entrance` (a door
+  joining one of its rooms to nothing, on its ground floor: ordinal 0, a storey). It is a way
+  in from the land when its middle, on the site (its building's site position, or its
+  placement on the map and the site's), lies within 2 m of its footprint's edge (the
+  footprint is often the roof, wider than the walls). The land's node is at the door on the
+  site; its approach in front of the footprint's edge, on the land; a `link` joins it to the
+  door's node in the building's package, by the door's ID: the packages' networks put
+  together, the way crosses there. A footprint whose building has none is said so, by name,
+  with why: no door to the outside on its ground floor, none at its footprint's edge (is it
+  placed?), its ground floor not read, or its door opening onto no area walked.
+- **Steps at an entrance**: the site plan's levels, read with it: the floor's (FFL) written in
+  the footprint, the ground's (FGL, NGL) written nearest it outside every footprint
+  (`ObjectRecord.levels` of the footprint, kept in the objects' `more`, no migration). Their
+  difference is the rise at its doors: 2 cm or more a step (the link not accessible), unless
+  an area typed ramp lies at the entrance; not written, not known (accessible). A person's
+  correction of an entrance (steps or none) is for later.
+- **The way across**: the same Dijkstra on the networks together; a link is a change of its
+  own (`by` entrance, `in` or `out`), a step `enter` or `leave`; a gate is a place; a point on
+  the land is its nearest node. Python `site_route`, JavaScript `siteRoute`, Go `SiteRoute`
+  (and `NewSite`): the conformance ways across site-plot agree exactly.
+- **Version**: 0.13, a minor one: a reader of 0.12 refuses a layout's package with a network
+  (its validator says a layout's package has none), so it must change to stay correct.

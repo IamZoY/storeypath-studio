@@ -70,7 +70,7 @@ from . import CHANNEL, Database
 COMMAND_LINE = "command line"  # who a change from the command line is of
 LOCAL = {"local": True}  # who a change is of on this computer without accounts
 OBJECT_MORE = ("connects", "parent", "zones", "span", "width", "swings", "sill", "height", "tag", "issues",
-               "detected_ignored", "match")
+               "detected_ignored", "match", "levels")
 DRAWINGS = "drawings"  # a floor's drawing is drawings/<name>: its name in the project's drawings
 ROOM_IDLE_S = 5 * 60  # a room its person made no change to for this long is free again
 NEAR_M = 0.3  # what is drawn touches the rooms within this of it (half a thick wall)

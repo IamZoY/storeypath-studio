@@ -133,6 +133,7 @@ DRAWING_TYPES = (".dwg", ".dxf")
 INCOMING = ".incoming-"  # a drawing as sent, until its private copy is made
 WORDS = ".words.txt"  # beside a drawing: every word and string left in it
 DRAWING_NAME = re.compile(r"drawing-(\d+)\.dxf")
+POINT = re.compile(r"-?\d+(\.\d+)?,-?\d+(\.\d+)?")  # a point on a location's land: x,y in metres of its site's frame
 PREVIEWS_KEPT = 12  # 3D packages kept, made (Studio.preview): a big building's is a few MB
 
 
@@ -2065,6 +2066,82 @@ class Studio:
             self._networks[key] = kept
         return kept
 
+    def site_navigation(self, code: str, location_id: str, start: str | None = None, end: str | None = None,
+                        accessible: bool = False, sight: Sight | None = None) -> dict:
+        """A location's site's walking network as it is now (format 0.13: its layout's,
+        navigation.build_site_network, with each of its buildings' the person may see whole:
+        ``sight``), or the way across it from ``start`` to ``end``: a node's, an area's, a
+        gate's, a room's or an item's ID (an item's as a person typed it), or a point on the
+        land, "x,y" in metres of the site's frame. ``notes`` say why a building has no way in
+        from the land; a way that cannot be found says why where it can."""
+        from .navigation import NoRoute, site_route
+
+        if (start is None) != (end is None):
+            raise ValueError("a way needs both from and to")
+        graph, items, notes, buildings = self._site_network(code, location_id, sight)
+        if start is None:
+            return {**graph.nav, "location_id": location_id, "buildings": buildings, "notes": notes}
+
+        def known(ref: str):  # as given when the network has it, a point on the land, else an item's ID as typed
+            if ref in graph.nodes or ref in graph.places or ref in items:
+                return ref
+            if POINT.fullmatch(ref):
+                x, y = ref.split(",")
+                return float(x), float(y)
+            return normalize_item_id(ref) or ref
+
+        try:
+            way = site_route(graph, start=known(start), end=known(end), accessible=accessible, items=items, notes=notes)
+        except NoRoute as e:
+            raise NotFound(str(e)) from None
+        except KeyError as e:
+            raise NotFound(str(e).strip("'\"")) from None
+        return {"location_id": location_id, "route": way}
+
+    def _site_network(self, code: str, location_id: str, sight: Sight | None):
+        """A location's site's network (its layout's and its buildings' as one), its items'
+        places, why a building has no way in, and its buildings (each its ID and name): those
+        ``sight`` sees whole (all, without it). Worked out once a version of the project."""
+        from .export import floor_units, standing_in
+        from .navigation import build_site_network, site_graph
+
+        ws = self.workspace(code)
+        try:
+            loc = ws.location(location_id)
+        except (KeyError, ValueError):
+            raise NotFound(f"no location {location_id}") from None
+        layout = ws.layout_of(location_id) if loc.layout is not None else None
+        if layout is None or layout.converted_at is None:
+            raise NotFound(f"{loc.name} has no layout read yet: a way across its site needs its land")
+        layout_id = make_id(ws.id, loc.code, LAND_CODE, layout.code)
+        seen = [make_id(ws.id, loc.code, b.code) for b in loc.buildings
+                if any(f.converted_at for f in b.floors)
+                and (sight is None or rank(sight.building(make_id(ws.id, loc.code, b.code))) >= rank("view"))]
+        version = self.store.version(code)
+        key = (code, location_id, version, tuple(seen))
+        with self._lock:
+            kept = self._networks.get(key)
+        if kept is not None:
+            return kept
+        notes: list[dict] = []
+        land = build_site_network(ws, layout_id, self.catalogue(), notes)
+        items = {it.id: dict(zip(("space_id", "zone_id"), standing_in(it, floor_units(ws, layout_id))))
+                 for it in ws.floor_items(layout_id)}
+        navs = []
+        for b_id in seen:
+            graph, its = self._network(code, b_id)
+            navs.append(graph.nav)
+            items |= its
+        names = {make_id(ws.id, loc.code, b.code): b.name for b in loc.buildings}
+        buildings = [{"id": b, "name": names[b]} for b in seen]
+        kept = (site_graph(land, navs), items, [n for n in notes if n["building_id"] in seen or sight is None],
+                buildings)
+        with self._lock:
+            # one network a site, its latest version
+            self._networks = {k: v for k, v in self._networks.items() if k[:2] != key[:2]}
+            self._networks[key] = kept
+        return kept
+
     def export_file(self, code: str, name: str) -> "Download":
         """A package of the project, as it was sent."""
         self._known(code)
@@ -2906,6 +2983,16 @@ class Gate:
         if not sight.sees_building(building_id):
             raise NotFound(f"no building {building_id}")
         _need(sight.building(building_id), level, "the whole building")
+        return sight
+
+    def site(self, code: str, location_id: str, level: str) -> Sight:
+        """A location's site (format 0.13): its land, its layout's, seen as a building is
+        (its buildings are each seen as they are)."""
+        sight = self.see(code)
+        land = f"{location_id}-{LAND_CODE}" if isinstance(location_id, str) else ""
+        if not sight.sees_building(land):
+            raise NotFound(f"no location {location_id} with a layout")
+        _need(sight.building(land), level, "the location's land")
         return sight
 
     def floor(self, code: str, floor_id: str, level: str) -> Sight:

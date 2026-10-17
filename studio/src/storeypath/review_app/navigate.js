@@ -1,14 +1,19 @@
 // StoreyPath Navigate: the way between two places of a building, as a kiosk in its
-// lobby would show it. Part of StoreyPath Studio; the page is
-// navigate.html?p=<code>&building=<id>[&from=<id>&to=<id>&accessible=1].
+// lobby would show it; or across a location's site (format 0.13), from a gate, a kiosk
+// or a point on its land into any of its buildings, or from one building to another.
+// Part of StoreyPath Studio; the page is
+// navigate.html?p=<code>&building=<id>[&from=<id>&to=<id>&accessible=1], or
+// navigate.html?p=<code>&site=<location id>[&from=<id or x,y>&to=…] for a site.
 //
-// The way is Studio's (GET /api/projects/<code>/buildings/<id>/navigation?from&to:
-// navigation.py, the same way every reader of the package finds); the places to
-// choose from are its network's (kiosks, entrances, every room). The plan of each
-// floor the way crosses is drawn by StoreyPath's plan engine (viewer/svg, built), the
-// building in 3D by its world (viewer/src/world), both from the building as it is
-// now (preview.storeypath), each with the way on it. Who may see the whole building
-// may find the way in it; the server checks.
+// The way is Studio's (GET /api/projects/<code>/buildings/<id>/navigation?from&to, or
+// …/locations/<id>/navigation?from&to across a site: navigation.py, the same way every
+// reader of the packages finds); the places to choose from are its network's (kiosks,
+// gates, entrances, the land's areas, every room). The plan of each floor the way
+// crosses (and of the land, across a site) is drawn by StoreyPath's plan engine
+// (viewer/svg, built), the building in 3D by its world (viewer/src/world), both from
+// the building as it is now (preview.storeypath), each with the way on it. Who may see
+// the whole building may find the way in it (across a site: its land, and the buildings
+// they may see whole); the server checks.
 
 import { accountMenu, sentAway, whoami } from "./account.js";
 import { setupChrome } from "./chrome.js";
@@ -28,7 +33,11 @@ const state = {
   project: null,
   buildings: [], // those of the project the person may see whole
   building: null,
-  network: null, // the building's network (floors, places, nodes)
+  site: null, // (0.13) the location whose site the way crosses, instead of a building
+  sites: [], // the locations with a layout the person may see: { id, name, land, layout }
+  layout: null, // the site's layout's ID (the floor of its land)
+  packages: new Map(), // a site's packages for the plan, by owner (a building's ID, or the land's)
+  network: null, // the building's network (floors, places, nodes); a site's, its land's and its buildings'
   floorNames: new Map(), // floor ID → its name
   floorOrder: [], // floor IDs, lowest first
   places: new Map(), // space or zone ID → place
@@ -74,6 +83,8 @@ function el(tag, attrs = {}, ...children) {
 }
 
 const message = (text) => ($("message").textContent = text || "");
+const POINT = /^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/; // a point on the land: x,y in metres of the site's frame
+const CHANGE_STEPS = new Set(["take", "enter", "leave"]); // the steps at a leg's end: a ride, a way into or out of a building
 const cap = (s) => (/^[a-z]/.test(s) ? s[0].toUpperCase() + s.slice(1) : s);
 const typeWords = (t) => ({ elevator: "lift", unspecified: "room" })[t] ?? t.replaceAll("_", " ");
 const floorName = (id) => state.floorNames.get(id) ?? id;
@@ -89,25 +100,35 @@ export function duration(seconds) {
 // ---- what a way may start or end at ------------------------------------------------
 
 /** The network's places to choose from: its kiosks (each with its item's ID, the tag
- * on it), then its entrances (ways in from outside), then every room a person arrives
- * in, each with its floor; ``id`` is what the API is asked with (a kiosk's item, an
- * entrance's node, a space's or zone's ID). */
-export function choicesOf(network) {
-  const floors = new Map(network.floors.map((f) => [f.id, f.name]));
+ * on it), then (a site's, 0.13) its gates, then its entrances (ways in from outside),
+ * then (a site's) the land's areas, then every room a person arrives in, each with its
+ * floor (``floorName`` says what a floor is called: its name, else); ``id`` is what the
+ * API is asked with (a kiosk's item, a gate's opening, an entrance's node, a space's or
+ * zone's ID). */
+export function choicesOf(network, { floorName = null } = {}) {
+  const names = new Map(network.floors.map((f) => [f.id, f.name]));
+  const floorOf = (id) => (floorName ? floorName(id) : null) ?? names.get(id) ?? id;
   const places = new Map(network.places.map((p) => [p.id, p]));
   const labelOf = (id) => places.get(id)?.label ?? "the room";
+  const land = network.layout ?? null;
   const out = [];
   const nodes = [...network.nodes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   for (const n of nodes) {
     if (n.kind === "kiosk" && n.item_id) {
       out.push({ id: n.item_id, node: n.id, group: "kiosk", floor: n.floor_id,
-        label: `Kiosk in ${labelOf(n.zone_id || n.space_id)}`, sub: `${floors.get(n.floor_id) ?? n.floor_id} · ${n.item_id}` });
+        label: `Kiosk in ${labelOf(n.zone_id || n.space_id)}`, sub: `${floorOf(n.floor_id)} · ${n.item_id}` });
     }
   }
   for (const n of nodes) {
-    if (n.kind === "entrance") {
+    if (n.kind === "gate" && n.opening_id) {
+      out.push({ id: n.opening_id, node: n.id, group: "gate", floor: n.floor_id, label: cap(labelOf(n.opening_id)),
+        sub: `${floorOf(n.floor_id)} · gate · ${n.opening_id.split("-").at(-1)}` });
+    }
+  }
+  for (const n of nodes) {
+    if (n.kind === "entrance" && !n.footprint_id) { // (a building's door; the land's side of it is the same door)
       out.push({ id: n.id, node: n.id, group: "entrance", floor: n.floor_id,
-        label: `Entrance into ${labelOf((n.spaces || [])[0])}`, sub: floors.get(n.floor_id) ?? n.floor_id });
+        label: `Entrance into ${labelOf((n.spaces || [])[0])}`, sub: floorOf(n.floor_id) });
     }
   }
   const arrivals = new Map(); // place → its node (a room's, a lift's, the stairs')
@@ -122,13 +143,19 @@ export function choicesOf(network) {
     const p = places.get(place);
     if (!p) continue;
     const code = place.split("-").at(-1);
-    rooms.push({ id: place, node: n.id, group: "room", floor: n.floor_id, type: p.type, label: cap(p.label),
-      sub: `${floors.get(n.floor_id) ?? n.floor_id} · ${typeWords(p.type)} · ${code}` });
+    rooms.push({ id: place, node: n.id, group: land !== null && n.floor_id === land ? "area" : "room", floor: n.floor_id,
+      type: p.type, label: cap(p.label), sub: `${floorOf(n.floor_id)} · ${typeWords(p.type)} · ${code}` });
   }
   const order = new Map(network.floors.map((f, i) => [f.id, i]));
-  rooms.sort((a, b) => (order.get(a.floor) ?? 0) - (order.get(b.floor) ?? 0)
+  rooms.sort((a, b) => (a.group === b.group ? 0 : a.group === "area" ? -1 : 1) || (order.get(a.floor) ?? 0) - (order.get(b.floor) ?? 0)
     || a.label.localeCompare(b.label, undefined, { numeric: true }) || (a.id < b.id ? -1 : 1));
   return [...out, ...rooms];
+}
+
+/** A point on the land as a choice (a way's start or end across a site): ``id`` "x,y". */
+export function pointChoice(x, y, floor) {
+  const id = `${Math.round(x * 100) / 100},${Math.round(y * 100) / 100}`;
+  return { id, node: null, group: "point", floor, label: "Here, on the land", sub: `${x.toFixed(1)}, ${y.toFixed(1)} m on the site` };
 }
 
 /** The choices a search finds: a kiosk's item's ID as typed (7k2q xm9f 4dp), that
@@ -179,7 +206,7 @@ class Picker {
       if (c.group !== group) {
         group = c.group;
         items.push(el("li", { class: "group", role: "presentation" },
-          { kiosk: "Kiosks", entrance: "Entrances", room: "Rooms" }[group]));
+          { kiosk: "Kiosks", gate: "Gates", entrance: "Entrances", area: "On the land", room: "Rooms", point: "A point" }[group]));
       }
       items.push(el("li", { "data-i": i, role: "option", id: `${this.list.id}-${i}`, class: i === this.active ? "active" : null },
         el("span", { class: "label" }, c.label), el("span", { class: "sub" }, c.sub)));
@@ -222,10 +249,15 @@ class Picker {
     if (!quiet) this.onChoose(c);
   }
 
-  /** Choose by ID (a kiosk's item, as typed too, or node, an entrance's node, a place), quietly. */
+  /** Choose by ID (a kiosk's item, as typed too, or node, an entrance's node, a place;
+   * across a site, a gate's, or a point on the land, "x,y"), quietly. */
   set(id) {
     const tag = normalizeItemId(id);
-    const c = id ? state.choices.find((x) => x.id === id || x.node === id || x.id === tag) : null;
+    let c = id ? state.choices.find((x) => x.id === id || x.node === id || x.id === tag) : null;
+    if (!c && state.site && typeof id === "string" && POINT.test(id)) {
+      const [x, y] = id.split(",").map(Number);
+      c = pointChoice(x, y, state.layout);
+    }
     this.choose(c ?? null, { quiet: true });
     return Boolean(c);
   }
@@ -249,6 +281,8 @@ async function start() {
   $("accessible").checked = params.get("accessible") === "1";
   $("accessible").addEventListener("change", () => changed());
   $("building").addEventListener("change", () => openBuilding($("building").value));
+  // across a site: a double click on its land starts the way there
+  $("plan").addEventListener("dblclick", (e) => pickPoint(e));
   for (const b of $("view-mode").querySelectorAll("button")) b.addEventListener("click", () => setView(b.dataset.view));
   $("fit").addEventListener("click", () => fitPlan());
   $("fly").addEventListener("click", () => fly());
@@ -281,28 +315,43 @@ async function start() {
   }
   document.title = `${state.project.project.name} · Find the way`;
   $("back").textContent = state.project.project.name;
-  $("project-meta").textContent = "From a kiosk, an entrance or any room, to any room";
   const can = state.project.can;
-  const sees = (b) => !can || ["view", "edit", "share"].includes(can.buildings?.[b.id] ?? can.project);
+  const sees = (id) => !can || ["view", "edit", "share"].includes(can.buildings?.[id] ?? can.project);
   state.buildings = state.project.locations.flatMap((l) => l.buildings)
-    .filter((b) => b.floors.some((f) => f.converted) && sees(b));
-  if (!state.buildings.length) {
+    .filter((b) => b.floors.some((f) => f.converted) && sees(b.id));
+  // (0.13) the sites: each location whose land is read, as its layout, and seen
+  state.sites = state.project.locations.filter((l) => l.layout?.converted && sees(l.layout.land))
+    .map((l) => ({ id: l.id, name: l.name, land: l.layout.land, layout: l.layout.id }));
+  if (!state.buildings.length && !state.sites.length) {
     message("No building here may be shown whole to you: finding the way needs every floor of a building.");
     return;
   }
-  $("building").replaceChildren(...state.buildings.map((b) => el("option", { value: b.id }, b.name)));
-  $("building-field").hidden = state.buildings.length < 2;
-  const wanted = params.get("building");
-  const first = state.buildings.find((b) => b.id === wanted) ?? state.buildings[0];
-  $("building").value = first.id;
+  $("building").replaceChildren(...state.buildings.map((b) => el("option", { value: b.id }, b.name)),
+    state.sites.length ? el("optgroup", { label: "Across a site: its land and its buildings" },
+      state.sites.map((l) => el("option", { value: `site:${l.id}` }, `${l.name} (site)`))) : null);
+  $("building-field").hidden = state.buildings.length + state.sites.length < 2;
+  $("building-field").firstChild.textContent = state.sites.length ? "Building or site " : "Building ";
+  // a site asked for (or its land, as Review on a layout asks), else a building
+  const land = params.get("building");
+  const site = state.sites.find((l) => l.id === params.get("site") || l.land === land);
+  const first = site ? `site:${site.id}` : (state.buildings.find((b) => b.id === land) ?? state.buildings[0])?.id
+    ?? `site:${state.sites[0].id}`;
+  $("building").value = first;
   setView(params.get("view") || saved("storeypath.navigate.view") || "plan", { quiet: true });
   planModule(); // (loaded while the building is read)
-  await openBuilding(first.id, { from: params.get("from"), to: params.get("to"), floor: params.get("floor") });
+  await openBuilding(first, { from: params.get("from"), to: params.get("to"), floor: params.get("floor") });
 }
 
-/** A building's network, its places to choose from, and its package for the views. */
+/** A building's network, its places to choose from, and its package for the views
+ * (``id`` "site:<location ID>": a site's, openSite). */
 async function openBuilding(id, { from: start = null, to: end = null, floor = null } = {}) {
+  if (id.startsWith("site:")) return openSite(id.slice(5), { from: start, to: end, floor });
   state.building = id;
+  state.site = state.layout = null;
+  state.packages = new Map();
+  views3d(true);
+  $("project-meta").textContent = "From a kiosk, an entrance or any room, to any room";
+  placeholders("From: a kiosk, an entrance or a room", "To: a room, by name or number");
   state.route = null;
   state.pkg = null;
   state.bytes = null;
@@ -332,7 +381,80 @@ async function openBuilding(id, { from: start = null, to: end = null, floor = nu
   await changed({ keepUrl: Boolean(start || end) });
 }
 
-const groundFloor = () => state.network.floors.find((f) => f.ordinal === 0)?.id ?? state.floorOrder[0] ?? null;
+const groundFloor = () => state.layout ?? state.network.floors.find((f) => f.ordinal === 0)?.id ?? state.floorOrder[0] ?? null;
+
+/** A location's site (format 0.13): its land's network and its buildings' as one, its
+ * places to choose from (its gates, kiosks and areas, and every room of its buildings),
+ * and each floor's package for the plan, read as the way needs it. The 3D view shows one
+ * building: across a site, the plan alone. */
+async function openSite(loc, { from: start = null, to: end = null, floor = null } = {}) {
+  state.site = loc;
+  state.building = null;
+  state.packages = new Map();
+  state.route = null;
+  state.pkg = null;
+  state.bytes = null;
+  state.planShows = null;
+  views3d(false);
+  $("project-meta").textContent = "From a gate, a kiosk or a point on the land, to any room of its buildings";
+  placeholders("From: a gate, a kiosk or a room; or double-click the land", "To: a room, an area or a gate");
+  showRoute();
+  message("Reading the site…");
+  try {
+    state.network = await api(`projects/${encodeURIComponent(CODE)}/locations/${encodeURIComponent(loc)}/navigation`);
+  } catch (e) {
+    message(e.status === 403 || e.status === 404 ? `This site's ways cannot be shown to you. (${e.message})`
+      : `The site's ways could not be read: ${e.message}`);
+    return;
+  }
+  if (state.site !== loc) return;
+  const net = state.network;
+  state.layout = net.layout;
+  const names = new Map(net.buildings.map((b) => [b.id, b.name]));
+  state.floorNames = new Map(net.floors.map((f) => [f.id, f.id === net.layout ? "Site"
+    : `${names.get(f.building_id) ?? f.building_id} · ${f.name}`]));
+  state.floorOrder = net.floors.map((f) => f.id);
+  state.places = new Map(net.places.map((p) => [p.id, p]));
+  state.choices = choicesOf(net, { floorName });
+  if (!from.set(start)) {
+    from.set(state.choices.find((c) => c.group === "kiosk" && c.floor === net.layout)?.id
+      ?? state.choices.find((c) => c.group === "gate")?.id);
+  }
+  if (!to.set(end)) to.choose(null, { quiet: true });
+  state.floor = (state.floorOrder.includes(floor) ? floor : null) ?? net.layout;
+  drawFloorTabs();
+  // why a building has no way in from the land, said once
+  message(net.notes.length ? `No way in from the land: ${net.notes.map((n) => n.why).join("; ")}.` : "");
+  await changed({ keepUrl: Boolean(start || end) });
+}
+
+/** What the From and To fields ask for. */
+function placeholders(start, end) {
+  $("from-input").placeholder = start;
+  $("to-input").placeholder = end;
+}
+
+/** The 3D view and both views offered (a building), or the plan alone (across a site). */
+function views3d(on) {
+  for (const b of $("view-mode").querySelectorAll("button")) {
+    if (b.dataset.view === "plan") continue;
+    b.disabled = !on;
+    b.title = on ? (b.dataset.view === "3d" ? "The building in 3D, with the way through it" : "The plan and the 3D view side by side")
+      : "The 3D view shows one building: choose it above to see its part of the way in 3D";
+  }
+  if (!on && state.view !== "plan") setView("plan", { quiet: true });
+}
+
+/** Across a site: a double click on its land (the plan of it shown) starts the way there. */
+function pickPoint(e) {
+  if (!state.site || !state.engine || state.planShows !== state.layout) return;
+  const box = $("plan").getBoundingClientRect();
+  const [x, y] = state.engine.toPlan([e.clientX - box.left, e.clientY - box.top]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  e.preventDefault();
+  from.choose(pointChoice(x, y, state.layout), { quiet: true });
+  changed();
+}
 
 /** The building as a package (as it is now), for the plan and the 3D view. */
 async function loadPackage(id) {
@@ -367,7 +489,8 @@ async function changed({ keepUrl = false } = {}) {
   try {
     const q = new URLSearchParams({ from: a.id, to: b.id });
     if (accessible) q.set("accessible", "1");
-    const { route } = await api(`projects/${encodeURIComponent(CODE)}/buildings/${encodeURIComponent(state.building)}/navigation?${q}`);
+    const where = state.site ? `locations/${encodeURIComponent(state.site)}` : `buildings/${encodeURIComponent(state.building)}`;
+    const { route } = await api(`projects/${encodeURIComponent(CODE)}/${where}/navigation?${q}`);
     if (asked !== state.asking) return;
     state.route = route;
     message("");
@@ -383,7 +506,7 @@ async function changed({ keepUrl = false } = {}) {
 
 /** The page's address says what it shows, to come back to or send on. */
 function remember() {
-  const q = new URLSearchParams({ p: CODE, building: state.building });
+  const q = new URLSearchParams(state.site ? { p: CODE, site: state.site } : { p: CODE, building: state.building });
   if (from.chosen) q.set("from", from.chosen.id);
   if (to.chosen) q.set("to", to.chosen.id);
   if ($("accessible").checked) q.set("accessible", "1");
@@ -434,12 +557,12 @@ function simplify(points, tolerance) {
   return [...simplify(points.slice(0, at + 1), tolerance).slice(0, -1), ...simplify(points.slice(at), tolerance)];
 }
 
-/** The leg each step is on (the start and walks on theirs, a ride on the leg it leaves,
- * the arrival on the last), as the plan engine has them. */
+/** The leg each step is on (the start and walks on theirs, a ride, or a way into or out
+ * of a building, on the leg it leaves, the arrival on the last), as the plan engine has them. */
 export function stepLegs(route) {
   let leg = 0;
   const last = Math.max(0, route.legs.length - 1);
-  return route.steps.map((s) => (s.kind === "arrive" ? last : s.kind === "take" ? Math.min(last, leg++) : Math.min(last, leg)));
+  return route.steps.map((s) => (s.kind === "arrive" ? last : CHANGE_STEPS.has(s.kind) ? Math.min(last, leg++) : Math.min(last, leg)));
 }
 
 /** Seconds each step takes: a walk's metres at the network's pace; the rides share what
@@ -471,13 +594,17 @@ function showRoute() {
   stopPlaying();
   state.step = null;
   if (r) {
-    const rides = [...new Set(r.changes.map((c) => c.by))];
-    const floors = new Set(r.legs.map((l) => l.floor_id)).size;
+    const rides = [...new Set(r.changes.filter((c) => c.by !== "entrance").map((c) => c.by))];
+    const buildings = r.changes.filter((c) => c.by === "entrance" && c.direction === "in").length;
+    const floors = new Set(r.legs.map((l) => l.floor_id).filter((f) => f !== state.layout)).size;
+    const outdoors = r.legs.some((l) => l.floor_id === state.layout);
     $("sum-metres").textContent = `${Math.round(r.metres)} m`;
     $("sum-time").textContent = duration(r.seconds);
     $("sum-sub").replaceChildren(...[
       ...(rides.length ? rides.map((by) => el("span", { class: "chip" }, glyph(by === "lift" ? "lift" : "stairs"), `by ${by}`))
-        : [el("span", {}, "On one floor")]),
+        : [el("span", {}, outdoors && !floors ? "On the land" : "On one floor")]),
+      outdoors && floors ? el("span", { class: "chip" }, lucide("door-open"),
+        buildings > 1 ? `across the site, into ${buildings} buildings` : "across the site") : null,
       floors > 1 ? el("span", {}, `${floors} floors`) : null,
       r.accessible ? el("span", { class: "chip" }, lucide("accessibility"), "step-free") : null].filter(Boolean));
     renderSteps(r);
@@ -487,7 +614,7 @@ function showRoute() {
   drawFloorTabs();
   drawPlan({ way: true });
   if (state.world) drawWorldRoute();
-  $("fly").disabled = !r || !state.world?.flyRoute;
+  $("fly").disabled = !r || !state.world?.flyRoute || Boolean(state.site);
 }
 
 /** The steps as cards, a floor's heading before each floor's: its picture, its words,
@@ -498,7 +625,7 @@ function renderSteps(r) {
   let floor = null;
   r.steps.forEach((s, i) => {
     const on = r.legs[legs[i]]?.floor_id;
-    if (s.kind !== "take" && on !== floor) {
+    if (!CHANGE_STEPS.has(s.kind) && on !== floor) {
       floor = on;
       items.push(el("li", { class: "floor-head", role: "presentation" }, floorName(on)));
     }
@@ -520,16 +647,19 @@ function renderSteps(r) {
         el("span", { class: "way" }, glyph(s.direction === "down" ? "down" : "up")));
       meta.push(`${floorName(s.from_floor_id)} → ${floorName(s.to_floor_id)}`);
       if (secs[i] >= 1) meta.push(`about ${duration(secs[i])}`);
+    } else if (s.kind === "enter" || s.kind === "leave") { // (0.13) into a building from the land, or out of it
+      icon = el("span", { class: "step-icon" }, lucide("door-open"));
+      meta.push(`${floorName(s.from_floor_id)} → ${floorName(s.to_floor_id)}`);
     } else {
       icon = el("span", { class: "step-icon" }, lucide("map-pin"));
       meta.push(floorName(s.floor_id));
     }
     if (s.kind === "start") meta.push(floorName(s.floor_id));
-    const li = el("li", { class: `step ${s.kind}${i > 0 && r.steps[i - 1].kind === "take" ? " after-ride" : ""}`, "data-i": i,
+    const li = el("li", { class: `step ${s.kind}${i > 0 && CHANGE_STEPS.has(r.steps[i - 1].kind) ? " after-ride" : ""}`, "data-i": i,
       "data-floor": on || null, tabindex: -1, id: `step-${i}`, "aria-label": s.text },
     icon, el("span", { class: "step-body" }, el("span", { class: "step-text" }, s.text), turns,
       el("span", { class: "step-meta" }, meta.map((m, k) => el("span", {}, k ? `· ${m}` : m)))));
-    if (s.kind === "take") li.classList.add("next-floor");
+    if (CHANGE_STEPS.has(s.kind)) li.classList.add("next-floor");
     li.addEventListener("click", () => showStep(i));
     items.push(li);
   });
@@ -635,7 +765,9 @@ function drawFloorTabs() {
   drawingCrumb();
   const onRoute = new Map();
   (state.route?.legs ?? []).forEach((leg, i) => { if (!onRoute.has(leg.floor_id)) onRoute.set(leg.floor_id, onRoute.size + 1); });
-  const floors = state.network?.floors ?? []; // lowest first
+  // a building's floors, lowest first; across a site, its land and the floors the way is on
+  const floors = (state.network?.floors ?? []).filter((f) => !state.site || f.id === state.layout || onRoute.has(f.id))
+    .map((f) => ({ ...f, name: floorName(f.id) }));
   $("floors").replaceChildren(...floors.map((f) => el("button", {
     type: "button", class: [f.id === state.floor ? "active" : "", onRoute.has(f.id) ? "on-route" : ""].join(" ").trim() || null,
     "aria-pressed": String(f.id === state.floor), "data-floor": f.id,
@@ -650,16 +782,43 @@ function drawingCrumb() {
   for (const id of ["drawing", "drawing-sep"]) $(id).hidden = !shown;
   if (!shown) return;
   $("drawing").href = `/review.html?p=${encodeURIComponent(CODE)}#${new URLSearchParams({ floor })}`;
-  $("drawing-name").textContent = [building?.name, state.floorNames?.get(floor)].filter(Boolean).join(" · ") || "Drawing";
+  $("drawing-name").textContent = (state.site ? floorName(floor) : [building?.name, state.floorNames?.get(floor)].filter(Boolean).join(" · "))
+    || "Drawing";
 }
 
 /** A floor's tab: that floor; its part of the way framed when it has one. */
 function showFloor(id) {
-  if (!id || !state.engine || !state.pkg) return;
+  if (!id || !state.engine || (!state.pkg && !state.site)) return;
   const leg = (state.route?.legs ?? []).findIndex((l) => l.floor_id === id);
   stopPlaying();
   if (leg >= 0 && state.engine.showLeg) state.engine.showLeg(leg);
-  else if (id !== state.planShows) state.engine.setFloor(state.planModule.floorFromPackage(state.pkg, id), { fade: true });
+  else if (id !== state.planShows) {
+    packageOf(id).then((pkg) => pkg && state.engine.setFloor(state.planModule.floorFromPackage(pkg, id), { fade: true }),
+      (e) => message(`The plan could not be drawn: ${e.message}`));
+  }
+}
+
+/** The package a floor is drawn from, as the plan engine reads it: the building's (as it
+ * is now); across a site, its owner's (a building's, or the land's), each read the first
+ * time a way or a tab needs it. Null without the plan engine. */
+async function packageOf(floorId) {
+  const mod = await planModule();
+  if (!mod) return null;
+  if (!state.site) {
+    if (!state.pkg && state.bytes) state.pkg = await mod.readPackage(state.bytes);
+    return state.pkg;
+  }
+  const owner = floorId.split("-").slice(0, 3).join("-"); // PROJECT-LOCATION-BUILDING (or -LAND)
+  if (!state.packages.has(owner)) {
+    const asked = fetch(`/api/projects/${encodeURIComponent(CODE)}/preview.storeypath?building=${encodeURIComponent(owner)}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `${res.status} ${res.statusText}`);
+        return mod.readPackage(await res.arrayBuffer());
+      });
+    state.packages.set(owner, asked);
+    asked.catch(() => state.packages.get(owner) === asked && state.packages.delete(owner)); // (asked again next time)
+  }
+  return state.packages.get(owner);
 }
 
 /** The plan engine (viewer/svg, built), or null when it is not built here. */
@@ -675,7 +834,7 @@ const theme = () => (document.documentElement.dataset.theme === "light" ? "light
 /** The plan: its engine made once (calm, light or dark with the page), the floor the way
  * starts on with the way drawn on it (`way`: drawn again), else the floor chosen. */
 async function drawPlan({ way = false } = {}) {
-  if (!state.bytes || !state.network) return;
+  if ((!state.bytes && !state.site) || !state.network) return;
   const mod = await planModule();
   const note = $("plan-note");
   if (!mod) {
@@ -684,7 +843,9 @@ async function drawPlan({ way = false } = {}) {
     return;
   }
   try {
-    if (!state.pkg) state.pkg = await mod.readPackage(state.bytes);
+    const shown = state.route, first = shown ? shown.legs[0].floor_id : state.floor;
+    const pkg = await packageOf(first);
+    if (!pkg || state.route !== shown) return; // (another way asked for meanwhile: it draws itself)
     if (!state.engine) {
       state.engine = new mod.FloorPlanEngine($("plan"), { title: "Floor plan with the way", interactive: () => false, interactiveItems: false,
         style: "wayfinding", theme: theme() });
@@ -695,12 +856,12 @@ async function drawPlan({ way = false } = {}) {
       follow(state.engine);
     }
     const r = state.route;
-    const floor = r ? r.legs[0].floor_id : state.floor;
+    const floor = first;
     if (!way && state.planShows === floor) return;
-    if (state.planShows !== floor || !r) state.engine.setFloor(mod.floorFromPackage(state.pkg, floor), { fit: !r, fade: Boolean(state.planShows) });
+    if (state.planShows !== floor || !r) state.engine.setFloor(mod.floorFromPackage(pkg, floor), { fit: !r, fade: Boolean(state.planShows) });
     if (typeof state.engine.showRoute === "function") {
       state.engine.showRoute(r, { floorName, fit: true, startLabel: startLabel(), style: "wayfinding",
-        floorPlan: (id) => mod.floorFromPackage(state.pkg, id) });
+        floorPlan: async (id) => mod.floorFromPackage(await packageOf(id), id) });
     }
     state.fitWay = Boolean(r);
     note.hidden = true;
@@ -714,7 +875,8 @@ async function drawPlan({ way = false } = {}) {
 function startLabel() {
   const c = from.chosen;
   if (!c) return null;
-  return c.group === "kiosk" ? "You are here" : c.group === "entrance" ? "Entrance" : "Start";
+  return c.group === "kiosk" || c.group === "point" ? "You are here" : c.group === "entrance" ? "Entrance"
+    : c.group === "gate" ? "Gate" : "Start";
 }
 
 /** The way on this floor; again, the whole floor (and so on, each press). */
@@ -728,7 +890,7 @@ function fitPlan() {
 // ---- the 3D view ---------------------------------------------------------------------
 
 async function drawWorld() {
-  if (!state.bytes) return;
+  if (!state.bytes || state.site) return; // (one building in 3D: across a site, the plan alone)
   const note = $("world-note");
   try {
     if (!state.world) {
@@ -756,7 +918,7 @@ async function drawWorld() {
 
 function drawWorldRoute() {
   const w = state.world;
-  if (!w || state.worldShows !== state.building || typeof w.showRoute !== "function") return;
+  if (!w || state.site || state.worldShows !== state.building || typeof w.showRoute !== "function") return;
   w.setFloors?.(null); // (a new way: the floors it walks on, by lift past others: those alone)
   w.showRoute(state.route, { fit: true, startLabel: startLabel(), floorName });
   $("fly").disabled = !state.route || typeof w.flyRoute !== "function";
@@ -804,7 +966,7 @@ async function fly() {
 }
 
 function setView(view, { quiet = false } = {}) {
-  if (!["plan", "3d", "both"].includes(view)) view = "plan";
+  if (!["plan", "3d", "both"].includes(view) || state.site) view = "plan"; // (across a site, the plan alone)
   if (state.playing) stopPlaying();
   state.view = view;
   $("panes").className = view;

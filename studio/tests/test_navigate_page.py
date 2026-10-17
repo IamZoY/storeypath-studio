@@ -98,3 +98,67 @@ def test_turns_along_a_walk_in_words(page):
 def test_each_step_on_its_leg_with_its_time(page):
     assert page[1]["legs"] == [0, 0, 0, 1, 1, 2, 2]
     assert page[1]["seconds"] == [0, 20, 70, 10, 0]  # walks at the network's pace; the ride what is left
+
+
+# ---- across a site (format 0.13) ----------------------------------------------------------
+
+SITE_SCRIPT = r"""
+const { register } = await import("node:module");
+register("data:text/javascript," + encodeURIComponent(`export async function resolve(s, c, next) {
+  return s === "/viewer/src/ids.js" ? { url: ${JSON.stringify(process.argv[2])}, shortCircuit: true } : next(s, c);
+}`));
+const { choicesOf, pointChoice, search, stepLegs, stepSeconds } = await import(process.argv[1]);
+const network = JSON.parse(await new Promise((done) => { let s = ""; process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => done(s)); }));
+const names = new Map(network.floors.map((f) => [f.id, f.id === network.layout ? "Site" : `${f.building_id} · ${f.name}`]));
+const choices = choicesOf(network, { floorName: (id) => names.get(id) });
+console.log(JSON.stringify({
+  groups: choices.map((c) => c.group),
+  gates: choices.filter((c) => c.group === "gate"),
+  areas: choices.filter((c) => c.group === "area").map((c) => c.label),
+  entrances: choices.filter((c) => c.group === "entrance").map((c) => c.id),
+  kiosk: choices.find((c) => c.group === "kiosk"),
+  bedroom: search(choices, "bedroom").filter((c) => c.group === "room").map((c) => c.sub),
+  point: pointChoice(-15.004, -12.0, network.layout),
+  legs: stepLegs({ legs: [{}, {}, {}], steps: [{ kind: "start" }, { kind: "walk" }, { kind: "leave" }, { kind: "walk" },
+    { kind: "enter" }, { kind: "walk" }, { kind: "arrive" }] }),
+  seconds: stepSeconds({ seconds: 40, legs: [{}, {}], steps: [{ kind: "start" }, { kind: "walk", metres: 26 }, { kind: "enter" },
+    { kind: "walk", metres: 13 }, { kind: "arrive" }] }, 1.3),
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def site_page():
+    from storeypath.navigation import site_graph
+
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is not here")
+
+    def nav(name):
+        with zipfile.ZipFile(asset_dir("spec") / "conformance" / "packages" / f"{name}.storeypath") as z:
+            return json.loads(z.read("navigation.json"))
+
+    network = site_graph(nav("site-plot"), [nav(f"site-plot-{b}") for b in ("house", "guest-a", "guest-b")]).nav
+    out = subprocess.run(["node", "--input-type=module", "-e", SITE_SCRIPT, PAGE.as_uri(), IDS.as_uri()],
+                         input=json.dumps(network), capture_output=True, text=True, timeout=60, check=True)
+    return network, json.loads(out.stdout)
+
+
+def test_across_a_site_kiosks_then_gates_entrances_the_lands_areas_and_rooms(site_page):
+    network, got = site_page
+    order = ["kiosk", "gate", "entrance", "area", "room"]
+    assert set(got["groups"]) == set(order) and got["groups"] == sorted(got["groups"], key=order.index)
+    assert sorted(g["label"] for g in got["gates"]) == ["The pedestrian gate", "The vehicle gate"]
+    assert all(g["node"] == f"door:{g['id']}" and g["sub"].startswith("Site · gate") for g in got["gates"])
+    assert sorted(got["areas"]) == ["GARDEN", "PARKING", "STREET", "The yard"]
+    # the buildings' doors to the outside, not the land's side of them
+    assert len(got["entrances"]) == 3 and all(i.startswith("door:") for i in got["entrances"])
+    assert got["kiosk"]["label"] == "Kiosk in the yard" and got["kiosk"]["sub"].startswith("Site · ")
+    assert len(got["bedroom"]) == 2 and all(" · Ground floor · " in s for s in got["bedroom"])  # one each guest house
+
+
+def test_across_a_site_a_point_and_the_ways_in_and_out(site_page):
+    network, got = site_page
+    assert got["point"]["id"] == "-15,-12" and got["point"]["group"] == "point" and got["point"]["floor"] == network["layout"]
+    assert got["legs"] == [0, 0, 0, 1, 1, 2, 2]  # out of one building, into another: each ends a leg
+    assert got["seconds"] == [0, 20, 0, 10, 0]  # (no time through an entrance)

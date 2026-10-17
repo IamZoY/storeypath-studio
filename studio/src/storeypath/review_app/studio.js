@@ -1260,6 +1260,10 @@ function layoutTable(code, loc, p) {
         el("a", { href: `/review.html?p=${encodeURIComponent(code)}#floor=${encodeURIComponent(l.id)}`, "data-testid": "layout-review" },
           onFloor(p, l.id, "edit") ? "Review" : "View"),
         el("a", { href: worldUrl(code, { building: l.land }), target: "_blank", title: "The land in 3D: its areas, walls and gates, the buildings on their footprints" }, "3D"),
+        // (0.13) the way across the site: from a gate, a kiosk or a point on the land into its buildings
+        onBuilding(p, l.land, "view") ? el("a", { href: `/navigate.html?${new URLSearchParams({ p: code, site: loc.id })}`,
+          "data-testid": "layout-navigate", title: "Find the way across the site: from a gate, a kiosk or a point on the land into any of its buildings, or from one building to another" },
+        "Navigate") : null,
       ] : null,
       l.drawing && onFloor(p, l.id, "edit") ? readLayoutAgain(code, loc) : null,
       exporting))));

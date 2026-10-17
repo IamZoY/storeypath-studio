@@ -55,6 +55,10 @@ PROPERTY_LAYER = re.compile(r"propert|plot|boundar|limit|lot.?line|site.?line|ح
 # levels: a floor's (a building's: finished floor, slab, top of a parapet) or the ground's
 BUILDING_LEVEL = re.compile(r"\b(f\.?\s?f\.?\s?l|s\.?\s?s\.?\s?l|t\.?\s?o\.?\s?s|top|roof|slab|parapet)\b", re.I)
 GROUND_LEVEL = re.compile(r"\b(f\.?\s?g\.?\s?l|n\.?\s?g\.?\s?l|e\.?\s?g\.?\s?l|g\.?\s?l|ground\s+level)\b", re.I)
+# a floor's finished level (+0.45 FFL), and the value a level text writes (±0.00, +450)
+FLOOR_LEVEL = re.compile(r"\bf\.?\s?f\.?\s?l\b", re.I)
+LEVEL_VALUE = re.compile(r"(±|\+/-|[+\-−])?\s*(\d+(?:[.,]\d+)?)")
+GROUND_NEAR_M = 30.0  # a footprint's ground: the ground's level written nearest it, within this
 # what a building is called, in the words site plans use
 BUILDING_WORDS = re.compile(
     r"\b(villa|house|home|building|bldg|block|tower|majlis|kitchen|annex|annexe|outbuilding|out\s*house|guard|"
@@ -752,6 +756,8 @@ class FoundFootprint:
     polygon: Polygon
     texts: list[str]  # the texts in it, as written (a building's name among them)
     named: bool  # a building's text is in it
+    floor_level: float | None = None  # its floor's level, as written in it (FFL), metres
+    ground_level: float | None = None  # the ground's level written nearest it (FGL, NGL), metres
 
 
 def footprints(faces: list[Face], plot: Polygon) -> list[FoundFootprint]:
@@ -788,6 +794,32 @@ def footprints(faces: list[Face], plot: Polygon) -> list[FoundFootprint]:
             f.kind = "land"
             f.walled = True
     return out
+
+
+def level_of(text: str) -> float | None:
+    """The level a text writes, metres (+0.45 FFL, FGL ±0.00, F.F.L. +450): a whole number
+    of two digits or more, with no decimal point, is millimetres. None: no number in it."""
+    m = LEVEL_VALUE.search(plain(text))
+    if m is None:
+        return None
+    digits = m.group(2).replace(",", ".")
+    value = float(digits)
+    if "." not in digits and value >= 10:
+        value /= 1000
+    return -value if m.group(1) in ("-", "−") else value
+
+
+def levels(standing: list[FoundFootprint], said: list[tuple[Text, tuple]]) -> None:
+    """Each footprint's floor level (the lowest FFL written in it) and the ground's level
+    nearest it (an FGL or NGL written outside every footprint, within GROUND_NEAR_M): how
+    far its floor stands above the ground at its doors, where both are written."""
+    grounds = [(t.point, v) for t, s in said if s and s[0] == GROUND and (v := level_of(t.text)) is not None
+               and not any(fp.polygon.covers(t.point) for fp in standing)]
+    for fp in standing:
+        floors = [v for t in fp.texts if FLOOR_LEVEL.search(plain(t)) and (v := level_of(t)) is not None]
+        fp.floor_level = min(floors) if floors else None
+        near = sorted((fp.polygon.distance(p), v) for p, v in grounds if fp.polygon.distance(p) <= GROUND_NEAR_M)
+        fp.ground_level = near[0][1] if near else None
 
 
 # ---- areas, gates, the road --------------------------------------------------------------------
@@ -1033,6 +1065,7 @@ def read_site_plan(doc, region=None, units: str | None = None, offset=None, edit
     first = wall_gaps(plot, boundary_walls(faces, plot), drawn)
     land_and_buildings(faces, plot, drawn, said, first)
     standing = footprints(faces, plot)
+    levels(standing, said)
     covered = unary_union([f.polygon for f in faces if (f.thin and f.edge) or f.kind == "building"])
     gaps = wall_gaps(plot, covered, drawn)
     found_areas = areas(faces, plot)

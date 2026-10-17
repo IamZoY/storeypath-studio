@@ -13,7 +13,7 @@ from shapely.geometry import Point, box, mapping, shape
 from storeypath.assets import asset_dir
 from storeypath.export import export_package
 from storeypath.navigation import (CORNER_SLACK_M, MARGIN_M, ROOM_PENALTY_S, Graph, NoRoute, build_network, label_of, route,
-                                   walking_region)
+                                   site_route, walking_region)
 from storeypath.package import FORMAT_VERSION
 from storeypath.samples import build_demo
 from storeypath.stacks import NOT_LINKED, stack_of, stacks
@@ -44,6 +44,23 @@ def test_each_conformance_way_is_found_as_every_reader_finds_it(case):
     assert abs(got["seconds"] - want["seconds"]) <= ROUTES["tolerance_s"]
     assert [(leg["floor_id"], leg["points"]) for leg in got["legs"]] == \
         [(leg["floor_id"], leg["points"]) for leg in want["legs"]]
+
+
+@pytest.mark.parametrize("case", ROUTES["site_routes"], ids=[c["name"] for c in ROUTES["site_routes"]])
+def test_each_conformance_way_across_a_site_is_found_as_every_reader_finds_it(case):
+    """routes.json's ways across site-plot (0.13): on its layout's network and its buildings'
+    together, exactly as written (a way that is none: null)."""
+    land, items = package(case["layout"])
+    navs = []
+    for name in case["buildings"]:
+        nav, its = package(name)
+        navs.append(nav)
+        items |= its
+    try:
+        got = site_route(land, navs, case["from"], case["to"], accessible=case["accessible"], items=items)
+    except NoRoute:
+        got = None
+    assert got == case["expect"]
 
 
 def test_the_conformance_ways_show_what_they_are_for():

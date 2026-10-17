@@ -10,6 +10,7 @@ drawing](HOW-STUDIO-READS-A-DRAWING.md) says how a drawing becomes floors and ro
   [finishes](#finishes), [capacity](#capacity-and-grade), [export](#export-one-building-per-package),
   [another Studio](#sending-a-project-to-another-studio), [the viewers](#the-viewers)
 - [Navigation: from the kiosk to your office](#navigation-from-the-kiosk-to-your-office)
+  - [Routes across a site: from the gate to a room in any building](#routes-across-a-site-from-the-gate-to-a-room-in-any-building)
 - [3D: the dollhouse, walking, and the 3D page](#3d-the-dollhouse-walking-and-the-3d-page)
 
 ## What you can do in Studio
@@ -201,8 +202,10 @@ it places the location's buildings where the site plan has them.
    footprint).
 6. **Export** the layout as its own package (format 0.12; *⟨location⟩ — Layout* in the
    Packages card's list, or *Export* on its row), beside its buildings' packages:
-   the land, its footprints (each with its building), its areas, gates and items. A system
-   placing outdoor cameras, or saying "at the gate" or "in the parking", reads it.
+   the land, its footprints (each with its building), its areas, gates and items, and (0.13)
+   the ways across it into each building ([Routes across a site](#routes-across-a-site-from-the-gate-to-a-room-in-any-building)).
+   A system placing outdoor cameras, or saying "at the gate" or "in the parking", reads it.
+7. **Navigate** on its row finds the way across the site: from a gate into any building.
 
 ### Review: correct, complete, check
 
@@ -472,7 +475,7 @@ replace.
 
 ### Export: one building per package
 
-*Export package* writes the package (`.storeypath`, [format 0.12](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md)) of
+*Export package* writes the package (`.storeypath`, [format 0.13](https://github.com/StoreyPath/storeypath-viewer/blob/main/spec/FORMAT.md)) of
 one building, chosen from the list: its floors, spaces, zones, doors, windows and
 openings, its items and their types (each once: those its items use, or, chosen
 beside *Export package*, every item type of the Studio, for another system to take
@@ -585,6 +588,44 @@ gives.
   `showRoute(route)` on the 2D plan and in the 3D world;
   [spec/conformance/routes.json](https://github.com/StoreyPath/storeypath-viewer/tree/main/spec/conformance) holds ways every reader must find
   the same.
+
+### Routes across a site: from the gate to a room in any building
+
+A visitor at the gate of a site of several buildings is shown the way across the land to a
+room in one of them; someone in one building, the way out, across the yard and into another.
+StoreyPath finds it on the land's walking network and the buildings' together, the same in
+Studio, the Go module and the viewers.
+
+- **The land's walking network** goes into the location's layout's package (format 0.13),
+  made from the layout when it is exported: its areas walked together (the lines between
+  them are kerbs, not walls), round the buildings and the walls; each gate; each kiosk placed
+  on the land (place a *Wayfinding kiosk* on the layout in Review, at a gate say, as indoors);
+  and an **entrance** at each building's door to the outside on its ground floor where it
+  meets the building's footprint, linked to the same door in the building's own package.
+  For that, each building must stand on its footprint (*Apply* on the site plan) and its
+  ground floor must have its outer doors (a door joining a room to the outside, in its outer
+  wall: draw one in Review where the drawing leaves it out).
+- **The way** from a gate, a kiosk, an area of the land or a point on it, or a room of any
+  building, to any room, desk, area or gate: through the land to the entrance, in, and on
+  through the building as before. Steps say each way in and out: "Start at the pedestrian
+  gate", "Walk 28 m through the yard to the entrance", "Go into Main house", "Walk 11 m along
+  HALL to LIVING". *Step-free* takes no entrance with a step known: the site plan writes the
+  building's floor level in its footprint (+0.45 FFL) and the ground's beside it (±0.00 FGL),
+  and an area typed *ramp* at the door takes the step. Read a layout read before this again
+  to have its levels.
+- **Navigate across a site**: *Navigate* on the layout's row on the project page (or *Find
+  the way* in Review on a layout) opens the site: choose where to start (a gate, a kiosk, or
+  double-click the land on the plan), where to go, and see the steps beside the plan of the
+  land, then of each floor it crosses; *Play* walks it from the gate. The 3D view shows one
+  building at a time.
+- **A building with no way in** is said by name, with why: no door to the outside on its
+  ground floor, or none at its footprint's edge (is it placed on its footprint?). The
+  layout's export says it too.
+- **For other systems**: `NewSite(layout, buildings…)`, `Site.Route`, `Site.RouteFrom` and
+  `SiteRoute` in Go; `siteRoute(layout, buildings, from, to, { accessible })` in the viewers;
+  `routes.json → site_routes` holds ways across a made-up site every reader must find the
+  same. spec/FORMAT.md, *Routes across a site*, says how, for a colleague adapting a system
+  of their own.
 
 ## 3D: the dollhouse, walking, and the 3D page
 
