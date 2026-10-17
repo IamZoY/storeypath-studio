@@ -46,7 +46,7 @@ arm64, on Linux, macOS or Windows with Docker. [More ways to run it](docs/INSTAL
   cleaning up first. Plans side by side on one sheet are found and titled, a floor
   drawn as two wings where they stand is offered as one, units are worked out from what
   is drawn, floors are stacked on their walls, mezzanines and roofs are levels of their
-  own, rooms are found even where nothing outlines them, and room names are understood
+  own, a site plan becomes the land round the buildings with each building placed on it, rooms are found even where nothing outlines them, and room names are understood
   in English, Arabic and more, by the language model where the rules stop. A damaged
   file is read as far as it goes. [How Studio reads a drawing](docs/HOW-STUDIO-READS-A-DRAWING.md).
 - **The drawing stays in view.** Any drawing opens whole in the browser, as its own
@@ -160,6 +160,20 @@ degree: this is where a building is turned to stand as it really does, every flo
 it, never in Review. A compass says which way north is, − and + zoom, and **Measure**
 gives the distance between two points, snapped to the buildings' corners, in metres or
 feet. *Place on the map* then puts the whole site on the earth.
+
+**The land itself, from its site plan.** A sheet's site plan (*site*, *development*,
+*location* or *key plan*) can be a location's **layout**: Studio reads the plot from its
+property limits, the boundary walls and the gates in them, and the open ground between
+the buildings as areas of their own (a car park, a driveway, a garden, a courtyard, a
+path, the road outside), each with an ID that stays, and north from the drawing's north
+arrow. Then it **places the buildings itself**: each footprint on the site plan is
+matched to one of the location's buildings, by its label and by the shape of the
+building's ground floor, turned as it needs to be, and each match is shown with how sure
+it is, to apply, change or skip; a footprint that is no building yet can become one. The
+layout opens in Review like a floor: cameras on poles or façades, barriers and card
+readers at the gates, lights, placed and turned as indoors, and in 3D the land lies under
+the buildings. It travels in a package of its own (format 0.12), so a system watching the
+site from outside, or guiding someone from the gate, has the same IDs for it.
 
 ### Review: what it read, over the original drawing
 
