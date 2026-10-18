@@ -269,7 +269,11 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   choose *Door*, *Window* or *Opening*: it stays so through every re-read (the same ID),
   and *as the drawing reads it* goes back. *Size as drawn* does the same for its size.
   Chosen, it moves along its wall: drag it, or the arrows (5 cm a press, <kbd>Shift</kbd>:
-  50 cm); one of the drawing stays where you put it through every re-read, with its ID. <kbd>Del</kbd> deletes a door, window or opening of the drawing
+  50 cm); one of the drawing stays where you put it through every re-read, with its ID.
+  A door chosen turns with <kbd>R</kbd> (or *Turn it*): on the other jamb, then opening the
+  other way, <kbd>Shift</kbd>+<kbd>R</kbd> back; one the drawing gives no swing (a window made
+  a door) is hung so. It hangs so through every re-read, a move and a new width, and a door
+  made a window and a door again swings as it did. <kbd>Del</kbd> deletes a door, window or opening of the drawing
   (it can be restored) and takes away what you drew; <kbd>Esc</kbd> gives up what is
   being drawn, then puts the tool down; <kbd>F</kbd> fits the floor in view, Space
   held moves the plan (as the *Pan* tool, <kbd>H</kbd>, does). After each change the

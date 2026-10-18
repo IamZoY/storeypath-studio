@@ -105,6 +105,9 @@ class ResizedOpening(BaseModel):
     type: Literal["door", "window", "opening"] | None = None
     # where its middle was moved to along its wall (local meters); None: where the drawing has it
     to: list[float] | None = None
+    # a door's leaf when open, set in review: [hinge, its free edge] where it is now (local
+    # meters); hung again on its nearest jamb, the same way, if its size or place changes after
+    swing: list[list[float]] | None = None
 
 
 class FloorEdits(BaseModel):

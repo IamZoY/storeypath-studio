@@ -889,7 +889,7 @@ class Review:
                 "sill": r.sill, "height": r.height, "drawn": (r.type_source or "").startswith("drawn"),
                 "middle": [round(middle.x, 4), round(middle.y, 4)],
                 # the size given in review to one of the drawing's (null: as drawn)
-                "resize": next((x.model_dump(exclude={"at"} | {k for k in ("type", "to") if getattr(x, k) is None})
+                "resize": next((x.model_dump(exclude={"at"} | {k for k in ("type", "to", "swing") if getattr(x, k) is None})
                                 for x in resized if Point(x.to or x.at).distance(middle) <= REMOVE_REACH_M), None),
                 "ignored": eff["ignored"],
                 "divider": self._divider_of(ws, r)}
@@ -982,7 +982,11 @@ class Review:
                 o.span = new
             o.sill, o.height = sizes.get("sill", o.sill), sizes.get("height", o.height)
             if body.get("type") is not None and body["type"] != o.type:
-                o.type, o.swing = body["type"], None  # (a leaf hung again with the door tool)
+                o.type = body["type"]  # (its leaf kept: a door again hangs as it did)
+            if "swing" in body:
+                if o.type != "door":
+                    raise ValueError("only a door swings")
+                o.swing = _swing(body["swing"], o.span)
             return o.type
         openings = [(_middle(r).distance(at), r) for r in ws.floor_objects(floor_id) if r.kind == "opening"]
         found = [o for o in openings if o[0] <= REMOVE_REACH_M]
@@ -991,8 +995,15 @@ class Review:
         nearest = min(found, key=lambda o: o[0])[1]
         middle = _middle(nearest)
         had = _given_at(f.edits.resized, middle)
-        kept = had.model_dump(exclude={"at"}) if had else {"width": None, "sill": None, "height": None, "type": None, "to": None}
+        kept = had.model_dump(exclude={"at"}) if had else {"width": None, "sill": None, "height": None, "type": None, "to": None,
+                                                         "swing": None}
         given = {**kept, **sizes, **({"type": body["type"]} if "type" in body else {})}
+        if "swing" in body:
+            if (given["type"] or nearest.type) != "door":
+                raise ValueError("only a door swings")
+            if not nearest.span:
+                raise ValueError("a door with no width read cannot be hung")
+            given["swing"] = _swing(body["swing"], nearest.span)
         read_at = had.at if had else [round(middle.x, 4), round(middle.y, 4)]  # (where the drawing has it)
         f.edits.resized = [x for x in f.edits.resized if x is not had]
         if any(v is not None for v in given.values()):
@@ -1042,6 +1053,8 @@ class Review:
             mid = _middle(record)
             had = _given_at(f.edits.resized, mid)
             put = [round(mid.x + dx, 4), round(mid.y + dy, 4)]
+            if had is not None and had.swing:
+                had.swing = shift(had.swing)
             if had is None:
                 f.edits.resized.append(ResizedOpening(at=[round(mid.x, 4), round(mid.y, 4)], to=put))
             else:

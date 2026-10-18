@@ -454,6 +454,51 @@ function nudgeOpening(dx, dy, step) {
   }, NUDGE_SETTLE_MS);
 }
 
+/** A door's way (TURNS: bit 1 the jamb it hangs on, bit 2 the side it opens to) as it hangs
+ * now: -1 when it has no leaf. */
+function wayOf(d) {
+  const leaf = d.swings?.[0], u = along(d);
+  if (!leaf || !u) return -1;
+  const [a, b] = [d.span[0], d.span.at(-1)];
+  const h = Math.hypot(leaf[0][0] - b[0], leaf[0][1] - b[1]) < Math.hypot(leaf[0][0] - a[0], leaf[0][1] - a[1]) ? 1 : 0;
+  const side = (leaf[1][0] - leaf[0][0]) * -u[1] + (leaf[1][1] - leaf[0][1]) * u[0] >= 0 ? 0 : 2;
+  return h | side;
+}
+
+/** A door's leaf for a way (TURNS) on its span: [hinge, free edge], across its wall. */
+function leafOfWay(d, way) {
+  const u = along(d), [a, b] = [d.span[0], d.span.at(-1)];
+  const w = Math.hypot(b[0] - a[0], b[1] - a[1]), side = way & 2 ? -1 : 1;
+  const hinge = way & 1 ? b : a;
+  return [hinge, [hinge[0] - u[1] * side * w, hinge[1] + u[0] * side * w]];
+}
+
+// R on a door chosen: its turns gathered while pressed, sent once they stop
+let turning = null; // { d, way, timer }
+
+/** R (Shift: back) on the door chosen: turned to its next way (TURNS), shown at once, the
+ * floor read again with it once the presses stop. One with no leaf gets its first. */
+export function turnChosenDoor(by) {
+  const d = chosenOpening();
+  if (!d?.span) return;
+  if (d.type !== "door") return toast(`A ${d.type} has no door to turn: make it a door first`);
+  if (turning?.d.id !== d.id) turning = { d, way: wayOf(d), timer: null };
+  const i = TURNS.indexOf(turning.way);
+  turning.way = i < 0 ? TURNS[0] : TURNS[(i + (by > 0 ? 1 : 3)) % 4];
+  const leaf = leafOfWay(d, turning.way);
+  for (const id of ["preview", "preview-print"]) $(id).replaceChildren(svg("path", { d: swingPath(d.span, leaf), class: "swing" }));
+  clearTimeout(turning.timer);
+  turning.timer = setTimeout(() => {
+    const { d: was, way } = turning;
+    turning = null;
+    if (way === wayOf(was)) return clearPreview();
+    submitEdit({ resize: { at: was.middle, swing: leafOfWay(was, way) } }, "Turning the door…", () => {
+      clearPreview();
+      selectItem({ kind: "door", id: was.id });
+    });
+  }, NUDGE_SETTLE_MS);
+}
+
 /** A door, window or opening said to be another (null: as the drawing reads it): one the
  * drawing reads wrong set right, kept through every re-read; the floor is read again. */
 export function retype(d, type) {
@@ -562,6 +607,14 @@ function widen(by) {
 }
 
 export function setupDrawing() {
+  // a door chosen: R turns it, as the door tool does before it is added (Shift: back)
+  for (const [key, by, what] of [["r", 1, "Turn the door chosen: the other jamb, then the other side"], ["shift+r", -1, "Turn the door chosen back"]]) {
+    command({ id: `opening.turn${by < 0 ? "-back" : ""}`, title: what, group: "Door, window", scope: "opening", keys: [key], palette: false,
+      when: () => chosenOpening()?.type === "door" && Boolean(chosenOpening()?.span) && editable() && !state.floor?.layout,
+      why: () => (chosenOpening() ? (chosenOpening().type !== "door" ? "Only a door turns: make it a door first" : whyNotEditable())
+        : "Choose a door first"),
+      run: () => turnChosenDoor(by) });
+  }
   // a door, window or opening chosen: the arrows slide it along its wall (Shift: 50 cm)
   for (const [key, dx, dy] of [["arrowleft", -1, 0], ["arrowright", 1, 0], ["arrowup", 0, 1], ["arrowdown", 0, -1]]) {
     for (const [mods, step] of [["", 0.05], ["shift+", 0.5]]) {

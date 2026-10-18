@@ -8,6 +8,8 @@ code from the building's counter.
 
 from __future__ import annotations
 
+import math
+
 import pickle
 import threading
 from collections import Counter, OrderedDict
@@ -854,7 +856,7 @@ def _drawn_openings(ex: FloorExtraction, drawn, reach: float) -> None:
             d.source = f"drawn {o.type}"
             d.sill, d.height = o.sill, o.height
             if o.type == "door" and o.swing and len(o.swing) == 2:
-                d.swings = [(tuple(o.swing[0]), tuple(o.swing[1]))]
+                d.swings = [hung(d.span, o.swing)]
             ex.doors.append(d)
         if ex.walls is not None:
             ex.walls = ex.walls.difference(span.buffer(thickness, cap_style="flat"))
@@ -907,6 +909,21 @@ def _resized_openings(ex: FloorExtraction, resized, reach: float = 0.4) -> None:
             _regap(ex, LineString(old), d.span, thickness, rooms)
         if rz.to is not None:
             _moved_along(ex, d, rz.to, thickness, rooms, reach)
+        if rz.swing is not None and _opening_type(d.source) == "door":
+            d.swings = [hung(d.span, rz.swing)]
+
+
+def hung(span, swing) -> tuple:
+    """A door's leaf as it was set (``swing``: [hinge, free edge]), on its span as it is
+    now: hung on the jamb nearest where it was hung, opening to the same side of its wall,
+    as long as the door is wide."""
+    (x0, y0), (x1, y1) = span.coords[0], span.coords[-1]
+    width = math.hypot(x1 - x0, y1 - y0) or 1.0
+    (hx, hy), (fx, fy) = swing
+    jamb = min(((x0, y0), (x1, y1)), key=lambda j: math.hypot(j[0] - hx, j[1] - hy))
+    nx, ny = -(y1 - y0) / width, (x1 - x0) / width
+    side = 1.0 if (fx - hx) * nx + (fy - hy) * ny >= 0 else -1.0
+    return ((round(jamb[0], 4), round(jamb[1], 4)), (round(jamb[0] + nx * side * width, 4), round(jamb[1] + ny * side * width, 4)))
 
 
 def _regap(ex: FloorExtraction, old, new, thickness: float, rooms) -> None:

@@ -10,7 +10,7 @@
 import { editable } from "../access.js";
 import { header, field, row, section } from "../inspector.js";
 import { el, icon } from "../dom.js";
-import { deleteItem, drawnLength, openingMeta, openingName, retype, sizeForm } from "../drawing.js";
+import { deleteItem, drawnLength, openingMeta, openingName, retype, sizeForm, turnChosenDoor } from "../drawing.js";
 import * as finish from "../finish.js";
 import { categories, changeAsset, copyId, doorOf, turnAsset } from "../items.js";
 import { deleteAssets, groupAssets, groupOf, turnAssets, ungroupAssets } from "../groups.js";
@@ -309,7 +309,12 @@ function openingType({ opening: d, editable: may }) {
     back.addEventListener("click", () => retype(d, null));
     return [pick, el("p", { class: "hint" }, "Said here; back to ", back)];
   }
-  return [pick, el("p", { class: "hint" }, d.drawn ? "Drawn here." : "Read wrong? Say what it is: kept through every re-read.")];
+  const said = el("p", { class: "hint" }, d.drawn ? "Drawn here." : "Read wrong? Say what it is: kept through every re-read.");
+  if (d.type !== "door" || !may || !d.span) return [pick, said];
+  const turn = el("button", { type: "button", class: "btn-sm", "data-tip": "The other jamb, then the other side (R; Shift+R back)" },
+    icon("rotate-cw", { size: 14 }), d.swings?.length ? "Turn it" : "Hang it");
+  turn.addEventListener("click", () => turnChosenDoor(1));
+  return [pick, said, row("Opens", el("div", { class: "with-unit" }, turn, el("span", { class: "unit" }, kbd("r"))))];
 }
 
 function openingActions({ opening: d, editable: may }) {

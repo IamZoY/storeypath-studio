@@ -1111,6 +1111,47 @@ def test_an_opening_slides_across_another_ones_gap_in_its_wall():
     assert not _on_walls(f, door, at(10.4), [window])  # off its end
 
 
+def test_a_door_keeps_the_way_it_swings_and_is_turned_in_review(review):
+    # A door drawn, made a window and a door again, swings as it did; a window of the
+    # drawing made a door is hung in review (R), and so hangs through re-reads, a move (its
+    # leaf with it) and a new width (on the same jamb, as long as the door is wide).
+    r, path, f_id = review
+    floor = r.floor(f_id)
+    rooms = sorted((s for s in floor["spaces"] if s["kind"] == "space"), key=lambda s: -s["area"])
+    a, b = rooms[0], next(s for s in rooms[1:] if shape(s["geometry"]).distance(shape(rooms[0]["geometry"])) < 0.5)
+    between = shape(a["geometry"]).buffer(0.3).intersection(shape(b["geometry"]).buffer(0.3))
+    c = between.centroid
+    vertical = (between.bounds[3] - between.bounds[1]) > (between.bounds[2] - between.bounds[0])
+    span = [[c.x, c.y - 0.45], [c.x, c.y + 0.45]] if vertical else [[c.x - 0.45, c.y], [c.x + 0.45, c.y]]
+    leaf = [span[1], [span[1][0] + (0.9 if vertical else 0), span[1][1] + (0 if vertical else 0.9)]]
+    r.edit(f_id, {"add": {"opening": {"type": "door", "span": span, "swing": leaf}}})
+    r.edit(f_id, {"resize": {"at": [c.x, c.y], "type": "window"}})
+    r.edit(f_id, {"resize": {"at": [c.x, c.y], "type": "door"}})
+    _reconvert(path, f_id)
+    d = next(x for x in r.floor(f_id)["doors"] if x["drawn"])
+    assert d["type"] == "door" and d["swings"] == [[[round(v, 4) for v in p] for p in leaf]]  # as it was
+
+    w = next(x for x in r.floor(f_id)["doors"] if x["type"] == "window" and x["span"] and LineString(x["span"]).length > 0.6)
+    with pytest.raises(ValueError):
+        r.edit(f_id, {"resize": {"at": w["middle"], "swing": [w["span"][0], w["span"][1]]}})  # a window does not swing
+    r.edit(f_id, {"resize": {"at": w["middle"], "type": "door"}})
+    (x0, y0), (x1, y1) = w["span"][0], w["span"][-1]
+    n = math.dist((x0, y0), (x1, y1))
+    u, normal = ((x1 - x0) / n, (y1 - y0) / n), (-(y1 - y0) / n, (x1 - x0) / n)
+    hang = [[x0, y0], [x0 + normal[0] * n, y0 + normal[1] * n]]
+    r.edit(f_id, {"resize": {"at": w["middle"], "swing": hang}})
+    _reconvert(path, f_id)
+    door = next(x for x in r.floor(f_id)["doors"] if x["id"] == w["id"])
+    assert door["type"] == "door" and door["swings"] == [[[round(v, 4) for v in p] for p in hang]]
+    r.edit(f_id, {"move": {"at": door["middle"], "to": [door["middle"][0] + u[0] * 0.2, door["middle"][1] + u[1] * 0.2]}})
+    r.edit(f_id, {"resize": {"at": [door["middle"][0] + u[0] * 0.2, door["middle"][1] + u[1] * 0.2], "width": round(n - 0.2, 3)}})
+    _reconvert(path, f_id)
+    moved = next(x for x in r.floor(f_id)["doors"] if x["id"] == w["id"])
+    (h, free), = moved["swings"]
+    assert min(math.dist(h, j) for j in moved["span"]) < 1e-3 and abs(math.dist(h, free) - (n - 0.2)) < 0.01
+    assert (free[0] - h[0]) * normal[0] + (free[1] - h[1]) * normal[1] > 0  # the same side
+
+
 def test_a_space_drawn_where_the_drawing_encloses_none(review):
     # A colonnade between columns: no walls, so no space is found there. A person
     # draws its outline in review; it becomes a space through every re-read, never

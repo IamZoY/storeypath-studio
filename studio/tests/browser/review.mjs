@@ -631,6 +631,32 @@ test("a window chosen slides along its wall: the arrows (gathered, sent once), a
   noErrors("an opening slid along its wall");
 });
 
+test("a door chosen turns with R (the presses gathered, sent once), as the door tool turns one before it is added; undone", async () => {
+  await press("f");
+  const d = await R(() => window.storeypathReview.state.floor.doors.find((x) => x.type === "door" && x.span && x.swings?.length && !x.ignored));
+  const at = await R((p) => {
+    const v = window.storeypathReview.state.view, b = document.getElementById("svg").getBoundingClientRect();
+    return [b.left + p[0] * v.k + v.tx, b.top - p[1] * v.k + v.ty];
+  }, d.middle);
+  await page.click(...at);
+  await until((id) => window.storeypathReview.state.item?.id === id, "the door chosen", 8000, d.id);
+  truly(await R(() => [...document.querySelectorAll("#inspector button")].some((b) => /Turn it/.test(b.textContent))), "Turn it, in the inspector");
+  await press("r");
+  await until(() => Boolean(document.querySelector("#preview path.swing")), "R: the door shown turned at once", 3000);
+  const leaf = (id) => JSON.stringify(window.storeypathReview.state.floor.doors.find((x) => x.id === id)?.swings);
+  await until((id, was) => { const now = JSON.stringify(window.storeypathReview.state.floor.doors.find((x) => x.id === id)?.swings); return now && now !== was; },
+    "turned, the floor read again, its ID kept", 30000, d.id, JSON.stringify(d.swings));
+  await until(() => !/Reading the floor again/.test(document.body.textContent) && !window.storeypathReview.state.busy, "read", 30000);
+  await sleep(500);
+  await press("Escape");
+  await press("z", ["mod"]);
+  await until((id, was) => JSON.stringify(window.storeypathReview.state.floor.doors.find((x) => x.id === id)?.swings) === was,
+    "⌘Z: as it hung", 30000, d.id, JSON.stringify(d.swings));
+  await until(() => !/Reading the floor again/.test(document.body.textContent), "read", 30000);
+  await sleep(500);
+  noErrors("a door turned");
+});
+
 test("review mode: N starts it, a number sets a likely type, the count goes down, Esc stops", async () => {
   const left = async () => (await rooms()).filter((s) => s.reasons.length).length;
   const n0 = await left();
