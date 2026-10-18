@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from shapely.geometry import LineString, Point, Polygon, shape
+from shapely.ops import unary_union
 
 from .cad import DrawingError, meters_per_unit, read_drawing
 from . import finishes, history
@@ -1028,7 +1029,8 @@ class Review:
         if abs(t) < 0.005:
             raise ValueError("it is there already")
         moved = [[x + dx, y + dy] for x, y in span]
-        if not _on_walls(f, span, moved):
+        gaps = [r.span for r in ws.floor_objects(floor_id) if r.kind == "opening" and r.span] + [x.span for x in f.edits.openings]
+        if not _on_walls(f, span, moved, gaps):
             raise ValueError("it would leave its wall: an opening moves along the wall it is in")
         shift = lambda pts: [[round(x + dx, 4), round(y + dy, 4)] for x, y in pts]  # noqa: E731
         if o is not None:
@@ -1469,14 +1471,14 @@ def _shifted(r: ObjectRecord, dx: float, dy: float) -> ObjectRecord:
                                 "swings": [shift(leaf) for leaf in r.swings] if r.swings else r.swings}, deep=True)
 
 
-def _on_walls(f, span, moved) -> bool:
-    """Whether a span moved along its wall is still in it: the walls as read (its own gap
-    where it was taken as wall) along nine tenths of it, give or take a wall's thickness."""
+def _on_walls(f, span, moved, gaps=()) -> bool:
+    """Whether a span moved along its wall is still in it: the walls as read along nine
+    tenths of it, give or take a wall's thickness, the gaps of its own and of the floor's
+    other openings (``gaps``, their spans) taken as wall (a door slid across a window's)."""
     if not f.walls:
         return True  # (no walls read: nothing to tell)
-    walls = shape(f.walls)
     t = max(f.wall_thickness or 0.2, 0.1)
-    walls = walls.union(LineString(span).buffer(t, cap_style="flat"))
+    walls = unary_union([shape(f.walls)] + [LineString(g).buffer(t, cap_style="flat") for g in [span, *gaps] if len(g) >= 2])
     line = LineString(moved)
     inside = sum(1 for k in range(11) if walls.distance(line.interpolate(k / 10, normalized=True)) <= t / 2)
     return inside >= 10

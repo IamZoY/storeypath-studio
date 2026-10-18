@@ -1057,7 +1057,7 @@ def test_an_opening_moved_along_its_wall_keeps_its_id_and_its_wall(review):
     with pytest.raises(ValueError):
         r.edit(f_id, {"move": {"at": m, "to": [m[0] - u[1] * 2, m[1] + u[0] * 2]}})  # across its wall: not along it
     with pytest.raises(ValueError):
-        r.edit(f_id, {"move": {"at": m, "to": [m[0] + u[0] * 25, m[1] + u[1] * 25]}})  # off its wall
+        r.edit(f_id, {"move": {"at": m, "to": [m[0] + u[0] * 31, m[1] + u[1] * 31]}})  # too far at once (off its wall: below)
     r.edit(f_id, {"move": {"at": m, "to": [m[0] + u[0] * 0.3, m[1] + u[1] * 0.3]}})
     (given,) = Workspace.load(path).floor(f_id).edits.resized
     assert given.at == [round(v, 4) for v in m] and abs(math.dist(given.to, m) - 0.3) < 1e-3
@@ -1093,6 +1093,22 @@ def test_an_opening_moved_along_its_wall_keeps_its_id_and_its_wall(review):
     _reconvert(path, f_id)
     e = next(x for x in r.floor(f_id)["doors"] if x["drawn"])
     assert e["id"] == d["id"] and abs(math.dist(e["middle"], [c.x + along[0], c.y + along[1]])) < 0.01
+
+
+def test_an_opening_slides_across_another_ones_gap_in_its_wall():
+    # A wall 10 m long with a window's gap from 4 to 6 m: a door at 2.5 m slides into it and
+    # past it (the gap is the wall's); off the wall's end, or with no window there, it may not.
+    from storeypath.review import _on_walls
+    from storeypath.workspace import Floor
+
+    wall = {"type": "MultiPolygon", "coordinates": [[[[0, -0.1], [4, -0.1], [4, 0.1], [0, 0.1], [0, -0.1]]],
+                                                    [[[6, -0.1], [10, -0.1], [10, 0.1], [6, 0.1], [6, -0.1]]]]}
+    f = Floor(code="F00", name="Ground", ordinal=0, elevation=0.0, walls=wall, wall_thickness=0.2)
+    door, window = [[2.05, 0], [2.95, 0]], [[4, 0], [6, 0]]
+    at = lambda x: [[x - 0.45, 0], [x + 0.45, 0]]  # noqa: E731
+    assert _on_walls(f, door, at(5.0), [window]) and _on_walls(f, door, at(7.5), [window])
+    assert not _on_walls(f, door, at(5.0), [])  # no opening there: the gap is no wall
+    assert not _on_walls(f, door, at(10.4), [window])  # off its end
 
 
 def test_a_space_drawn_where_the_drawing_encloses_none(review):
