@@ -267,7 +267,9 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   A door, window or opening chosen shows **what it is** and its **width, sill and
   height**. Where the drawing reads one wrong, such as a glazed door drawn like a window,
   choose *Door*, *Window* or *Opening*: it stays so through every re-read (the same ID),
-  and *as the drawing reads it* goes back. *Size as drawn* does the same for its size. <kbd>Del</kbd> deletes a door, window or opening of the drawing
+  and *as the drawing reads it* goes back. *Size as drawn* does the same for its size.
+  Chosen, it moves along its wall: drag it, or the arrows (5 cm a press, <kbd>Shift</kbd>:
+  50 cm); one of the drawing stays where you put it through every re-read, with its ID. <kbd>Del</kbd> deletes a door, window or opening of the drawing
   (it can be restored) and takes away what you drew; <kbd>Esc</kbd> gives up what is
   being drawn, then puts the tool down; <kbd>F</kbd> fits the floor in view, Space
   held moves the plan (as the *Pan* tool, <kbd>H</kbd>, does). After each change the

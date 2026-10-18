@@ -172,7 +172,7 @@ def read_floor(
         type_stairs(extraction.units(), _flights(doc, src, extraction.scale))
     _sizes_from_the_schedule(extraction, doc, src.region, vision, model, say)
     _drawn_openings(extraction, floor.edits.openings, profile.doors.reach)
-    _resized_openings(extraction, floor.edits.resized)
+    _resized_openings(extraction, floor.edits.resized, profile.doors.reach)
     notes = read_notes(doc)
     if reader.model_failed:
         notes.append(f"the language model was not used: {reader.model_failed}")
@@ -864,11 +864,12 @@ RESIZE_REACH_M = 0.5  # an opening given another size in review is found this ne
 RETYPED = {"door": "door", "window": "window", "opening": "doorway"}  # an opening given another type: its source
 
 
-def _resized_openings(ex: FloorExtraction, resized) -> None:
-    """The drawing's doors, windows and openings given another size or type in review:
-    each the opening nearest its middle, its gap in the walls made to fit (what it no
-    longer takes is wall again, as thick as the wall on either side), a door's leaves with
-    it; one given another type is that (a window read where a door is: a door)."""
+def _resized_openings(ex: FloorExtraction, resized, reach: float = 0.4) -> None:
+    """The drawing's doors, windows and openings given another size or type, or moved, in
+    review: each the opening nearest its middle, its gap in the walls made to fit (what it
+    no longer takes is wall again, as thick as the wall on either side), a door's leaves
+    with it; one given another type is that (a window read where a door is: a door); one
+    moved, along its wall to where it was put (_moved_along)."""
     if not resized:
         return
     from shapely.geometry import LineString, Point
@@ -894,21 +895,55 @@ def _resized_openings(ex: FloorExtraction, resized) -> None:
             d.sill = rz.sill
         if rz.height is not None:
             d.height = rz.height
-        if rz.width is None:
-            continue
         if d.span is None or d.span.length < 0.05:
-            d.width = rz.width
+            if rz.width is not None:
+                d.width = rz.width
             continue
-        old = [list(c) for c in d.span.coords]
-        new = span_of_width(old, rz.width)
-        d.swings = [tuple(map(tuple, leaf)) for leaf in leaves_of_width(d.swings, old, new)] if d.swings else []
-        d.span, d.width = LineString(new), round(rz.width, 3)
-        if ex.walls is not None:
-            fill = _gap_band(ex.walls, LineString(old), thickness)
-            if fill is not None and rooms is not None:
-                fill = fill.difference(rooms)
-            walls = ex.walls.union(fill) if fill is not None else ex.walls
-            ex.walls = walls.difference(LineString(new).buffer(thickness, cap_style="flat"))
+        if rz.width is not None:
+            old = [list(c) for c in d.span.coords]
+            new = span_of_width(old, rz.width)
+            d.swings = [tuple(map(tuple, leaf)) for leaf in leaves_of_width(d.swings, old, new)] if d.swings else []
+            d.span, d.width = LineString(new), round(rz.width, 3)
+            _regap(ex, LineString(old), d.span, thickness, rooms)
+        if rz.to is not None:
+            _moved_along(ex, d, rz.to, thickness, rooms, reach)
+
+
+def _regap(ex: FloorExtraction, old, new, thickness: float, rooms) -> None:
+    """An opening's gap in the walls from ``old`` (its span) to ``new``: what it no longer
+    takes is wall again, as thick as the wall on either side, and where it is now is open."""
+    if ex.walls is None:
+        return
+    fill = _gap_band(ex.walls, old, thickness)
+    if fill is not None and rooms is not None:
+        fill = fill.difference(rooms)
+    walls = ex.walls.union(fill) if fill is not None else ex.walls
+    ex.walls = walls.difference(new.buffer(thickness, cap_style="flat"))
+
+
+def _moved_along(ex: FloorExtraction, d, to, thickness: float, rooms, reach: float) -> None:
+    """An opening moved along its wall so that its middle is as near ``to`` as its wall
+    lets: its span, point and leaves with it, its gap with it, joined to the spaces beside
+    it where it is now."""
+    from shapely.affinity import translate
+
+    from .extract import _connect_doors
+
+    (x0, y0), (x1, y1) = d.span.coords[0], d.span.coords[-1]
+    ux, uy = (x1 - x0) / d.span.length, (y1 - y0) / d.span.length
+    m = d.span.interpolate(0.5, normalized=True)
+    t = (to[0] - m.x) * ux + (to[1] - m.y) * uy
+    if abs(t) < 0.005:
+        return
+    dx, dy = ux * t, uy * t
+    old = d.span
+    d.span, d.point, d.footprint = translate(old, dx, dy), translate(d.point, dx, dy), translate(d.footprint, dx, dy)
+    d.swings = [((h[0] + dx, h[1] + dy), (f[0] + dx, f[1] + dy)) for h, f in d.swings]
+    _regap(ex, old, d.span, thickness, rooms)
+    found = _connect_doors(ex.spaces, [d.span.buffer(thickness, cap_style="flat")], reach, [],
+                           [(d.span, round(d.span.length, 3))])
+    if found:
+        d.connects = found[0].connects
 
 
 def _gap_band(walls, span, thickness: float):

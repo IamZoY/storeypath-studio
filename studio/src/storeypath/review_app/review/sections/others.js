@@ -288,7 +288,8 @@ function openingSize({ opening: d, editable: may }) {
   if (!readable()) return el("p", { class: "hint" }, "Its size changes with the floor's drawing: this floor has none yet");
   const form = sizeForm(d);
   if (!may) for (const e of form.elements) e.disabled = true;
-  return [form, el("p", { class: "hint" }, "Empty: as the drawing (or its schedule) has it. The floor is read again with the new size.")];
+  return [form, el("p", { class: "hint" }, "Empty: as the drawing (or its schedule) has it. The floor is read again with the new size."),
+    may && !state.floor?.layout ? el("p", { class: "hint" }, "Drag it along its wall to move it, or the arrows (Shift: 50 cm).") : null];
 }
 
 /** What an opening is, a door, a window or a way through: one the drawing reads wrong (a

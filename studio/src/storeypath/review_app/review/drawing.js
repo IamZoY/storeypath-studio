@@ -7,7 +7,8 @@
 // The tools (tools.js): Wall (W), Space (R), Divide (D), Door / window / opening (O). The
 // Stairs and lifts tool (vertical.js) draws its shape with the space's corners here.
 
-import { roomTaken, viewOnly } from "./access.js";
+import { editable, roomTaken, viewOnly, whyNotEditable } from "./access.js";
+import { command } from "./commands.js";
 import { followJob, request } from "./api.js";
 import { emit, on } from "./bus.js";
 import { $, el, svg } from "./dom.js";
@@ -393,6 +394,66 @@ export function resize(d, sizes) {
   return submitEdit({ resize: { at: d.middle, ...sizes } }, "Changing the size…", () => selectItem({ kind: "door", id: d.id }));
 }
 
+/** A door, window or opening chosen, as the floor has it (null: none chosen). */
+export const chosenOpening = () => (state.item?.kind === "door" ? (state.floor?.doors || []).find((d) => d.id === state.item.id && !d.ignored) ?? null : null);
+
+/** Its direction along its wall: a unit vector from one jamb to the other (null: no span). */
+function along(d) {
+  if (!d?.span) return null;
+  const [a, b] = [d.span[0], d.span.at(-1)];
+  const n = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  return n ? [(b[0] - a[0]) / n, (b[1] - a[1]) / n] : null;
+}
+
+/** An opening slid ``t`` metres along its wall: drawn where it would go (the preview), and its
+ * middle there. */
+function slid(d, t) {
+  const u = along(d);
+  const span = d.span.map(([x, y]) => [x + u[0] * t, y + u[1] * t]);
+  for (const id of ["preview", "preview-print"]) {
+    $(id).replaceChildren(svg("line", { x1: span[0][0], y1: span[0][1], x2: span[1][0], y2: span[1][1], class: d.type }));
+  }
+  return [d.middle[0] + u[0] * t, d.middle[1] + u[1] * t];
+}
+
+/** A drag of the opening chosen from ``from`` to ``p`` (plan points): it slides along its
+ * wall as far as the pointer went along it. Its middle there. */
+export function slideOpening(d, from, p) {
+  const u = along(d);
+  return u ? slid(d, (p[0] - from[0]) * u[0] + (p[1] - from[1]) * u[1]) : null;
+}
+
+/** The opening moved so its middle is at ``to`` along its wall; the floor is read again. */
+export function moveOpening(d, to) {
+  return submitEdit({ move: { at: d.middle, to } }, `Moving the ${d.type === "opening" ? "opening" : d.type}…`, () => {
+    clearPreview();
+    selectItem({ kind: "door", id: d.id });
+  });
+}
+
+// the arrows on an opening chosen: its slide gathered while they are pressed, sent once they stop
+let nudged = null; // { d, t, timer }
+const NUDGE_SETTLE_MS = 450;
+
+/** An arrow on the opening chosen: along its wall by ``step`` metres, the way the arrow
+ * points as far as its wall runs that way; one across its wall says which arrows move it. */
+function nudgeOpening(dx, dy, step) {
+  const d = chosenOpening(), u = along(d);
+  if (!d || !u) return;
+  const k = dx * u[0] + dy * u[1];
+  if (Math.abs(k) < 0.3) return toast(`It moves along its wall: ${Math.abs(u[0]) > Math.abs(u[1]) ? "← and →" : "↑ and ↓"} here`);
+  if (nudged?.d.id !== d.id) nudged = { d, t: 0, timer: null };
+  nudged.t += Math.sign(k) * step;
+  slid(d, nudged.t);
+  clearTimeout(nudged.timer);
+  nudged.timer = setTimeout(() => {
+    const { d: was, t } = nudged;
+    nudged = null;
+    if (Math.abs(t) >= 0.005) moveOpening(was, slid(was, t));
+    else clearPreview();
+  }, NUDGE_SETTLE_MS);
+}
+
 /** A door, window or opening said to be another (null: as the drawing reads it): one the
  * drawing reads wrong set right, kept through every re-read; the floor is read again. */
 export function retype(d, type) {
@@ -501,6 +562,16 @@ function widen(by) {
 }
 
 export function setupDrawing() {
+  // a door, window or opening chosen: the arrows slide it along its wall (Shift: 50 cm)
+  for (const [key, dx, dy] of [["arrowleft", -1, 0], ["arrowright", 1, 0], ["arrowup", 0, 1], ["arrowdown", 0, -1]]) {
+    for (const [mods, step] of [["", 0.05], ["shift+", 0.5]]) {
+      command({ id: `opening.move-${key.slice(5)}${mods ? "-far" : ""}`, title: `Move the door, window or opening ${key.slice(5)} along its wall${mods ? " 50 cm" : ""}`,
+        group: "Door, window", scope: "opening", keys: [`${mods}${key}`], palette: false, repeat: true,
+        when: () => Boolean(chosenOpening()?.span) && editable() && !state.floor?.layout,
+        why: () => (chosenOpening() ? whyNotEditable() : "Choose a door, window or opening first"),
+        run: () => nudgeOpening(dx, dy, step) });
+    }
+  }
   // what the opening tool adds follows the floor: on a location's layout a gate, else a door
   let wasLayout = false;
   on("floor", () => {

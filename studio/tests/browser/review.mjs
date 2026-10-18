@@ -589,6 +589,48 @@ test("a window the drawing reads where a door is: said to be a door in the inspe
   noErrors("an opening said to be another");
 });
 
+test("a window chosen slides along its wall: the arrows (gathered, sent once), a drag; each undone, its ID kept", async () => {
+  await press("f");
+  const w = await R(() => window.storeypathReview.state.floor.doors.find((d) => d.type === "window" && d.span && !d.ignored
+    && Math.hypot(d.span[1][0] - d.span[0][0], d.span[1][1] - d.span[0][1]) > 0.6));
+  const screen = (p) => R((p) => {
+    const v = window.storeypathReview.state.view, b = document.getElementById("svg").getBoundingClientRect();
+    return [b.left + p[0] * v.k + v.tx, b.top - p[1] * v.k + v.ty];
+  }, p);
+  await page.click(...(await screen(w.middle)));
+  await until((id) => window.storeypathReview.state.item?.id === id, "the window chosen", 8000, w.id);
+  const [ux, uy] = [w.span[1][0] - w.span[0][0], w.span[1][1] - w.span[0][1]];
+  const key = Math.abs(ux) > Math.abs(uy) ? "ArrowRight" : "ArrowUp";
+  for (let i = 0; i < 4; i++) await press(key);
+  const middle = (id) => window.storeypathReview.state.floor.doors.find((d) => d.id === id)?.middle;
+  const far = (id, from, want) => {
+    const m = window.storeypathReview.state.floor.doors.find((d) => d.id === id)?.middle;
+    return m && Math.abs(Math.hypot(m[0] - from[0], m[1] - from[1]) - want) < 0.02;
+  };
+  await until(far, "four arrows: 20 cm along its wall, its ID kept", 30000, w.id, w.middle, 0.2);
+  const moved = await R(middle, w.id);
+  // a drag: as far as the pointer goes along its wall
+  const from = await screen(moved);
+  const k = await R(() => window.storeypathReview.state.view.k);
+  const n = Math.hypot(ux, uy), by = [(ux / n) * 0.3 * k, -(uy / n) * 0.3 * k]; // 30 cm, on the screen
+  await page.drag(from, [from[0] + by[0], from[1] + by[1]], 8);
+  await until(far, "dragged 30 cm further", 30000, w.id, w.middle, 0.5);
+  // (an undo pressed while the last one's floor is read again is not taken: wait for it)
+  const idle = async () => {
+    await until(() => !window.storeypathReview.state.busy && !/Reading the floor again/.test(document.body.textContent), "the floor read again", 30000);
+    await sleep(500);
+  };
+  await idle();
+  await press("Escape");
+  await press("z", ["mod"]);
+  await until(far, "⌘Z: the drag undone", 30000, w.id, w.middle, 0.2);
+  await idle();
+  await press("z", ["mod"]);
+  await until(far, "⌘Z: the arrows undone, where the drawing has it", 30000, w.id, w.middle, 0);
+  await idle();
+  noErrors("an opening slid along its wall");
+});
+
 test("review mode: N starts it, a number sets a likely type, the count goes down, Esc stops", async () => {
   const left = async () => (await rooms()).filter((s) => s.reasons.length).length;
   const n0 = await left();

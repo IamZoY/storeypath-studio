@@ -127,6 +127,58 @@ def test_a_wall_drawn_and_undone_is_taken_away_and_the_floor_read_again(team):
     assert edits[1]["before"] == edits[2]["after"] and edits[1]["after"] == []
 
 
+def test_a_door_moved_along_its_wall_and_undone_keeps_its_id(team):
+    # Its record goes with it, and back with the undo: the next read finds it by where it is,
+    # its ID kept however far it went (an opening is matched by position, 0.5 m).
+    import math
+
+    floor = team.an0
+    door = max((r for r in team.studio.workspace(team.code).floor_objects(floor)
+                if r.kind == "opening" and r.type == "door" and r.span and r.status == "active"),
+               key=lambda r: math.dist(r.span[0], r.span[-1]))
+    (x0, y0), (x1, y1) = door.span[0], door.span[-1]
+    n = math.dist((x0, y0), (x1, y1))
+    m = [(x0 + x1) / 2, (y0 + y1) / 2]
+    status, job = team("bob", "POST", f"floors/{floor}/edits",
+                       {"move": {"at": m, "to": [m[0] + (x1 - x0) / n * 0.6, m[1] + (y1 - y0) / n * 0.6]}})
+    if status != 200:  # (its wall too short for 0.6 m: a little)
+        status, job = team("bob", "POST", f"floors/{floor}/edits",
+                           {"move": {"at": m, "to": [m[0] + (x1 - x0) / n * 0.1, m[1] + (y1 - y0) / n * 0.1]}})
+    assert status == 200, job
+    team.finished("bob", job)
+    now = team.studio.workspace(team.code).objects[door.id]
+    assert now.status == "active" and math.dist(now.geometry["coordinates"], door.geometry["coordinates"]) > 0.05
+    status, done = team("bob", "POST", "undo", {"floor": floor})
+    assert status == 200 and done["line"].startswith("moved") and done["line"].endswith("along its wall")
+    team.finished("bob", done["job"])
+    back = team.studio.workspace(team.code).objects[door.id]
+    assert back.status == "active" and math.dist(back.geometry["coordinates"], door.geometry["coordinates"]) < 0.01
+
+
+def test_a_window_moved_twice_and_undone_twice_is_where_the_drawing_has_it(team):
+    import math
+
+    floor = team.an0
+    w = next(r for r in team.studio.workspace(team.code).floor_objects(floor) if r.kind == "opening"
+             and r.type == "window" and r.span and r.status == "active" and math.dist(r.span[0], r.span[-1]) > 0.6)
+    (x0, y0), (x1, y1) = w.span[0], w.span[-1]
+    n = math.dist((x0, y0), (x1, y1))
+    u, m = ((x1 - x0) / n, (y1 - y0) / n), [(x0 + x1) / 2, (y0 + y1) / 2]
+    where = lambda: team.studio.workspace(team.code).objects[w.id]  # noqa: E731
+    for d in (0.2, 0.5):
+        r = where()
+        at = [(r.span[0][0] + r.span[-1][0]) / 2, (r.span[0][1] + r.span[-1][1]) / 2]
+        status, job = team("bob", "POST", f"floors/{floor}/edits", {"move": {"at": at, "to": [m[0] + u[0] * d, m[1] + u[1] * d]}})
+        assert status == 200, job
+        team.finished("bob", job)
+    for want in (0.2, 0.0):
+        status, done = team("bob", "POST", "undo", {"floor": floor})
+        assert status == 200, done
+        team.finished("bob", done["job"])
+        assert abs(math.dist(where().geometry["coordinates"], w.geometry["coordinates"]) - want) < 0.01, want
+    assert team.studio.workspace(team.code).floor(floor).edits.resized == []
+
+
 def test_each_person_undoes_their_own(team):
     a, b = office(team, team.hq0), office(team, team.hq1)
     assert team("khalid", "POST", f"objects/{a.id}", {"correction": {"name": "Khalid's"}})[0] == 200

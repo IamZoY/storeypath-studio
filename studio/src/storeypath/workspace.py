@@ -91,7 +91,8 @@ class DrawnOpening(BaseModel):
 
 
 class ResizedOpening(BaseModel):
-    """A door, window or opening of the drawing given another size or type in review. It is
+    """A door, window or opening of the drawing given another size or type, or moved along its
+    wall, in review. It is
     found again, at every conversion, by where it is: its middle (which a new width
     keeps)."""
 
@@ -102,6 +103,8 @@ class ResizedOpening(BaseModel):
     # what it is: a door, a window or an opening (a way through, no door), where the drawing
     # is read wrong (a glazed door drawn like a window); None: as read
     type: Literal["door", "window", "opening"] | None = None
+    # where its middle was moved to along its wall (local meters); None: where the drawing has it
+    to: list[float] | None = None
 
 
 class FloorEdits(BaseModel):

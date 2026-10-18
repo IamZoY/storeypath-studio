@@ -40,6 +40,7 @@ function scopes() {
   if (view3d.mode === "walk") list.push("walk");
   if (state.assets.length) list.push("item"); // (an item, or items chosen together)
   if (state.assets.length > 1) list.push("items");
+  if (state.item?.kind === "door" && !state.assets.length) list.push("opening"); // (a door, window or opening chosen)
   if (state.tool) list.push(`tool:${state.tool}`);
   list.push(view3d.shown ? "3d" : "2d");
   list.push("global");
@@ -102,6 +103,7 @@ function floorStep(dir) {
 // the keys shown (those of them that are theirs here), the others they cover (Shift with them)
 const AS_ONE = [
   { ids: /^item\.move-\w+$/, title: "Move the item (Shift: 1 m)", keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"] },
+  { ids: /^opening\.move-[\w-]+$/, title: "Move the door, window or opening along its wall (Shift: 50 cm)", keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"] },
   { ids: /^view\.pan-\w+$/, title: "Move the plan (Shift: further)", keys: ["arrowleft", "arrowright", "arrowup", "arrowdown"] },
   { ids: /^review\.type-\d$/, title: "Set one of the likely types", keys: ["1", "9"], range: true },
 ];

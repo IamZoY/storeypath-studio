@@ -264,7 +264,9 @@ def _describe(e: dict) -> str:
             return f"{'added' if e.get('what') in OPENINGS else 'drew'} {it}"
         if kind == "erase":
             return f"took away {it} drawn here"
-        return f"gave {it} another size"
+        if kind == "move":
+            return f"moved {it} along its wall"
+        return f"gave {it} another size or type"
     if part == "floor":
         if kind == "take over":
             what = e.get("room_name") or "the floor"

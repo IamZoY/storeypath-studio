@@ -86,6 +86,7 @@ DOOR_REACH_M = 2.0  # an item that serves a door (a card reader), placed this ne
 VIEW_TOP = {"view_deg": 360.0, "range_m": 500.0}  # a camera's own view (its fields of these keys): at most
 RESIZE_BANDS = {"width": (0.3, 8.0), "sill": (0.0, 3.0), "height": (0.3, 10.0)}  # metres
 OPENING_TYPES = ("door", "window", "opening")  # what an opening off a layout may be said to be
+MOVE_MAX_M = 30.0  # an opening moves along its wall this far at most at once
 SWING_JAMB_M = 0.05  # a drawn door's leaf is hung this near one of its jambs…
 SWING_LENGTH = (0.85, 1.15)  # …as long as the door is wide, give or take…
 SWING_ACROSS = math.sin(math.radians(20))  # …and across its wall, give or take 20°
@@ -405,6 +406,12 @@ def _inverse(ws: Workspace, entry: dict, ch: Changes, refused) -> None:
         ch.edits[target] = FloorEdits.model_validate(edits)
         ch.before, ch.after = entry["after"] or [], entry["before"] or []
         ch.more["list"] = entry["list"]
+        if entry.get("opening") and entry.get("by"):  # a move: its record back with it (its ID kept)
+            dx, dy = entry["by"]
+            record = ws.objects.get(entry["opening"])
+            if record is not None:
+                ch.objects[record.id] = _shifted(record, -dx, -dy)
+            ch.more.update(opening=entry["opening"], by=[-dx, -dy])
     else:
         raise Conflict(f"{history.describe(entry)}: not undone here")
 
@@ -881,8 +888,8 @@ class Review:
                 "sill": r.sill, "height": r.height, "drawn": (r.type_source or "").startswith("drawn"),
                 "middle": [round(middle.x, 4), round(middle.y, 4)],
                 # the size given in review to one of the drawing's (null: as drawn)
-                "resize": next((x.model_dump(exclude={"at"} | ({"type"} if x.type is None else set())) for x in resized
-                                if Point(x.at).distance(middle) <= REMOVE_REACH_M), None),
+                "resize": next((x.model_dump(exclude={"at"} | {k for k in ("type", "to") if getattr(x, k) is None})
+                                for x in resized if Point(x.to or x.at).distance(middle) <= REMOVE_REACH_M), None),
                 "ignored": eff["ignored"],
                 "divider": self._divider_of(ws, r)}
 
@@ -895,7 +902,7 @@ class Review:
             was = self._floor(ws, floor_id)
             f = was.model_copy(update={"edits": was.edits.model_copy(deep=True)})  # its edits changed alone
             add = body.get("add") if isinstance(body.get("add"), dict) else {}
-            kind, what = "draw", None
+            kind, what, moved = "draw", None, None
             if "wall" in add or "divider" in add:
                 what = "wall" if "wall" in add else "divider"
                 line = _points(add[what], 2)
@@ -920,6 +927,9 @@ class Review:
             elif isinstance(body.get("resize"), dict) and "at" in body["resize"]:
                 what = self._resize(ws, floor_id, f, body["resize"])
                 kind = "resize"
+            elif isinstance(body.get("move"), dict) and "at" in body["move"] and "to" in body["move"]:
+                what, moved = self._move(ws, floor_id, f, body["move"])
+                kind = "move"
             elif isinstance(body.get("remove"), dict) and ("at" in body["remove"] or "shape" in body["remove"]):
                 _remove(f, body["remove"])
                 kind = "erase"
@@ -937,6 +947,10 @@ class Review:
                     ch.edits[floor_id] = f.edits
             if ch.edits:
                 ch.more["what"] = what or _drawn_what(ch.more["list"], ch.before + ch.after)
+            if kind == "move" and moved is not None:  # its record with it: where the next read finds it (its ID kept)
+                record, by_xy = moved
+                ch.objects[record.id] = record
+                ch.more.update(opening=record.id, by=by_xy)
             return ch, None
 
         self._change(fn, by, editor)
@@ -975,15 +989,68 @@ class Review:
             raise NotFound("no door, window or opening there")
         nearest = min(found, key=lambda o: o[0])[1]
         middle = _middle(nearest)
-        had = next((x for x in f.edits.resized if Point(x.at).distance(middle) <= REMOVE_REACH_M), None)
-        kept = had.model_dump(exclude={"at"}) if had else {"width": None, "sill": None, "height": None, "type": None}
+        had = _given_at(f.edits.resized, middle)
+        kept = had.model_dump(exclude={"at"}) if had else {"width": None, "sill": None, "height": None, "type": None, "to": None}
         given = {**kept, **sizes, **({"type": body["type"]} if "type" in body else {})}
-        f.edits.resized = [x for x in f.edits.resized if Point(x.at).distance(middle) > REMOVE_REACH_M]
+        read_at = had.at if had else [round(middle.x, 4), round(middle.y, 4)]  # (where the drawing has it)
+        f.edits.resized = [x for x in f.edits.resized if x is not had]
         if any(v is not None for v in given.values()):
-            f.edits.resized.append(ResizedOpening(at=[round(middle.x, 4), round(middle.y, 4)], **given))
+            f.edits.resized.append(ResizedOpening(at=read_at, **given))
         if given["type"] is not None:
             return given["type"]
         return nearest.type if nearest.type in history.OPENINGS else "opening"
+
+    def _move(self, ws: Workspace, floor_id: str, f, body: dict):
+        """A door, window or opening moved along its wall so that its middle is as near
+        ``to`` as the wall lets: one drawn in review, its span (and leaf); one of the
+        drawing keeps where it was put in the floor's edits, beside its size, found again
+        by where the drawing has it. Not off its wall. Which it is, and its record moved
+        with it ((record, [dx, dy]): its ID kept by the next read), or None."""
+        at = Point(_points([body["at"]], 1)[0])
+        to = _points([body["to"]], 1)[0]
+        records = [(_middle(r).distance(at), r) for r in ws.floor_objects(floor_id) if r.kind == "opening"]
+        near = [o for o in records if o[0] <= REMOVE_REACH_M]
+        record = min(near, key=lambda o: o[0])[1] if near else None
+        drawn = [(LineString(o.span).distance(at), i) for i, o in enumerate(f.edits.openings)]
+        mine = [d for d in drawn if d[0] <= REMOVE_REACH_M]
+        o = f.edits.openings[min(mine)[1]] if mine else None
+        span = o.span if o is not None else record.span if record is not None and record.span else None
+        if span is None:
+            raise NotFound("no door, window or opening there")
+        (x0, y0), (x1, y1) = span[0], span[-1]
+        width = math.dist((x0, y0), (x1, y1)) or 1.0
+        ux, uy = (x1 - x0) / width, (y1 - y0) / width
+        mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+        t = (to[0] - mx) * ux + (to[1] - my) * uy
+        if abs(t) > MOVE_MAX_M:
+            raise ValueError(f"an opening moves along its wall {MOVE_MAX_M:g} m at most at once")
+        dx, dy = round(ux * t, 4), round(uy * t, 4)
+        if abs(t) < 0.005:
+            raise ValueError("it is there already")
+        moved = [[x + dx, y + dy] for x, y in span]
+        if not _on_walls(f, span, moved):
+            raise ValueError("it would leave its wall: an opening moves along the wall it is in")
+        shift = lambda pts: [[round(x + dx, 4), round(y + dy, 4)] for x, y in pts]  # noqa: E731
+        if o is not None:
+            o.span = shift(o.span)
+            if o.swing:
+                o.swing = shift(o.swing)
+            kind = o.type
+        else:
+            mid = _middle(record)
+            had = _given_at(f.edits.resized, mid)
+            put = [round(mid.x + dx, 4), round(mid.y + dy, 4)]
+            if had is None:
+                f.edits.resized.append(ResizedOpening(at=[round(mid.x, 4), round(mid.y, 4)], to=put))
+            else:
+                back = math.dist(had.at, put) < 0.005  # (moved back to where the drawing has it)
+                had.to = None if back else put
+                if all(v is None for v in had.model_dump(exclude={"at"}).values()):
+                    f.edits.resized = [x for x in f.edits.resized if x is not had]
+            kind = record.type if record.type in history.OPENINGS else "opening"
+        if record is None:
+            return kind, None
+        return kind, (_shifted(record, dx, dy), [dx, dy])
 
     def _space(self, ws: Workspace, r: ObjectRecord, seats: dict | None = None, cat=None) -> dict:
         eff = ws.effective(r)
@@ -1385,6 +1452,34 @@ def _points(value, n: int) -> list[list[float]]:
     if len(pts) != n:
         raise ValueError(f"expected {n} points [x, y]")
     return pts
+
+
+def _given_at(resized, middle: Point):
+    """What was given in review to the drawing's opening whose middle is ``middle`` now
+    (moved, or where the drawing has it), or None."""
+    return next((x for x in resized if Point(x.to or x.at).distance(middle) <= REMOVE_REACH_M), None)
+
+
+def _shifted(r: ObjectRecord, dx: float, dy: float) -> ObjectRecord:
+    """An opening's record moved by (dx, dy): where it is, its span, its leaves."""
+    shift = lambda pts: [[round(x + dx, 4), round(y + dy, 4)] for x, y in pts]  # noqa: E731
+    x, y = r.geometry["coordinates"][:2]
+    return r.model_copy(update={"geometry": {"type": "Point", "coordinates": [round(x + dx, 4), round(y + dy, 4)]},
+                                "span": shift(r.span) if r.span else r.span,
+                                "swings": [shift(leaf) for leaf in r.swings] if r.swings else r.swings}, deep=True)
+
+
+def _on_walls(f, span, moved) -> bool:
+    """Whether a span moved along its wall is still in it: the walls as read (its own gap
+    where it was taken as wall) along nine tenths of it, give or take a wall's thickness."""
+    if not f.walls:
+        return True  # (no walls read: nothing to tell)
+    walls = shape(f.walls)
+    t = max(f.wall_thickness or 0.2, 0.1)
+    walls = walls.union(LineString(span).buffer(t, cap_style="flat"))
+    line = LineString(moved)
+    inside = sum(1 for k in range(11) if walls.distance(line.interpolate(k / 10, normalized=True)) <= t / 2)
+    return inside >= 10
 
 
 def _swing(value, span) -> list[list[float]] | None:

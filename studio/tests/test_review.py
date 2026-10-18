@@ -1,6 +1,7 @@
 """StoreyPath Studio's web application: the review editor and the whole workflow."""
 
 import io
+import math
 import json
 import threading
 import time
@@ -1040,6 +1041,58 @@ def test_a_door_drawn_in_review_swings_the_way_it_was_drawn(review):
     _reconvert(path, f_id)
     o = next(x for x in r.floor(f_id)["doors"] if x["drawn"])
     assert o["type"] == "opening" and not o["swings"]
+
+
+def test_an_opening_moved_along_its_wall_keeps_its_id_and_its_wall(review):
+    # Dragged along its wall: a window of the drawing is put there through every re-read
+    # (kept beside its size), its gap with it and its ID; a door drawn here moves with its
+    # leaf. Off its wall, or not along it, is refused; moved back, nothing is kept.
+    r, path, f_id = review
+    floor = r.floor(f_id)
+    w = next(d for d in floor["doors"] if d["type"] == "window" and d["span"] and LineString(d["span"]).length > 0.5)
+    (x0, y0), (x1, y1) = w["span"][0], w["span"][-1]
+    n = LineString(w["span"]).length
+    u = ((x1 - x0) / n, (y1 - y0) / n)
+    m = w["middle"]
+    with pytest.raises(ValueError):
+        r.edit(f_id, {"move": {"at": m, "to": [m[0] - u[1] * 2, m[1] + u[0] * 2]}})  # across its wall: not along it
+    with pytest.raises(ValueError):
+        r.edit(f_id, {"move": {"at": m, "to": [m[0] + u[0] * 25, m[1] + u[1] * 25]}})  # off its wall
+    r.edit(f_id, {"move": {"at": m, "to": [m[0] + u[0] * 0.3, m[1] + u[1] * 0.3]}})
+    (given,) = Workspace.load(path).floor(f_id).edits.resized
+    assert given.at == [round(v, 4) for v in m] and abs(math.dist(given.to, m) - 0.3) < 1e-3
+    moved = next(d for d in r.floor(f_id)["doors"] if d["id"] == w["id"])  # its record with it, at once
+    assert abs(math.dist(moved["middle"], m) - 0.3) < 1e-3
+    _reconvert(path, f_id)
+    after = next(d for d in r.floor(f_id)["doors"] if d["id"] == w["id"])
+    assert abs(math.dist(after["middle"], m) - 0.3) < 0.01 and abs(LineString(after["span"]).length - n) < 0.01
+    assert after["resize"]["to"] == given.to
+    r.edit(f_id, {"resize": {"at": after["middle"], "sill": 0.6}})  # a size given after: it stays where it was put
+    _reconvert(path, f_id)
+    again = next(d for d in r.floor(f_id)["doors"] if d["id"] == w["id"])
+    assert again["sill"] == 0.6 and abs(math.dist(again["middle"], m) - 0.3) < 0.01
+    r.edit(f_id, {"move": {"at": again["middle"], "to": m}})
+    assert Workspace.load(path).floor(f_id).edits.resized[0].to is None  # back where the drawing has it
+
+    # a door drawn here: its span and its leaf
+    rooms = sorted((s for s in floor["spaces"] if s["kind"] == "space"), key=lambda s: -s["area"])
+    a, b = rooms[0], next(s for s in rooms[1:] if shape(s["geometry"]).distance(shape(rooms[0]["geometry"])) < 0.5)
+    between = shape(a["geometry"]).buffer(0.3).intersection(shape(b["geometry"]).buffer(0.3))
+    c = between.centroid
+    vertical = (between.bounds[3] - between.bounds[1]) > (between.bounds[2] - between.bounds[0])
+    span = [[c.x, c.y - 0.45], [c.x, c.y + 0.45]] if vertical else [[c.x - 0.45, c.y], [c.x + 0.45, c.y]]
+    along = (0.0, 0.2) if vertical else (0.2, 0.0)
+    leaf = [span[0], [span[0][0] + (0.9 if vertical else 0), span[0][1] + (0 if vertical else 0.9)]]
+    r.edit(f_id, {"add": {"opening": {"type": "door", "span": span, "swing": leaf}}})
+    _reconvert(path, f_id)
+    d = next(x for x in r.floor(f_id)["doors"] if x["drawn"])
+    r.edit(f_id, {"move": {"at": [c.x, c.y], "to": [c.x + along[0], c.y + along[1]]}})
+    o = Workspace.load(path).floor(f_id).edits.openings[0]
+    assert o.span == [[round(x + along[0], 4), round(y + along[1], 4)] for x, y in span]
+    assert o.swing == [[round(x + along[0], 4), round(y + along[1], 4)] for x, y in leaf]
+    _reconvert(path, f_id)
+    e = next(x for x in r.floor(f_id)["doors"] if x["drawn"])
+    assert e["id"] == d["id"] and abs(math.dist(e["middle"], [c.x + along[0], c.y + along[1]])) < 0.01
 
 
 def test_a_space_drawn_where_the_drawing_encloses_none(review):

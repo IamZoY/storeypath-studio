@@ -7,7 +7,7 @@
 
 import { editable, viewOnly, whyNotRoom } from "./access.js";
 import { emit } from "./bus.js";
-import { drawnNear, openingNear } from "./drawing.js";
+import { chosenOpening, clearPreview, drawnNear, moveOpening, openingNear, slideOpening } from "./drawing.js";
 import { $ } from "./dom.js";
 import { assetAt, assetOf, changeAsset, chosenAll, drawGuides, itemRoom, placing, renderAssets } from "./items.js";
 import { changeAssets, groupOf } from "./groups.js";
@@ -85,6 +85,13 @@ function bindPane(pane) {
       pane.setPointerCapture(e.pointerId);
       return;
     }
+    // the door, window or opening chosen, pressed: dragged, it slides along its wall
+    const door = !state.tool && !e.shiftKey ? chosenOpening() : null;
+    if (door?.span && pane === $("svg") && editable() && !state.floor?.layout && openingNear(p)?.id === door.id) {
+      drag = { mode: "opening", d: door, from: p, x: e.clientX, y: e.clientY, moved: false };
+      pane.setPointerCapture(e.pointerId);
+      return;
+    }
     // the item clicked, or one the click falls just beside (a small one: before the area under it)
     const picked = !state.tool && (assetOf(e.target) || assetAt(p));
     // dragged only by who may change the floor, and not in a room someone else is editing
@@ -119,6 +126,13 @@ function bindPane(pane) {
       return;
     }
     if (!drag?.moved && state.tool && !spaceHeld) t?.plan?.hover?.(p, e);
+    if (drag?.mode === "opening") {
+      if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
+      drag.moved = true;
+      pane.classList.add("dragging");
+      drag.to = slideOpening(drag.d, drag.from, p);
+      return;
+    }
     if (!drag) return;
     const dx = e.clientX - drag.x;
     const dy = e.clientY - drag.y;
@@ -161,6 +175,11 @@ function bindPane(pane) {
     const t = activeTool();
     if (d.mode === "tool") return t?.plan?.up?.(p, e);
     if (d.mode === "pan") return;
+    if (d.mode === "opening") { // slid along its wall, or a click on it: chosen still
+      if (d.moved && d.to) return moveOpening(d.d, d.to);
+      clearPreview();
+      return selectItem({ kind: "door", id: d.d.id });
+    }
     if (d.mode === "band") {
       band.hidden = true;
       if (d.moved) return selectSpaces(roomsIn(pane, d.from, local(e)), { add: true });
