@@ -111,6 +111,7 @@ body.tabbing #svg:focus { box-shadow: inset 0 0 0 2px var(--accent); }
 .preview line.paint-wall { stroke: #3d7bff; stroke-width: 7; stroke-linecap: round; opacity: .75; } /* the wall a click paints */
 .preview path.space-outline { fill: rgba(12, 166, 120, .18); stroke: var(--plan-divider); stroke-width: 2; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
 .preview circle { fill: var(--plan-drawn); }
+.preview path.swing { fill: none; stroke: var(--plan-door); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; } /* the way a door added swings */
 #map.drawing-tool .pane { cursor: crosshair; }
 #map.busy .pane { cursor: progress; }
 

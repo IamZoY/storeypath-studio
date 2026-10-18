@@ -64,6 +64,7 @@ from .db.store import Changes, Editor, _same, drawing_name, floor_of, who_of
 from .errors import Busy, Conflict, NotFound
 from .export import Units, _label_point, capacity_of, seating, walked_doors as _doors
 from .extract import CURVE_TOLERANCE_M, _center, _flatten, _text_lines, _walk, modelspace_entities
+from .geometry import leaves_of_width
 from .ids import normalize_item_id
 from .profile import Profile, load_profile, resolve_profile
 from .stacks import NOT_LINKED, STACK_TYPES
@@ -84,6 +85,10 @@ REMOVE_REACH_M = 0.5  # removing what was drawn takes the drawn wall or opening 
 DOOR_REACH_M = 2.0  # an item that serves a door (a card reader), placed this near one, is linked to it
 VIEW_TOP = {"view_deg": 360.0, "range_m": 500.0}  # a camera's own view (its fields of these keys): at most
 RESIZE_BANDS = {"width": (0.3, 8.0), "sill": (0.0, 3.0), "height": (0.3, 10.0)}  # metres
+OPENING_TYPES = ("door", "window", "opening")  # what an opening off a layout may be said to be
+SWING_JAMB_M = 0.05  # a drawn door's leaf is hung this near one of its jambs…
+SWING_LENGTH = (0.85, 1.15)  # …as long as the door is wide, give or take…
+SWING_ACROSS = math.sin(math.radians(20))  # …and across its wall, give or take 20°
 PRINT_PX_PER_M = 100  # a floor's print: a pixel a centimetre…
 PRINT_MAX_PX = 10000  # …within this many pixels a side
 PRINT_MARGIN_M = 3.0  # around the floor's spaces, when the floor has no region of its own
@@ -876,7 +881,7 @@ class Review:
                 "sill": r.sill, "height": r.height, "drawn": (r.type_source or "").startswith("drawn"),
                 "middle": [round(middle.x, 4), round(middle.y, 4)],
                 # the size given in review to one of the drawing's (null: as drawn)
-                "resize": next((x.model_dump(exclude={"at"}) for x in resized
+                "resize": next((x.model_dump(exclude={"at"} | ({"type"} if x.type is None else set())) for x in resized
                                 if Point(x.at).distance(middle) <= REMOVE_REACH_M), None),
                 "ignored": eff["ignored"],
                 "divider": self._divider_of(ws, r)}
@@ -907,7 +912,9 @@ class Review:
                 widest = 12 if f.layout else 6  # (a gate for cars)
                 if not 0.3 <= LineString(span).length <= widest:
                     raise ValueError(f"an opening is 0.3 to {widest} m wide")
-                f.edits.openings.append(DrawnOpening(type="door" if o["type"] == "gate" else o["type"], span=span))
+                swing = _swing(o.get("swing"), span) if o["type"] == "door" else None
+                f.edits.openings.append(DrawnOpening(type="door" if o["type"] == "gate" else o["type"], span=span,
+                                                     swing=swing))
             elif isinstance(body.get("add"), dict) and "space" in body["add"]:
                 f.edits.spaces.append(_ring(body["add"]["space"]))
             elif isinstance(body.get("resize"), dict) and "at" in body["resize"]:
@@ -936,19 +943,31 @@ class Review:
 
     def _resize(self, ws: Workspace, floor_id: str, f, body: dict) -> str:
         """A door, window or opening given another width, sill or height (metres; null:
-        as drawn). One drawn in review changes; one of the drawing keeps its new size
-        in the floor's edits, found again by its middle at every conversion. Which it was
-        (door, window, opening)."""
+        as drawn), or another type (door, window or opening; null: as read): one the
+        drawing reads wrong (a glazed door drawn like a window). What is left out of the
+        request stays as it was. One drawn in review changes; one of the drawing keeps
+        its new size and type in the floor's edits, found again by its middle at every
+        conversion. Which it is now (door, window, opening)."""
         at = Point(_points([body["at"]], 1)[0])
         bands = {**RESIZE_BANDS, "width": (0.3, 12.0)} if f.layout else RESIZE_BANDS  # (a gate for cars, 0.12)
-        sizes = {key: _size(body.get(key), key, band) for key, band in bands.items()}
+        sizes = {key: _size(body.get(key), key, band) for key, band in bands.items() if key in body}
+        if "type" in body:
+            if f.layout:
+                raise ValueError("an opening on a layout is a gate")
+            if body["type"] is not None and body["type"] not in OPENING_TYPES:
+                raise ValueError(f"type: {', '.join(OPENING_TYPES)}, or null (as read)")
         drawn = [(LineString(o.span).distance(at), i) for i, o in enumerate(f.edits.openings)]
         near = [d for d in drawn if d[0] <= REMOVE_REACH_M]
         if near:
             o = f.edits.openings[min(near)[1]]
-            if sizes["width"] is not None:
-                o.span = _resized_span(o.span, sizes["width"])
-            o.sill, o.height = sizes["sill"], sizes["height"]
+            if sizes.get("width") is not None:
+                new = _resized_span(o.span, sizes["width"])
+                if o.swing:  # its leaf with it, hung on the same jamb
+                    o.swing = leaves_of_width([o.swing], o.span, new)[0]
+                o.span = new
+            o.sill, o.height = sizes.get("sill", o.sill), sizes.get("height", o.height)
+            if body.get("type") is not None and body["type"] != o.type:
+                o.type, o.swing = body["type"], None  # (a leaf hung again with the door tool)
             return o.type
         openings = [(_middle(r).distance(at), r) for r in ws.floor_objects(floor_id) if r.kind == "opening"]
         found = [o for o in openings if o[0] <= REMOVE_REACH_M]
@@ -956,9 +975,14 @@ class Review:
             raise NotFound("no door, window or opening there")
         nearest = min(found, key=lambda o: o[0])[1]
         middle = _middle(nearest)
+        had = next((x for x in f.edits.resized if Point(x.at).distance(middle) <= REMOVE_REACH_M), None)
+        kept = had.model_dump(exclude={"at"}) if had else {"width": None, "sill": None, "height": None, "type": None}
+        given = {**kept, **sizes, **({"type": body["type"]} if "type" in body else {})}
         f.edits.resized = [x for x in f.edits.resized if Point(x.at).distance(middle) > REMOVE_REACH_M]
-        if any(v is not None for v in sizes.values()):
-            f.edits.resized.append(ResizedOpening(at=[round(middle.x, 4), round(middle.y, 4)], **sizes))
+        if any(v is not None for v in given.values()):
+            f.edits.resized.append(ResizedOpening(at=[round(middle.x, 4), round(middle.y, 4)], **given))
+        if given["type"] is not None:
+            return given["type"]
         return nearest.type if nearest.type in history.OPENINGS else "opening"
 
     def _space(self, ws: Workspace, r: ObjectRecord, seats: dict | None = None, cat=None) -> dict:
@@ -1361,6 +1385,27 @@ def _points(value, n: int) -> list[list[float]]:
     if len(pts) != n:
         raise ValueError(f"expected {n} points [x, y]")
     return pts
+
+
+def _swing(value, span) -> list[list[float]] | None:
+    """A drawn door's leaf when open, from a request: [hinge, its free edge], the hinge
+    on one of its jambs (put exactly on it), as long as the door is wide and across its
+    wall (SWING_*). None for none."""
+    if value is None:
+        return None
+    hinge, free = _points(value, 2)
+    jamb = min(span, key=lambda j: math.dist(j, hinge))
+    width = math.dist(span[0], span[1])
+    if math.dist(jamb, hinge) > SWING_JAMB_M:
+        raise ValueError("a door's swing is hung on one of its jambs")
+    leaf = math.dist(hinge, free)
+    if not SWING_LENGTH[0] * width <= leaf <= SWING_LENGTH[1] * width:
+        raise ValueError("a door's leaf is as long as the door is wide")
+    along = ((span[1][0] - span[0][0]) * (free[0] - hinge[0]) + (span[1][1] - span[0][1]) * (free[1] - hinge[1])) / (width * leaf)
+    if abs(along) > SWING_ACROSS:
+        raise ValueError("a door's leaf opens across its wall")
+    dx, dy = free[0] - hinge[0], free[1] - hinge[1]
+    return [[round(jamb[0], 4), round(jamb[1], 4)], [round(jamb[0] + dx, 4), round(jamb[1] + dy, 4)]]
 
 
 def _size(value, key: str, band: tuple[float, float]) -> float | None:

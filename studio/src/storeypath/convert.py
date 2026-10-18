@@ -853,18 +853,22 @@ def _drawn_openings(ex: FloorExtraction, drawn, reach: float) -> None:
         for d in found:
             d.source = f"drawn {o.type}"
             d.sill, d.height = o.sill, o.height
+            if o.type == "door" and o.swing and len(o.swing) == 2:
+                d.swings = [(tuple(o.swing[0]), tuple(o.swing[1]))]
             ex.doors.append(d)
         if ex.walls is not None:
             ex.walls = ex.walls.difference(span.buffer(thickness, cap_style="flat"))
 
 
 RESIZE_REACH_M = 0.5  # an opening given another size in review is found this near its middle
+RETYPED = {"door": "door", "window": "window", "opening": "doorway"}  # an opening given another type: its source
 
 
 def _resized_openings(ex: FloorExtraction, resized) -> None:
-    """The drawing's doors, windows and openings given another size in review: each
-    the opening nearest its middle, its gap in the walls made to fit (what it no longer
-    takes is wall again, as thick as the wall on either side), a door's leaves with it."""
+    """The drawing's doors, windows and openings given another size or type in review:
+    each the opening nearest its middle, its gap in the walls made to fit (what it no
+    longer takes is wall again, as thick as the wall on either side), a door's leaves with
+    it; one given another type is that (a window read where a door is: a door)."""
     if not resized:
         return
     from shapely.geometry import LineString, Point
@@ -882,6 +886,10 @@ def _resized_openings(ex: FloorExtraction, resized) -> None:
         if not near:
             continue
         d = ex.doors[min(near)[1]]
+        if rz.type is not None and _opening_type(d.source) != rz.type:  # read wrong: what it is
+            d.source = RETYPED[rz.type]
+            if rz.type != "door":
+                d.swings = []  # (no leaf: a window, a way through)
         if rz.sill is not None:
             d.sill = rz.sill
         if rz.height is not None:

@@ -525,6 +525,70 @@ test("a door chosen shows its sizes", async () => {
   await press("Escape");
 });
 
+test("the door tool: R turns the door to add (the tool stays), Shift+R back, [ ] its width; added, it swings as shown", async () => {
+  await press("f");
+  await press("o");
+  truly((await toolNow()) === "opening", "O: the door tool");
+  const onWall = await R(() => { // the middle of the floor's longest wall edge, on the screen
+    const r = window.storeypathReview, v = r.state.view, b = document.getElementById("svg").getBoundingClientRect();
+    let best = null;
+    const rings = (g) => (g.type === "Polygon" ? g.coordinates : g.coordinates.flat());
+    for (const ring of rings(r.state.floor.walls)) {
+      for (let i = 0; i + 1 < ring.length; i++) {
+        const [a, c] = [ring[i], ring[i + 1]], len = Math.hypot(c[0] - a[0], c[1] - a[1]);
+        if (!best || len > best.len) best = { len, at: [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2] };
+      }
+    }
+    return [b.left + best.at[0] * v.k + v.tx, b.top - best.at[1] * v.k + v.ty];
+  });
+  await page.mouse("mouseMoved", ...onWall);
+  const swing = () => R(() => document.querySelector("#preview path.swing")?.getAttribute("d") ?? null);
+  const first = await until(() => document.querySelector("#preview path.swing")?.getAttribute("d") ?? null, "the door to add, drawn swinging", 5000);
+  await press("r");
+  truly((await toolNow()) === "opening", "R keeps the door tool (it is not the Space tool's here)");
+  const turned = await until(async (was) => { const d = document.querySelector("#preview path.swing")?.getAttribute("d"); return d && d !== was ? d : null; },
+    "R turned the door", 5000, first);
+  truly(await R(() => window.storeypathReview.state.openingSwing) === 1, "the other jamb");
+  await press("r", ["shift"]);
+  truly(await R(() => window.storeypathReview.state.openingSwing) === 0 && (await swing()) === first, "Shift+R: back");
+  await press("]");
+  truly(await R(() => window.storeypathReview.state.openingWidth === 0.95 && document.querySelector("#tool-options input[type=number]").value === "0.95"),
+    "] five centimetres wider, the box says so");
+  await press("[");
+  await press("r");
+  await page.click(...onWall);
+  const added = await until(() => window.storeypathReview.state.floor.doors.find((d) => d.drawn && d.swings?.length) ?? null,
+    "the door added, with its swing", 30000);
+  const [[h, free]] = added.swings;
+  truly(added.span.some((j) => Math.hypot(j[0] - h[0], j[1] - h[1]) < 1e-3), `hung on a jamb: ${JSON.stringify(added.swings)}`);
+  truly(Math.abs(Math.hypot(free[0] - h[0], free[1] - h[1]) - 0.9) < 0.02, "as long as the door is wide");
+  truly(turned !== null, "drawn turned before it was added");
+  await press("Escape");
+  await press("z", ["mod"]);
+  await until(() => !window.storeypathReview.state.floor.doors.some((d) => d.drawn), "⌘Z took it away", 30000);
+  noErrors("the door tool");
+});
+
+test("a window the drawing reads where a door is: said to be a door in the inspector, then as read again", async () => {
+  const w = await R(() => window.storeypathReview.state.floor.doors.find((d) => d.type === "window" && d.span && !d.ignored));
+  await R(() => window.storeypathReview.select(null));
+  const at = await R((p) => {
+    const v = window.storeypathReview.state.view, b = document.getElementById("svg").getBoundingClientRect();
+    return [b.left + p[0] * v.k + v.tx, b.top - p[1] * v.k + v.ty];
+  }, w.middle);
+  await page.click(...at);
+  await until(() => document.getElementById("inspector").dataset.kind === "opening"
+    && [...document.querySelectorAll('#inspector [aria-label="What it is"] [role=radio]')].length === 3, "what it is, in the inspector", 8000);
+  await R(() => [...document.querySelectorAll('#inspector [aria-label="What it is"] [role=radio]')].find((b) => b.textContent === "Door").click());
+  await until((id) => window.storeypathReview.state.floor.doors.find((d) => d.id === id)?.type === "door", "a door now, the same ID", 30000, w.id);
+  await until(() => [...document.querySelectorAll("#inspector .btn-link")].some((b) => /as the drawing reads it/.test(b.textContent)),
+    "said here, with the way back", 8000);
+  await R(() => [...document.querySelectorAll("#inspector .btn-link")].find((b) => /as the drawing reads it/.test(b.textContent)).click());
+  await until((id) => window.storeypathReview.state.floor.doors.find((d) => d.id === id)?.type === "window", "a window again", 30000, w.id);
+  await press("Escape");
+  noErrors("an opening said to be another");
+});
+
 test("review mode: N starts it, a number sets a likely type, the count goes down, Esc stops", async () => {
   const left = async () => (await rooms()).filter((s) => s.reasons.length).length;
   const n0 = await left();

@@ -85,10 +85,13 @@ class DrawnOpening(BaseModel):
     span: list[list[float]]  # jamb to jamb, local meters
     sill: float | None = None  # metres above the floor, and its height, when given in review
     height: float | None = None
+    # a door's leaf when open, as a drawing's swing is read: [hinge, its free edge], local
+    # meters (the hinge on a jamb; which side of the wall it opens into); None: not given
+    swing: list[list[float]] | None = None
 
 
 class ResizedOpening(BaseModel):
-    """A door, window or opening of the drawing given another size in review. It is
+    """A door, window or opening of the drawing given another size or type in review. It is
     found again, at every conversion, by where it is: its middle (which a new width
     keeps)."""
 
@@ -96,6 +99,9 @@ class ResizedOpening(BaseModel):
     width: float | None = None  # jamb to jamb; None: as the drawing has it
     sill: float | None = None  # above the floor; None: as the drawing (its schedule) has it
     height: float | None = None
+    # what it is: a door, a window or an opening (a way through, no door), where the drawing
+    # is read wrong (a glazed door drawn like a window); None: as read
+    type: Literal["door", "window", "opening"] | None = None
 
 
 class FloorEdits(BaseModel):

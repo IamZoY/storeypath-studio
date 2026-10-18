@@ -10,7 +10,7 @@
 import { editable } from "../access.js";
 import { header, field, row, section } from "../inspector.js";
 import { el, icon } from "../dom.js";
-import { deleteItem, drawnLength, openingMeta, openingName, sizeForm } from "../drawing.js";
+import { deleteItem, drawnLength, openingMeta, openingName, retype, sizeForm } from "../drawing.js";
 import * as finish from "../finish.js";
 import { categories, changeAsset, copyId, doorOf, turnAsset } from "../items.js";
 import { deleteAssets, groupAssets, groupOf, turnAssets, ungroupAssets } from "../groups.js";
@@ -291,6 +291,26 @@ function openingSize({ opening: d, editable: may }) {
   return [form, el("p", { class: "hint" }, "Empty: as the drawing (or its schedule) has it. The floor is read again with the new size.")];
 }
 
+/** What an opening is, a door, a window or a way through: one the drawing reads wrong (a
+ * glazed door drawn like a window) said right, kept through every re-read. */
+function openingType({ opening: d, editable: may }) {
+  if (!d || d.ignored || state.floor?.layout) return null; // (on a layout every opening is a gate)
+  if (!d.drawn && !readable()) return null;
+  const pick = el("div", { class: "segmented", role: "radiogroup", "aria-label": "What it is" },
+    ...[["door", "Door"], ["window", "Window"], ["opening", "Opening"]].map(([type, name]) => {
+      const b = el("button", { type: "button", role: "radio", "aria-checked": String(d.type === type), disabled: !may || null,
+        "data-tip": type === "opening" ? "A way through, no door" : `A ${type}` }, name);
+      b.addEventListener("click", () => { if (d.type !== type) retype(d, type); });
+      return b;
+    }));
+  if (d.resize?.type && may) {
+    const back = el("button", { type: "button", class: "btn-link" }, "as the drawing reads it");
+    back.addEventListener("click", () => retype(d, null));
+    return [pick, el("p", { class: "hint" }, "Said here; back to ", back)];
+  }
+  return [pick, el("p", { class: "hint" }, d.drawn ? "Drawn here." : "Read wrong? Say what it is: kept through every re-read.")];
+}
+
 function openingActions({ opening: d, editable: may }) {
   if (!d || !may) return null;
   const b = el("button", { type: "button", class: "btn-sm btn-danger", "data-key": "delete" },
@@ -338,6 +358,7 @@ export function setupOtherSections() {
   section({ id: "items.actions", kinds: ["assets"], title: "", order: 90, bare: true, render: itemsActions });
 
   header({ kind: "opening", render: openingHeader });
+  section({ id: "opening.type", kinds: ["opening"], title: "What it is", order: 5, render: openingType });
   section({ id: "opening.size", kinds: ["opening"], title: "Size", order: 10, render: openingSize });
   section({ id: "opening.served", kinds: ["opening"], title: "Served by", order: 20, render: openingServed });
   section({ id: "opening.actions", kinds: ["opening"], title: "", order: 90, bare: true, render: openingActions });

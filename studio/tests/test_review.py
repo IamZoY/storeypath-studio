@@ -975,6 +975,73 @@ def test_a_space_studio_set_aside_is_restored_by_a_person(review):
     assert again["ignored"] is True and ws.effective(ws.objects[hall.id])["ignored"] is True
 
 
+def test_a_window_said_to_be_a_door_is_one_through_every_read(review):
+    # A glazed door the drawing reads as a window: said to be a door in review, it is one
+    # (the same ID), a way in from outside, through every re-read; a size given after keeps
+    # it a door; said to be as read again, a window.
+    from storeypath.navigation import build_network
+
+    r, path, f_id = review
+    window = next(d for d in r.floor(f_id)["doors"] if d["type"] == "window" and d["span"] and len(d["connects"]) == 1)
+    r.edit(f_id, {"resize": {"at": window["middle"], "type": "door"}})
+    assert [x.type for x in Workspace.load(path).floor(f_id).edits.resized] == ["door"]
+    _reconvert(path, f_id)
+    d = next(x for x in r.floor(f_id)["doors"] if x["id"] == window["id"])
+    assert d["type"] == "door" and d["resize"] == {"width": None, "sill": None, "height": None, "type": "door"}
+    net = build_network(Workspace.load(path), f_id.rsplit("-", 1)[0])
+    assert any(n["kind"] == "entrance" and n["opening_id"] == window["id"] for n in net["nodes"])  # a way in
+
+    r.edit(f_id, {"resize": {"at": d["middle"], "width": round(window["width"] + 0.2, 3), "sill": None, "height": None}})
+    _reconvert(path, f_id)
+    d = next(x for x in r.floor(f_id)["doors"] if x["id"] == window["id"])
+    assert d["type"] == "door" and abs(d["width"] - (window["width"] + 0.2)) < 1e-3  # still a door, wider
+
+    r.edit(f_id, {"resize": {"at": d["middle"], "type": None}})
+    _reconvert(path, f_id)
+    w = next(x for x in r.floor(f_id)["doors"] if x["id"] == window["id"])
+    assert w["type"] == "window" and abs(w["width"] - (window["width"] + 0.2)) < 1e-3  # as read, the size kept
+    with pytest.raises(ValueError):
+        r.edit(f_id, {"resize": {"at": w["middle"], "type": "hatch"}})
+
+
+def test_a_door_drawn_in_review_swings_the_way_it_was_drawn(review):
+    # The door tool sends the leaf: hung on a jamb, across the wall, as long as the door is
+    # wide. The floor read again has it; a new width takes it along; one not so is refused.
+    r, path, f_id = review
+    floor = r.floor(f_id)
+    rooms = sorted((s for s in floor["spaces"] if s["kind"] == "space"), key=lambda s: -s["area"])
+    a, b = rooms[0], next(s for s in rooms[1:] if shape(s["geometry"]).distance(shape(rooms[0]["geometry"])) < 0.5)
+    between = shape(a["geometry"]).buffer(0.3).intersection(shape(b["geometry"]).buffer(0.3))
+    c = between.centroid
+    vertical = (between.bounds[3] - between.bounds[1]) > (between.bounds[2] - between.bounds[0])
+    span = [[c.x, c.y - 0.45], [c.x, c.y + 0.45]] if vertical else [[c.x - 0.45, c.y], [c.x + 0.45, c.y]]
+    across = [0.9, 0.0] if vertical else [0.0, 0.9]
+    hinge = span[1]
+    leaf = [hinge, [hinge[0] + across[0], hinge[1] + across[1]]]
+    for wrong in ([[hinge[0] + 0.3, hinge[1] + 0.3], leaf[1]],  # off its jambs
+                  [hinge, [hinge[0] + 2 * across[0], hinge[1] + 2 * across[1]]],  # longer than the door is wide
+                  [hinge, span[0]]):  # along the wall
+        with pytest.raises(ValueError):
+            r.edit(f_id, {"add": {"opening": {"type": "door", "span": span, "swing": wrong}}})
+    r.edit(f_id, {"add": {"opening": {"type": "door", "span": span, "swing": leaf}}})
+    assert Workspace.load(path).floor(f_id).edits.openings[0].swing == [[round(v, 4) for v in p] for p in leaf]
+    _reconvert(path, f_id)
+    d = next(x for x in r.floor(f_id)["doors"] if x["drawn"])
+    assert d["swings"] == [[[round(v, 4) for v in p] for p in leaf]]
+
+    r.edit(f_id, {"resize": {"at": [c.x, c.y], "width": 1.2}})
+    _reconvert(path, f_id)
+    d = next(x for x in r.floor(f_id)["doors"] if x["drawn"])
+    (h, free), = d["swings"]
+    assert min(LineString([h, end]).length for end in d["span"]) < 1e-3  # still on a jamb
+    assert abs(LineString([h, free]).length - 1.2) < 1e-3  # as long as the door is wide
+
+    r.edit(f_id, {"resize": {"at": [c.x, c.y], "type": "opening"}})  # a way through: no leaf
+    _reconvert(path, f_id)
+    o = next(x for x in r.floor(f_id)["doors"] if x["drawn"])
+    assert o["type"] == "opening" and not o["swings"]
+
+
 def test_a_space_drawn_where_the_drawing_encloses_none(review):
     # A colonnade between columns: no walls, so no space is found there. A person
     # draws its outline in review; it becomes a space through every re-read, never

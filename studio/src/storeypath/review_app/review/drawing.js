@@ -34,6 +34,10 @@ export const widestOpening = () => (state.floor?.layout ? 12 : 6);
 
 state.openingKind = "door"; // what the opening tool adds
 state.openingWidth = null; // its width (null: its kind's)
+// which way a door added swings, turned with R: its hinge on one jamb or the other (bit 1),
+// opening into the side the pointer is on or away from it (bit 2)
+state.openingSwing = 0;
+let hovered = null; // the plan point the opening tool last showed its door at (a key redraws it there)
 const shaping = () => state.tool === "space" || state.tool === "stairs"; // a shape drawn corner by corner
 
 /** The floor's wall edges (and the walls drawn here), for snapping to. */
@@ -113,6 +117,28 @@ export function openingAt(p, wide = widthOf()) {
   return [[c[0] - (u[0] * width) / 2, c[1] - (u[1] * width) / 2], [c[0] + (u[0] * width) / 2, c[1] + (u[1] * width) / 2]];
 }
 
+/** A door's leaf when open as it is added at ``p`` (``span``, from openingAt): [hinge, free
+ * edge], hung and turned as state.openingSwing says, across the wall. */
+export function leafAt(span, p, swing = state.openingSwing) {
+  const [a, b] = span;
+  const w = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  const n = [-(b[1] - a[1]) / w, (b[0] - a[0]) / w];
+  const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const toward = (p[0] - mid[0]) * n[0] + (p[1] - mid[1]) * n[1] >= 0 ? 1 : -1; // the pointer's side
+  const side = toward * (swing & 2 ? -1 : 1);
+  const hinge = span[swing & 1];
+  return [hinge, [hinge[0] + n[0] * side * w, hinge[1] + n[1] * side * w]];
+}
+
+/** A door's leaf and the arc its free edge sweeps to the other jamb, as a path. */
+function swingPath(span, leaf) {
+  const [hinge, free] = leaf;
+  const other = span[0] === hinge ? span[1] : span[0];
+  const r = Math.hypot(free[0] - hinge[0], free[1] - hinge[1]);
+  const cross = (free[0] - hinge[0]) * (other[1] - hinge[1]) - (free[1] - hinge[1]) * (other[0] - hinge[0]);
+  return `M${hinge[0]},${hinge[1]}L${free[0]},${free[1]}A${r},${r} 0 0 ${cross > 0 ? 1 : 0} ${other[0]},${other[1]}`;
+}
+
 export function clearPreview() {
   for (const id of ["preview", "preview-print"]) $(id).replaceChildren();
 }
@@ -140,8 +166,10 @@ export function preview(p) {
       : [];
     shapes.push(() => svg("circle", { cx: end[0], cy: end[1], r }));
   } else if (state.tool === "opening") {
+    hovered = p;
     const span = openingAt(p);
     if (span) shapes = [() => svg("line", { x1: span[0][0], y1: span[0][1], x2: span[1][0], y2: span[1][1], class: state.openingKind })];
+    if (span && state.openingKind === "door") shapes.push(() => svg("path", { d: swingPath(span, leafAt(span, p)), class: "swing" }));
   }
   for (const id of ["preview", "preview-print"]) $(id).replaceChildren(...shapes.map((make) => make()));
 }
@@ -203,7 +231,8 @@ export function toolClick(p) {
   } else if (state.tool === "opening") {
     const span = openingAt(p);
     if (!span) return toast("Click on a wall (or nearer one)", true);
-    submitEdit({ add: { opening: { type: state.openingKind, span } } }, `Adding the ${state.openingKind}…`);
+    const swing = state.openingKind === "door" ? leafAt(span, p) : undefined;
+    submitEdit({ add: { opening: { type: state.openingKind, span, swing } } }, `Adding the ${state.openingKind}…`);
   }
 }
 
@@ -364,6 +393,13 @@ export function resize(d, sizes) {
   return submitEdit({ resize: { at: d.middle, ...sizes } }, "Changing the size…", () => selectItem({ kind: "door", id: d.id }));
 }
 
+/** A door, window or opening said to be another (null: as the drawing reads it): one the
+ * drawing reads wrong set right, kept through every re-read; the floor is read again. */
+export function retype(d, type) {
+  return submitEdit({ resize: { at: d.middle, type } }, type ? `Making it ${type === "opening" ? "an opening" : `a ${type}`}…`
+    : "Back to what the drawing says…", () => selectItem({ kind: "door", id: d.id }));
+}
+
 export function addOpening(type, p) {
   const span = openingAt(p, WIDTHS[type]);
   if (!span) return toast("Right-click on a wall (or nearer one)", true);
@@ -439,6 +475,31 @@ const giveUp = () => {
 
 const drawingPlan = { hover: preview, click: toolClick, dblclick: () => { if (shaping() && state.corners.length >= 3) closeSpace(); } };
 
+/** The opening tool's door, drawn again where the pointer last was (a key changed it). */
+function redrawOpening() {
+  if (state.tool === "opening" && hovered) preview(hovered);
+  emit("tool-progress");
+}
+
+// a door's four ways, a quarter turn at a time: hung on one jamb, on the other, then opening
+// the other way on that one, and on the first (state.openingSwing)
+const TURNS = [0, 1, 3, 2];
+
+/** R (Shift: back): the door to add turned to its next way (TURNS). */
+function turnDoor(by) {
+  if (state.openingKind !== "door") return toast(`A ${state.openingKind} has no door to turn`);
+  state.openingSwing = TURNS[(TURNS.indexOf(state.openingSwing) + (by > 0 ? 1 : 3)) % 4];
+  redrawOpening();
+}
+
+/** [ and ]: the opening to add narrower or wider, within what it may be. */
+function widen(by) {
+  const v = Math.round((widthOf() + by) * 100) / 100;
+  state.openingWidth = Math.min(Math.max(v, 0.3), widestOpening());
+  emit("tool-options");
+  redrawOpening();
+}
+
 export function setupDrawing() {
   // what the opening tool adds follows the floor: on a location's layout a gate, else a door
   let wasLayout = false;
@@ -466,7 +527,14 @@ export function setupDrawing() {
   tool({ id: "opening", label: "Door, window, opening", icon: "door-open", key: "o", group: "draw", edits: true, drawing: true,
     words: "door window opening doorway",
     wrongView: ON_PLAN("A door, window or opening"), plan: drawingPlan, stop: clearPreview,
-    hint: () => `Click on a ${state.floor?.layout ? "boundary wall" : "wall"} where the ${state.openingKind} goes · ${(widthOf()).toFixed(2)} m wide`,
+    hint: () => `Click on a ${state.floor?.layout ? "boundary wall" : "wall"} where the ${state.openingKind} goes · ${(widthOf()).toFixed(2)} m wide`
+      + `${state.openingKind === "door" ? " · R turns it" : ""} · [ ] narrower, wider`,
+    keys: {
+      r: [() => turnDoor(1), "turn the door: the other jamb, the other side"],
+      "shift+r": [() => turnDoor(-1), "turn the door back"],
+      "[": [() => widen(-0.05), "5 cm narrower"],
+      "]": [() => widen(0.05), "5 cm wider"],
+    },
     options: () => {
       const kinds = el("div", { class: "segmented", role: "radiogroup", "aria-label": "What to add" },
         ...Object.entries(openingKinds()).map(([kind, name]) => {
@@ -482,12 +550,22 @@ export function setupDrawing() {
         }));
       const width = el("input", { type: "number", min: "0.3", max: String(widestOpening()), step: "0.05", "aria-label": "Width in metres",
         value: widthOf().toFixed(2) });
+      // as it is typed: the door under the pointer as wide at once
+      width.addEventListener("input", () => {
+        const v = Number(width.value);
+        if (Number.isFinite(v) && v >= 0.3 && v <= widestOpening()) {
+          state.openingWidth = v;
+          redrawOpening();
+        }
+      });
       width.addEventListener("change", () => {
         const v = Number(width.value);
         state.openingWidth = Number.isFinite(v) && v >= 0.3 && v <= widestOpening() ? v : null;
         width.value = widthOf().toFixed(2);
         emit("tool-progress");
       });
+      // Enter: back to the plan, to click where it goes
+      width.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); width.blur(); $("svg").focus({ preventScroll: true }); } });
       return [kinds, el("label", { class: "to-group" }, el("span", { class: "to-label" }, "Width"), width, el("span", { class: "to-label" }, "m"))];
     } });
 }

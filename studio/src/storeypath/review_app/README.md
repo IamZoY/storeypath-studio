@@ -222,6 +222,10 @@ ahead).
 |---|---|---|
 | `Enter` | the space tool in use | Space: close the shape |
 | `⌫` | the space tool in use | Space: take back the last corner |
+| `R` | the opening tool in use | Door, window, opening: turn the door: the other jamb, the other side |
+| `Shift+R` | the opening tool in use | Door, window, opening: turn the door back |
+| `[` | the opening tool in use | Door, window, opening: 5 cm narrower |
+| `]` | the opening tool in use | Door, window, opening: 5 cm wider |
 | `Enter` | the stairs tool in use | Stairs and lifts: close the outline |
 | `⌫` | the stairs tool in use | Stairs and lifts: take back the last corner |
 | `⌘/Ctrl+G` | items chosen together | Group the items chosen |

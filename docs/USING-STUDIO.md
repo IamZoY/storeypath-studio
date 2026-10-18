@@ -260,12 +260,14 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   | *Wall* (<kbd>W</kbd>) | click its two ends; it snaps to walls and parts spaces as a drawn wall does |
   | *Space* (<kbd>R</kbd>) | click its corners (they snap to walls); the first again, a double-click or <kbd>Enter</kbd> closes it, <kbd>Backspace</kbd> takes a corner back. For an area the drawing encloses nowhere, such as a colonnade |
   | *Divide* (<kbd>D</kbd>) | a line right across a space with no wall: it becomes two zones |
-  | *Door, window, opening* (<kbd>O</kbd>) | a click on a wall: a door 0.9 m, a window 1.2 m, an opening (a way through, no door) 1.0 m wide, or the width given in its options |
+  | *Door, window, opening* (<kbd>O</kbd>) | a click on a wall: a door 0.9 m, a window 1.2 m, an opening (a way through, no door) 1.0 m wide, or the width given in its options (it applies as you type), <kbd>[</kbd> and <kbd>]</kbd> 5 cm narrower or wider. A door shows the way it swings before it is added: <kbd>R</kbd> turns it (on the other jamb, then opening the other way), <kbd>Shift</kbd>+<kbd>R</kbd> back |
   | *Stairs and lifts* (<kbd>L</kbd>) | stairs, a lift or an escalator: a click on two opposite corners for a rectangle (sent with the second), or, as an *Outline*, a click on each corner; added typed, then linked to the floors it serves |
   | *Measure* (<kbd>M</kbd>) | a distance, or an area and its perimeter, in metres or feet and inches (*m* / *ft*, remembered in your browser) |
 
-  A door, window or opening chosen shows its **width, sill and height**; *Size as
-  drawn* goes back. <kbd>Del</kbd> deletes a door, window or opening of the drawing
+  A door, window or opening chosen shows **what it is** and its **width, sill and
+  height**. Where the drawing reads one wrong, such as a glazed door drawn like a window,
+  choose *Door*, *Window* or *Opening*: it stays so through every re-read (the same ID),
+  and *as the drawing reads it* goes back. *Size as drawn* does the same for its size. <kbd>Del</kbd> deletes a door, window or opening of the drawing
   (it can be restored) and takes away what you drew; <kbd>Esc</kbd> gives up what is
   being drawn, then puts the tool down; <kbd>F</kbd> fits the floor in view, Space
   held moves the plan (as the *Pan* tool, <kbd>H</kbd>, does). After each change the
