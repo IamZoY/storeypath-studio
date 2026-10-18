@@ -85,14 +85,19 @@ export function assetOf(target) {
   return id ? (state.floor?.items || []).find((a) => a.id === id) || null : null;
 }
 
-/** The item under a plan point (the one on top), shown ones only. */
+// A click this near an item (screen pixels) is on it: a small one (a camera on a site plan)
+// is only a few pixels across.
+const ITEM_REACH_PX = 6;
+
+/** The item under a plan point (the one on top), or within ITEM_REACH_PX of its footprint;
+ * shown ones only. */
 export function assetAt(p) {
   const shown = (state.floor?.items || []).filter((a) => !a.retired || state.showHidden);
   for (const a of shown.slice().reverse()) {
     const t = typeOf(a.type) || a;
     const r = (-(a.rotation || 0) * Math.PI) / 180, dx = p[0] - a.x, dy = p[1] - a.y;
     const u = dx * Math.cos(r) - dy * Math.sin(r), v = dx * Math.sin(r) + dy * Math.cos(r);
-    const reach = 4 / state.view.k;
+    const reach = ITEM_REACH_PX / state.view.k;
     if (Math.abs(u) <= (t.width ?? 1) / 2 + reach && Math.abs(v) <= (t.depth ?? 0.6) / 2 + reach) return a;
   }
   return null;

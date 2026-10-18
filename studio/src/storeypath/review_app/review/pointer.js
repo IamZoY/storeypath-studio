@@ -9,7 +9,7 @@ import { editable, viewOnly, whyNotRoom } from "./access.js";
 import { emit } from "./bus.js";
 import { drawnNear, openingNear } from "./drawing.js";
 import { $ } from "./dom.js";
-import { assetOf, changeAsset, chosenAll, drawGuides, itemRoom, placing, renderAssets } from "./items.js";
+import { assetAt, assetOf, changeAsset, chosenAll, drawGuides, itemRoom, placing, renderAssets } from "./items.js";
 import { changeAssets, groupOf } from "./groups.js";
 import { closeMenu, openMenu } from "./menu.js";
 import { planPoint, showCursor, spaceAt, stopFlight, updateView, zoomAt } from "./plan.js";
@@ -81,11 +81,12 @@ function bindPane(pane) {
       return;
     }
     if (!state.tool && e.shiftKey && pane === $("svg")) { // a band over the rooms to choose (a Shift-click: an item added)
-      drag = { mode: "band", from: [sx, sy], moved: false, picked: assetOf(e.target) };
+      drag = { mode: "band", from: [sx, sy], moved: false, picked: assetOf(e.target) || assetAt(p) };
       pane.setPointerCapture(e.pointerId);
       return;
     }
-    const picked = !state.tool && assetOf(e.target);
+    // the item clicked, or one the click falls just beside (a small one: before the area under it)
+    const picked = !state.tool && (assetOf(e.target) || assetAt(p));
     // dragged only by who may change the floor, and not in a room someone else is editing
     const asset = picked && editable() && !whyNotRoom(itemRoom(picked)) ? picked : null;
     drag = { mode: "press", x: e.clientX, y: e.clientY, tx: state.view.tx, ty: state.view.ty, moved: false, target: e.target,
