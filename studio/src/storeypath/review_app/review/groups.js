@@ -65,7 +65,7 @@ export function middleOf(list) {
 
 /** The floor's items as Studio answered (``got``: items, each as Studio gives one), drawn
  * again in 2D and 3D; ``select``, chosen. */
-function took(got, { select = null } = {}) {
+export function took(got, { select = null } = {}) {
   const list = state.floor.items;
   for (const a of got) {
     const i = list.findIndex((x) => x.id === a.id);

@@ -9,6 +9,7 @@ import { addOpening, deleteItem, drawnNear, drawnSpaceAt, openingAt, openingMeta
 import * as finish from "./finish.js";
 import { assetAt, changeAsset, placeAsset, turnAsset } from "./items.js";
 import { deleteAssets, groupOf, turnAssets, ungroupAssets } from "./groups.js";
+import { copyItems, openCreateLayout, openPlaceLayout, pasteAt, roomUnder } from "./furnish.js";
 import { openInsert } from "./palette.js";
 import { keyNow, keyText } from "./keys.js";
 import { finishOf } from "/viewer/src/finishes.js";
@@ -73,6 +74,7 @@ function groupItems(asset, { heading: said = true } = {}) {
   out.push(menuItem("Turn the group 90°", () => turnAssets(all, 90), { hint: said ? key("item.turn") : "", ico: "rotate-ccw" }));
   out.push(menuItem("Ungroup", () => ungroupAssets(all), { hint: said ? key("item.ungroup") : "", ico: "square-split-horizontal" }));
   out.push(menuItem("Delete the group", () => deleteAssets(all), { danger: true, hint: said ? key("edit.delete") : "", ico: "trash-2" }));
+  out.push(menuItem("Copy the group", () => copyItems(all), { hint: said ? key("item.copy") : "", ico: "copy" }));
   return out;
 }
 
@@ -94,6 +96,7 @@ export function openMenu(cx, cy, p) {
     items.push(menuItem("Turn 90°", () => turnAsset(asset, asset.rotation + 90), { hint: key("item.turn"), ico: "rotate-ccw" }));
     items.push(menuItem(asset.retired ? "Restore" : "Delete", () => changeAsset(asset, { retired: !asset.retired }),
       { danger: !asset.retired, hint: asset.retired ? "" : key("edit.delete"), ico: asset.retired ? "rotate-cw" : "trash-2" }));
+    if (!asset.retired) items.push(menuItem("Copy", () => copyItems([asset]), { hint: key("item.copy"), ico: "copy" }));
     if (asset.group) items.push(menuItem("Choose its group", () => selectAsset(asset.id), { ico: "layers" }));
     items.push(el("hr"));
   } else if (d) {
@@ -137,6 +140,17 @@ export function openMenu(cx, cy, p) {
   items.push(menuItem("Divide a space from here", () => startLine("divide", p), { disabled: !readable(), hint: readable() ? key("tool.divide") : "needs its drawing", ico: "square-split-horizontal" }));
   items.push(menuItem("Draw a space from here", () => startSpace(p), { disabled: !readable(), hint: readable() ? key("tool.space") : "needs its drawing", ico: "vector-square" }));
   items.push(menuItem("Place an item here…", () => openInsert((code) => placeAsset(code, p)), { hint: key("tool.place"), ico: "armchair" }));
+  // furniture layouts (furnish.js): a room's items kept, and placed again in any room
+  const room = roomUnder(p);
+  if (room) {
+    items.push(menuItem("Create a furniture layout from this room…", () => openCreateLayout(p), { ico: "sofa" }));
+    const none = !(state.furnishings || []).length;
+    items.push(menuItem("Place a furniture layout here…", () => openPlaceLayout(p),
+      { disabled: none, hint: none ? "none saved yet" : "", ico: "layers" }));
+  }
+  if (state.clipboard) {
+    items.push(menuItem(`Paste here: ${state.clipboard.label}`, () => pasteAt(p), { hint: key("edit.paste"), ico: "corner-down-left" }));
+  }
   const shown = state.floor?.converted_at ? "" : "the floor is not read yet";
   items.push(el("hr"), menuItem("Walk here", () => viewHere(p, "walk"), { disabled: Boolean(shown), hint: shown, ico: "footprints" }));
   items.push(menuItem("See here in 3D", () => viewHere(p, "3d"), { disabled: Boolean(shown), hint: shown, ico: "box" }));
@@ -199,6 +213,7 @@ export function menu3d(cx, cy, p = null) {
       const chosen = state.asset === asset.id;
       items.push(menuItem("Turn 90°", () => turnAsset(asset, asset.rotation + 90), { hint: chosen ? key("item.turn") : "", ico: "rotate-ccw" }));
       items.push(menuItem("Delete", () => changeAsset(asset, { retired: true }), { danger: true, hint: chosen ? key("edit.delete") : "", ico: "trash-2" }));
+      items.push(menuItem("Copy", () => copyItems([asset]), { hint: chosen ? key("item.copy") : "", ico: "copy" }));
     }
   } else if (unit && !on?.door) {
     items.push(menuItem("Select", () => select(unit.id), { ico: "mouse-pointer-2", disabled: state.selected === unit.id }));
@@ -221,6 +236,7 @@ export function menu3d(cx, cy, p = null) {
   if (may && here) {
     if (items.length) items.push(el("hr"));
     items.push(menuItem("Place an item here…", () => openInsert((code) => placeAsset(code, here)), { hint: key("tool.place"), ico: "armchair" }));
+    if (state.clipboard) items.push(menuItem(`Paste here: ${state.clipboard.label}`, () => pasteAt(here), { hint: key("edit.paste"), ico: "corner-down-left" }));
   }
   if (items.length) items.push(el("hr"));
   items.push(menuItem(may ? "Draw here in 2D" : "Show here in 2D", () => drawHere(here), { disabled: !here, hint: key("view.here-2d"), ico: "map" }));
