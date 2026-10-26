@@ -368,6 +368,17 @@ floors in review, each piece an item of its own with its own ID (a desk's chair 
   named in the inspector) chooses that piece alone. *Ungroup* (<kbd>⌘⇧G</kbd>) lets the
   pieces go (each keeps its ID); Shift- or ⌘-click items to choose several, and *Group*
   (<kbd>⌘G</kbd>) makes them one.
+- **Furniture layouts** keep a room's furniture to furnish other rooms the same way:
+  right-click a furnished room, *Create a furniture layout from this room…*, name it and
+  check its preview. In any room of the project, *Place a furniture layout here…*: choose
+  the layout and the corner of the room it lines up with; each item keeps its real size
+  and where it stood from that corner, and one that would stand outside the room or
+  across a wall is drawn red and left out. *Place* puts the rest in, one group, undone as
+  one. Layouts are the project's, the same for everyone on it; one is deleted in the same
+  dialog (what was placed of it stays).
+- **Copy and paste**: right-click an item (or a group), *Copy* (<kbd>⌘C</kbd>), then
+  right-click where it goes, *Paste here*, or point there and press <kbd>⌘V</kbd>, on any
+  floor of the project.
 - **A card reader and its door**: a card reader, a door controller, an exit button or an
   intercom serves a door. Placed within 2 m of one, it is linked to the nearest; chosen,
   a dashed line on the plan joins it to its door, and the inspector's *The door it serves*

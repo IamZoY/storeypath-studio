@@ -318,6 +318,6 @@ export function setupFurnish() {
     icon: "copy", when: () => Boolean(chosenAsset() || chosenAll().length), why: () => "Choose an item first",
     run: () => copyItems(chosenAll().length ? chosenAll() : [chosenAsset()]) });
   command({ id: "edit.paste", title: "Paste what was copied, where the pointer is", group: "Edit", icon: "corner-down-left", keys: ["mod+v"],
-    words: "paste clipboard furniture items", when: () => Boolean(state.floor && state.clipboard?.project === BASE) && editable(),
-    why: () => (state.clipboard ? whyNotEditable() : "Copy an item first (right-click it, Copy)"), run: () => pasteAt(pasteHere()) });
+    words: "paste clipboard furniture items", when: () => Boolean(state.floor) && editable(), why: whyNotEditable,
+    run: () => pasteAt(pasteHere()) }); // (nothing copied: it says so)
 }
