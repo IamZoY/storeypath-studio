@@ -24,8 +24,8 @@ import { fits, itemBox, ringsOf, roomAt } from "../fit.js";
 import { assetShape } from "../itemshape.js";
 import { middleOf, took } from "./groups.js";
 import { chosenAll, chosenAsset, roomName } from "./items.js";
-import { BASE, round4, state, typeOf, visible } from "./state.js";
-import { pointerPlace, view3d } from "./view3d.js";
+import { BASE, round4, state, typeOf, view3d, visible } from "./state.js";
+import { pointerPlace } from "./view3d.js";
 
 export const CORNERS = [ // the corner of a room's box a layout lines up with, as the plan shows it
   ["nw", "Top left"], ["ne", "Top right"], ["sw", "Bottom left"], ["se", "Bottom right"],
@@ -222,7 +222,7 @@ export async function openPlaceLayout(p) {
     status.textContent = said.join(" ");
     status.classList.toggle("error", !fit);
     place.disabled = !fit;
-    place.textContent = fit && fit < pieces.length ? `Place ${fit} items` : "Place";
+    place.textContent = fit && fit < pieces.length ? `Place ${fit} item${fit === 1 ? "" : "s"}` : "Place";
   };
   show();
   cancel.addEventListener("click", () => d.close());
