@@ -7,8 +7,8 @@ import { $, el, icon } from "./dom.js";
 import { addOpening, deleteItem, drawnNear, drawnSpaceAt, openingAt, openingMeta, openingName, openingNear,
   sizeForm, startLine, startSpace, takeAway } from "./drawing.js";
 import * as finish from "./finish.js";
-import { assetAt, changeAsset, placeAsset, turnAsset } from "./items.js";
-import { deleteAssets, groupOf, turnAssets, ungroupAssets } from "./groups.js";
+import { assetAt, changeAsset, mirrorAsset, placeAsset, turnAsset } from "./items.js";
+import { deleteAssets, groupOf, mirrorAssets, turnAssets, ungroupAssets } from "./groups.js";
 import { copyItems, openCreateLayout, openPlaceLayout, pasteAt, roomUnder } from "./furnish.js";
 import { openInsert } from "./palette.js";
 import { keyNow, keyText } from "./keys.js";
@@ -72,6 +72,8 @@ function groupItems(asset, { heading: said = true } = {}) {
   const all = groupOf(asset), t = typeOf(asset.type), out = [];
   if (said) out.push(...heading(`A group of ${all.length} items`, `${t ? t.name_en : asset.type} and ${all.length - 1} more, together`));
   out.push(menuItem("Turn the group 90°", () => turnAssets(all, 90), { hint: said ? key("item.turn") : "", ico: "rotate-ccw" }));
+  out.push(menuItem("Mirror the group left to right", () => mirrorAssets(all, "x"), { hint: said ? key("item.mirror-x") : "", ico: "flip-vertical-2" }));
+  out.push(menuItem("Mirror the group top to bottom", () => mirrorAssets(all, "y"), { hint: said ? key("item.mirror-y") : "", ico: "flip-horizontal-2" }));
   out.push(menuItem("Ungroup", () => ungroupAssets(all), { hint: said ? key("item.ungroup") : "", ico: "square-split-horizontal" }));
   out.push(menuItem("Delete the group", () => deleteAssets(all), { danger: true, hint: said ? key("edit.delete") : "", ico: "trash-2" }));
   out.push(menuItem("Copy the group", () => copyItems(all), { hint: said ? key("item.copy") : "", ico: "copy" }));
@@ -94,6 +96,8 @@ export function openMenu(cx, cy, p) {
     const t = typeOf(asset.type);
     items.push(...heading(t ? t.name_en : asset.type, asset.id));
     items.push(menuItem("Turn 90°", () => turnAsset(asset, asset.rotation + 90), { hint: key("item.turn"), ico: "rotate-ccw" }));
+    items.push(menuItem("Mirror left to right", () => mirrorAsset(asset, "x"), { hint: key("item.mirror-x"), ico: "flip-vertical-2" }));
+    items.push(menuItem("Mirror top to bottom", () => mirrorAsset(asset, "y"), { hint: key("item.mirror-y"), ico: "flip-horizontal-2" }));
     items.push(menuItem(asset.retired ? "Restore" : "Delete", () => changeAsset(asset, { retired: !asset.retired }),
       { danger: !asset.retired, hint: asset.retired ? "" : key("edit.delete"), ico: asset.retired ? "rotate-cw" : "trash-2" }));
     if (!asset.retired) items.push(menuItem("Copy", () => copyItems([asset]), { hint: key("item.copy"), ico: "copy" }));
@@ -144,9 +148,9 @@ export function openMenu(cx, cy, p) {
   const room = roomUnder(p);
   if (room) {
     items.push(menuItem("Create a furniture layout from this room…", () => openCreateLayout(p), { ico: "sofa" }));
+    // (offered with none known: another on the project may have saved one since; the dialog reads them again, or says none)
     const none = !(state.furnishings || []).length;
-    items.push(menuItem("Place a furniture layout here…", () => openPlaceLayout(p),
-      { disabled: none, hint: none ? "none saved yet" : "", ico: "layers" }));
+    items.push(menuItem("Place a furniture layout here…", () => openPlaceLayout(p), { hint: none ? "none saved yet" : "", ico: "layers" }));
   }
   if (state.clipboard) {
     items.push(menuItem(`Paste here: ${state.clipboard.label}`, () => pasteAt(p), { hint: key("edit.paste"), ico: "corner-down-left" }));
@@ -212,6 +216,8 @@ export function menu3d(cx, cy, p = null) {
     if (may) { // (its keys said when it is the item chosen: they are its then)
       const chosen = state.asset === asset.id;
       items.push(menuItem("Turn 90°", () => turnAsset(asset, asset.rotation + 90), { hint: chosen ? key("item.turn") : "", ico: "rotate-ccw" }));
+      items.push(menuItem("Mirror left to right", () => mirrorAsset(asset, "x"), { hint: chosen ? key("item.mirror-x") : "", ico: "flip-vertical-2" }));
+      items.push(menuItem("Mirror top to bottom", () => mirrorAsset(asset, "y"), { hint: chosen ? key("item.mirror-y") : "", ico: "flip-horizontal-2" }));
       items.push(menuItem("Delete", () => changeAsset(asset, { retired: true }), { danger: true, hint: chosen ? key("edit.delete") : "", ico: "trash-2" }));
       items.push(menuItem("Copy", () => copyItems([asset]), { hint: chosen ? key("item.copy") : "", ico: "copy" }));
     }

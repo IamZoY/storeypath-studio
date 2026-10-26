@@ -42,3 +42,10 @@ dialog.furnish > .furnish-plan { height: min(40vh, 320px); }
 .furnish-plan .asset .mark { fill: none; stroke: rgba(0, 0, 0, .5); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 .furnish-plan .asset .mark.solid, .furnish-plan .asset .mark.screen { fill: rgba(0, 0, 0, .55); }
 .furnish-plan .asset .mark.view { stroke-dasharray: 3 2; }
+/* the place dialog's preview: its items dragged where they fit (canvas.css takes pointers off a preview) */
+.furnish-plan .preview { pointer-events: auto; }
+.furnish-plan .preview .asset-ghost.movable { cursor: grab; touch-action: none; }
+.furnish-plan .preview .asset-ghost.movable:active { cursor: grabbing; }
+.furnish-plan .preview .asset-ghost.picked rect, .furnish-plan .preview .asset-ghost.picked circle { stroke-width: 3; stroke-dasharray: none; }
+.furnish-plan { touch-action: none; }
+.furnish-hint { margin: 0; }

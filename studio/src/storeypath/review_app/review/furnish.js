@@ -5,9 +5,11 @@
 // layout from this room…", name it and check its preview. "Place a furniture layout
 // here…" in another room: choose a layout and the corner of the room it lines up with;
 // the preview draws it there, an item that would stand outside the room or across a wall
-// in red and left out; Place puts the rest in, each an item of its own with its own ID,
-// one group, one change (undone as one). Its items keep their real sizes and where they
-// stood from the corner of the room's box.
+// in red and left out. An item of the preview is dragged to where it fits (R turns the one
+// dragged last 90°, Shift+R back; Reset puts them all back as the layout has them); Place
+// puts in those that fit, each an item of its own with its own ID, one group, one change
+// (undone as one). Its items keep their real sizes and where they stood from the corner of
+// the room's box, unless moved in the preview.
 //
 // An item chosen, or its group, is copied (⌘C, or Copy in the right-click menu) and pasted
 // (⌘V at the pointer, or Paste here) on any floor of the project: new items of the same
@@ -73,6 +75,21 @@ function tally(list) {
 
 const metres = (v) => `${(Math.round(v * 10) / 10).toFixed(1)}`;
 
+/** A piece of a layout to be placed, drawn (``i``: its place in the layout): green where it
+ * fits, red where it does not; ``picked``, the one dragged last. */
+function ghostOf(q, i, picked = false) {
+  const g = assetShape(q, typeOf(q.type) || q, `asset-ghost${q.ok ? "" : " refused"}${q.known ? " movable" : ""}${picked ? " picked" : ""}`);
+  g.dataset.i = i;
+  return g;
+}
+
+/** Pieces with their places, in the order they are drawn (the last on top: the larger
+ * under the smaller, as the plan draws items; the one dragged last over all). */
+function order(pieces) {
+  const area = (q) => { const t = typeOf(q.type) || q; return (t.width ?? 1) * (t.depth ?? 0.6); };
+  return [...pieces.entries()].sort(([i, p], [k, q]) => (p.picked ? 1 : 0) - (q.picked ? 1 : 0) || area(q) - area(p) || i - k);
+}
+
 /** A room drawn with items in it (the preview of a layout): ``items`` as Studio has them,
  * ``ghosts`` [{type, x, y, rotation, ok}] those to be placed (one that does not fit, red). */
 function drawing(room, items = [], ghosts = []) {
@@ -83,9 +100,9 @@ function drawing(room, items = [], ghosts = []) {
   const g = svg("g", { transform: "scale(1 -1)" });
   const d = ringsOf(room.geometry).map((ring) => `M${ring.map(([x, y]) => `${x} ${y}`).join("L")}Z`).join("");
   g.append(svg("path", { class: "furnish-room", d, "fill-rule": "evenodd" }));
-  for (const a of items) g.append(assetShape(a, typeOf(a.type) || a, `asset${ghosts.length ? " furnish-there" : ""}`));
+  for (const [, a] of order(items)) g.append(assetShape(a, typeOf(a.type) || a, `asset${ghosts.length ? " furnish-there" : ""}`));
   const coming = svg("g", { class: "preview" }); // (drawn as the plan draws an item being placed: canvas.css)
-  for (const a of ghosts) coming.append(assetShape(a, typeOf(a.type) || a, a.ok ? "asset-ghost" : "asset-ghost refused"));
+  for (const [i, a] of order(ghosts)) coming.append(ghostOf(a, i, a.picked));
   g.append(coming);
   s.append(g);
   return s;
@@ -158,16 +175,23 @@ export function openCreateLayout(p) {
   return d;
 }
 
+/** A piece where it would stand in a room ({type, x, y, rotation}), checked: ``known`` when
+ * its type is in the catalogue, ``ok`` when it is and it fits (inside the room, across no
+ * wall: fit.js). */
+export function checkedPiece(q, room) {
+  const t = typeOf(q.type);
+  return { ...q, known: Boolean(t), ok: Boolean(t) && fits([q.x, q.y], q.rotation || 0, itemBox(t), ringsOf(room.geometry)) };
+}
+
 /** Where a layout's pieces stand in a room, lined up with its ``corner`` (CORNERS): each
- * {type, x, y, rotation, ok}, ok when its type is in the catalogue and it fits (inside the
- * room, across no wall: fit.js). */
-export function placedPieces(f, room, corner = "sw") {
-  const [x0, y0, x1, y1] = boxOf(room), rings = ringsOf(room.geometry);
-  return f.pieces.map((p) => {
+ * {type, x, y, rotation, known, ok} (checkedPiece). ``moved``: pieces moved or turned in the
+ * preview, by their place in the layout ({x, y, rotation}), where they are put instead. */
+export function placedPieces(f, room, corner = "sw", moved = new Map()) {
+  const [x0, y0, x1, y1] = boxOf(room);
+  return f.pieces.map((p, i) => {
     const x = corner.endsWith("w") ? x0 + p.x : x1 - (f.width - p.x);
     const y = corner.startsWith("s") ? y0 + p.y : y1 - (f.depth - p.y);
-    const t = typeOf(p.type), rotation = p.rotation || 0;
-    return { type: p.type, x, y, rotation, known: Boolean(t), ok: Boolean(t) && fits([x, y], rotation, itemBox(t), rings) };
+    return checkedPiece({ type: p.type, x, y, rotation: p.rotation || 0, ...moved.get(i) }, room);
   });
 }
 
@@ -180,6 +204,7 @@ export async function openPlaceLayout(p) {
   const all = await loadFurnishings();
   if (!all?.length) return toast("No furniture layouts yet: right-click a furnished room, Create a furniture layout from this room", true);
   let chosen = all[0].id, corner = "sw", pieces = [];
+  let moved = new Map(), picked = null; // pieces moved or turned in the preview (placedPieces), the one dragged last
   const there = itemsIn(room);
   const [x0, y0, x1, y1] = boxOf(room);
   const list = el("ul", { class: "furnish-list", role: "radiogroup", "aria-label": "Furniture layouts" });
@@ -187,13 +212,15 @@ export async function openPlaceLayout(p) {
   const picture = el("div", { class: "furnish-picture" });
   const status = el("p", { class: "furnish-status", role: "status" });
   const place = el("button", { type: "button", class: "primary", id: "furnish-place" }, "Place");
+  const reset = el("button", { type: "button", id: "furnish-reset", title: "Every item back where the layout has it" }, "Reset");
+  const hint = el("p", { class: "meta furnish-hint" }, "Drag an item to move it where it fits · R turns the one dragged last 90° (Shift+R back)");
   const remove = el("button", { type: "button", class: "danger", id: "furnish-delete" }, "Delete this layout");
   const cancel = el("button", { type: "button" }, "Cancel");
   const d = dialog("Place a furniture layout", `In ${roomName(room)} · ${metres(x1 - x0)} × ${metres(y1 - y0)} m`,
     el("div", { class: "furnish-body" },
       el("div", { class: "furnish-side" }, el("h3", {}, "Layout"), list, el("h3", {}, "Line it up with the room's"), corners),
-      el("div", { class: "furnish-main" }, picture, status)),
-    el("div", { class: "row furnish-buttons" }, remove, el("span", { class: "grow" }), cancel, place));
+      el("div", { class: "furnish-main" }, picture, hint, status)),
+    el("div", { class: "row furnish-buttons" }, remove, el("span", { class: "grow" }), reset, cancel, place));
   const layout = () => (state.furnishings || []).find((f) => f.id === chosen) || null;
 
   const show = () => {
@@ -202,29 +229,79 @@ export async function openPlaceLayout(p) {
       const b = el("button", { type: "button", role: "radio", class: "furnish-choice", "aria-checked": String(x.id === chosen), "data-id": x.id },
         el("span", { class: "furnish-name" }, x.name),
         el("span", { class: "meta" }, `${x.count} item${x.count === 1 ? "" : "s"} · ${metres(x.width)} × ${metres(x.depth)} m${x.room ? ` · from ${x.room}` : ""}`));
-      b.addEventListener("click", () => { chosen = x.id; show(); });
+      b.addEventListener("click", () => { if (chosen !== x.id) [moved, picked] = [new Map(), null]; chosen = x.id; show(); });
       return el("li", {}, b);
     }));
     corners.replaceChildren(...CORNERS.map(([code, label]) => {
       const b = el("button", { type: "button", role: "radio", class: `furnish-corner ${code}`, "aria-checked": String(code === corner), "data-corner": code }, label);
-      b.addEventListener("click", () => { corner = code; show(); });
+      b.addEventListener("click", () => { if (corner !== code) [moved, picked] = [new Map(), null]; corner = code; show(); });
       return b;
     }));
     if (!f) return;
-    pieces = placedPieces(f, room, corner);
+    pieces = placedPieces(f, room, corner, moved).map((q, i) => ({ ...q, picked: i === picked }));
     picture.replaceChildren(drawing(room, there, pieces));
+    say();
+  };
+  /** What the preview shows, said, and Place and Reset as it allows. */
+  const say = () => {
     const fit = pieces.filter((q) => q.ok).length, unknown = pieces.filter((q) => !q.known).length;
     const out = pieces.length - fit - unknown;
     const said = [fit === pieces.length ? `All ${fit} items fit.` : `${fit} of ${pieces.length} items fit.`];
-    if (out) said.push(`${out} would stand outside the room or across a wall: drawn red, left out.`);
+    if (out) said.push(`${out} would stand outside the room or across a wall: drawn red, left out (drag ${out === 1 ? "it" : "them"} in to place ${out === 1 ? "it" : "them"}).`);
+    if (moved.size) said.push(`${moved.size} moved here.`);
     if (unknown) said.push(`${unknown} ${unknown === 1 ? "is of a type" : "are of types"} no longer in the catalogue: left out.`);
     if (there.length) said.push(`The room has ${there.length} item${there.length === 1 ? "" : "s"} already: the layout goes beside them.`);
     status.textContent = said.join(" ");
     status.classList.toggle("error", !fit);
     place.disabled = !fit;
     place.textContent = fit && fit < pieces.length ? `Place ${fit} item${fit === 1 ? "" : "s"}` : "Place";
+    reset.disabled = !moved.size;
   };
   show();
+
+  // an item of the preview dragged where it fits, checked as it goes; R turns the one dragged last
+  const planAt = (e) => { // the plan point under the pointer (the drawing's frame: its y up)
+    const g = picture.querySelector(".furnish-plan > g");
+    return new DOMPoint(e.clientX, e.clientY).matrixTransform(g.getScreenCTM().inverse());
+  };
+  /** The preview's pieces drawn again, piece ``picked`` marked. */
+  const redraw = () => {
+    pieces = pieces.map((q, k) => ({ ...q, picked: k === picked }));
+    picture.querySelector(".furnish-plan .preview").replaceChildren(...order(pieces).map(([k, q]) => ghostOf(q, k, q.picked)));
+    say();
+  };
+  /** Piece ``i`` put at {x, y, rotation} (some of them), checked there, drawn again. */
+  const putPiece = (i, at) => {
+    pieces[i] = checkedPiece({ ...pieces[i], ...at }, room);
+    moved.set(i, { x: pieces[i].x, y: pieces[i].y, rotation: pieces[i].rotation });
+    picked = i;
+    redraw();
+  };
+  let drag = null;
+  picture.addEventListener("pointerdown", (e) => {
+    const g = e.target.closest?.(".preview .asset-ghost.movable");
+    if (!g || e.button !== 0) return;
+    e.preventDefault();
+    const i = Number(g.dataset.i), p = planAt(e);
+    picked = i;
+    drag = { i, from: [p.x, p.y], at: [pieces[i].x, pieces[i].y] };
+    picture.setPointerCapture(e.pointerId);
+    redraw();
+  });
+  picture.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const p = planAt(e);
+    putPiece(drag.i, { x: drag.at[0] + p.x - drag.from[0], y: drag.at[1] + p.y - drag.from[1] });
+  });
+  const drop = () => { drag = null; };
+  picture.addEventListener("pointerup", drop);
+  picture.addEventListener("pointercancel", drop);
+  d.addEventListener("keydown", (e) => {
+    if (e.key.toLowerCase() !== "r" || e.metaKey || e.ctrlKey || e.altKey || picked === null || e.target.closest("input")) return;
+    e.preventDefault();
+    putPiece(picked, { rotation: (((pieces[picked].rotation || 0) + (e.shiftKey ? -90 : 90)) % 360 + 360) % 360 });
+  });
+  reset.addEventListener("click", () => { [moved, picked] = [new Map(), null]; show(); });
   cancel.addEventListener("click", () => d.close());
   remove.addEventListener("click", async () => {
     const f = layout();
