@@ -404,6 +404,13 @@ floors in review, each piece an item of its own with its own ID (a desk's chair 
   project file, and lists the types it brings, each *New*, *Changed* (and what) or
   *Same*: the new ones are chosen, a changed one only when you choose it. *Save as a
   file* gives the catalogue, or the types ticked, as a `.json` for another Studio.
+- **A drawing seen from above** (format 0.13.2): a type may carry its `plan`, the lines of
+  its CAD block exactly as a drawing has them (that L-desk, that ring table, that chair), and
+  its outline. The plan, the Place box, a furniture layout's preview and the Item types page
+  then draw it line for line in place of its shape's symbol, turned with the item; in 3D, a
+  desk or a table is its outline as a top on legs (a ring keeps its open middle), anything
+  else its outline raised to its height. Types come with their drawing in a catalogue file
+  (*Take from a file…*); a viewer that does not know `plan` draws its shape.
 - **A 3D model** for a type: in its editor, *Add a model…* takes a model of the real
   thing in the formats furniture is published in: glTF (`.glb`, or a `.gltf` with its
   files), FBX, OBJ, Collada (`.dae`), 3DS, 3MF, X3D, PLY or STL; or a `.zip` of one with
