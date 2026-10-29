@@ -244,7 +244,11 @@ and every command with its key; <kbd>?</kbd> lists the keys.
   by whom (rules, the language model, vision, a person), with ↺ to go back to it. A
   void, where the floor is open to the one below (an atrium, a double-height hall), is
   the type *Open to below*: in 3D the floor has a hole there, the floors below seen
-  through it.
+  through it. An electrical room and an IDF room (a floor's telecom room) have types of
+  their own, *Electrical room* and *IDF room* (format 0.13.1; *Utility* before): Studio
+  gives them from their labels (ELEC., E.R., LV, DB ROOM, SWITCHGEAR, كهرباء; IDF, MDF,
+  TELECOM, COMMS ROOM, اتصالات), and a room read before keeps *Utility* until its floor is
+  read again or you type it. A label only the language model reads is typed *Utility*.
   *Accept as it is* checks it without a change; *Use detected* takes your corrections
   away. **Capacity**: how many people it is meant to seat (see below). **Delete**
   (<kbd>Del</kbd>) takes what is not a room (a sliver, the outside) out of the plan,

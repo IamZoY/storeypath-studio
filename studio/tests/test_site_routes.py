@@ -278,7 +278,7 @@ def test_the_layouts_package_carries_its_network_and_validates(tmp_path):
     out = tmp_path / "plot.storeypath"
     said = []
     m = export_layout_package(ws, out, layout, say=said.append)
-    assert m.files["navigation"] == "navigation.json" and m.format_version == "0.13.0"
+    assert m.files["navigation"] == "navigation.json" and m.format_version == "0.13.1"
     assert validate_package(out) == [] and not [line for line in said if "no way in" in line]
     paths = {}
     for code, b_id in made.items():
